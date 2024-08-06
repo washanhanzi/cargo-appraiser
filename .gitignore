@@ -1,0 +1,7 @@
+/target
+
+.DS_Store
+
+editor/code/node_modules/
+
+*.vsix

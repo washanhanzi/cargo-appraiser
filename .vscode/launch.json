@@ -1,0 +1,22 @@
+// A launch configuration that compiles the extension and then opens it inside a new window
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run Extension",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceRoot}/editor/code"
+            ],
+            "outFiles": [
+                "${workspaceRoot}/editor/code/dist/**/*.js"
+            ],
+            "preLaunchTask": "${defaultBuildTask}",
+            "env": {
+                "CARGO_APPRAISER_PATH": "${workspaceRoot}/target/debug/cargo-appraiser"
+            }
+        },
+    ],
+}
