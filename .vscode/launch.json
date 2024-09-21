@@ -8,6 +8,7 @@
             "request": "launch",
             "runtimeExecutable": "${execPath}",
             "args": [
+                // "--disable-extensions",
                 "--extensionDevelopmentPath=${workspaceRoot}/editor/code"
             ],
             "outFiles": [
@@ -17,6 +18,22 @@
             "env": {
                 "CARGO_APPRAISER_PATH": "${workspaceRoot}/target/debug/cargo-appraiser"
             }
+        },
+        {
+            // Used to attach LLDB to a running LSP server.
+            // NOTE: Might require root permissions. For this run:
+            //
+            // `echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope`
+            //
+            // Don't forget to set `debug = 2` in `Cargo.toml` before building the server
+            "name": "Attach To Server",
+            "type": "lldb",
+            "request": "attach",
+            "program": "${workspaceFolder}/target/debug/cargo-appraiser",
+            "pid": "${command:pickMyProcess}",
+            "sourceLanguages": [
+                "rust"
+            ]
         },
     ],
 }

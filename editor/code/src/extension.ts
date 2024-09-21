@@ -10,11 +10,9 @@ let client: LanguageClient
 
 export function activate(context: ExtensionContext) {
 
-    console.log('Congratulations, your extension "cargo-appraiser" is now active!')
-
     const traceOutputChannel = window.createOutputChannel("Cargo-appraiser Langauage Server")
     // Read the server path from the environment variable
-    const serverPath = process.env.CARGO_APPRAISER_PATH
+    const serverPath = process.env.CARGO_APPRAISER_PATh
 
     if (!serverPath) {
         window.showErrorMessage('CARGO_APPRAISER_PATH environment variable is not set. Unable to start the language server.')

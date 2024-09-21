@@ -37,7 +37,13 @@
             "type": "npm",
             "script": "watch:esbuild",
             "group": "build",
-            "problemMatcher": "$esbuild-watch",
+            "problemMatcher": {
+                "base": "$esbuild-watch",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}/editor/code/"
+                ]
+            },
             "isBackground": true,
             "label": "npm: watch:esbuild",
             "presentation": {
@@ -49,7 +55,13 @@
             "type": "npm",
             "script": "watch:tsc",
             "group": "build",
-            "problemMatcher": "$tsc-watch",
+            "problemMatcher": {
+                "base": "$tsc-watch",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}/editor/code/"
+                ]
+            },
             "isBackground": true,
             "label": "npm: watch:tsc",
             "presentation": {
