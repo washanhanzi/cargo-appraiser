@@ -38,24 +38,7 @@ impl LanguageServer for CargoAppraiser {
                     workspace_folders: None,
                     file_operations: None,
                 }),
-                inlay_hint_provider: Some(OneOf::Right(
-                    InlayHintServerCapabilities::RegistrationOptions(
-                        InlayHintRegistrationOptions {
-                            inlay_hint_options: InlayHintOptions {
-                                resolve_provider: Some(true),
-                                work_done_progress_options: WorkDoneProgressOptions::default(),
-                            },
-                            text_document_registration_options: TextDocumentRegistrationOptions {
-                                document_selector: Some(vec![DocumentFilter {
-                                    language: Some("toml".to_string()),
-                                    pattern: Some("**/Cargo.toml".to_string()),
-                                    scheme: None,
-                                }]),
-                            },
-                            static_registration_options: Default::default(),
-                        },
-                    ),
-                )),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 diagnostic_provider: Some(DiagnosticServerCapabilities::RegistrationOptions(
                     DiagnosticRegistrationOptions {
                         text_document_registration_options: TextDocumentRegistrationOptions {
@@ -81,7 +64,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn initialized(&self, _: InitializedParams) {
         self.client
-            .log_message(MessageType::INFO, "server initialized again!")
+            .log_message(MessageType::INFO, "cargo-appraiser server initialized!")
             .await;
     }
 

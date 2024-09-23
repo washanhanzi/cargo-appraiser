@@ -126,13 +126,8 @@ impl InlayHintDecoration {
 
                         let hint = InlayHint {
                             position: Position::new(range.end.line - 1, range.end.character),
-                            label: InlayHintLabel::LabelParts(vec![InlayHintLabelPart {
-                                value: display,
-                                tooltip: None,
-                                location: None,
-                                command: None,
-                            }]),
-                            kind: Some(InlayHintKind::TYPE),
+                            label: InlayHintLabel::String(display),
+                            kind: None,
                             text_edits: None,
                             tooltip: None,
                             padding_left: Some(true),
