@@ -1,10 +1,9 @@
 use cargo::core::Summary;
-use serde::Serialize;
 use tower_lsp::lsp_types::Range;
 
 use super::{DependencyTable, Value};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct Dependency {
     pub id: String,
     pub range: Range,

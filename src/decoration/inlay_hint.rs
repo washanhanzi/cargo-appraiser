@@ -4,7 +4,7 @@ use cargo::core::SourceKind;
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{self, Sender};
 use tower_lsp::{
-    lsp_types::{InlayHint, InlayHintLabel, InlayHintLabelPart, Position, Range},
+    lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, InlayHintLabelPart, Position, Range},
     Client,
 };
 
@@ -132,11 +132,11 @@ impl InlayHintDecoration {
                                 location: None,
                                 command: None,
                             }]),
-                            kind: None,
+                            kind: Some(InlayHintKind::TYPE),
                             text_edits: None,
                             tooltip: None,
-                            padding_left: None,
-                            padding_right: Some(true),
+                            padding_left: Some(true),
+                            padding_right: None,
                             data: None,
                         };
                         inlay_hint_decoration_state::upsert(&state, &path, &id, hint);

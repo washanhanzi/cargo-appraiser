@@ -1,23 +1,20 @@
 [package]
 name = "cargo-appraiser"
-version = "0.1.0"
+description = "a LSP for Cargo.toml"
+version = "0.0.1"
 edition = "2021"
+license = "MIT"
+homepage = "https://github.com/washanhanzi/cargo-appraiser"
+repository = "https://github.com/washanhanzi/cargo-appraiser"
 
 [dependencies]
-cargo_toml = "0.20.4"
-logos = "0.14.1"
-rowan = "0.15.16"
 serde_json = "1.0.127"
 taplo = "0.13.2"
 tokio = { version = "1.17.0", features = ["full", "macros", "rt-multi-thread"] }
-toml_edit = "0.22.20"
 tower-lsp = { version = "0.20.0", features = ["proposed"] }
 lsp-async-stub = "0.6.4"
 serde = { version = "1.0.207", features = ["derive"] }
-camino = "1.1.7"
-home = "0.5.9"
 parking_lot = "0.12.3"
-cargo = { git = "https://github.com/washanhanzi/cargo", branch = "master" }
-surrealdb = { version = "1.5.5", features = ["kv-rocksdb"] }
+cargo = { package = "my-cargo", git = "https://github.com/washanhanzi/cargo.git", branch = "master" }
 anyhow = "1.0.88"
-chrono = "0.4.38"
+log = "0.4.22"

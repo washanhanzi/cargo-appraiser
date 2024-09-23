@@ -1,5 +1,5 @@
 use controller::{Appraiser, CargoDocumentEvent, CargoTomlPayload};
-use decoration::{DecorationEvent, DecorationRenderer};
+use decoration::DecorationRenderer;
 use tokio::sync::mpsc::Sender;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -14,7 +14,6 @@ mod usecase;
 struct CargoAppraiser {
     client: Client,
     tx: Sender<CargoDocumentEvent>,
-    render_tx: Sender<DecorationEvent>,
     render: DecorationRenderer,
 }
 
@@ -39,7 +38,24 @@ impl LanguageServer for CargoAppraiser {
                     workspace_folders: None,
                     file_operations: None,
                 }),
-                inlay_hint_provider: Some(OneOf::Left(true)),
+                inlay_hint_provider: Some(OneOf::Right(
+                    InlayHintServerCapabilities::RegistrationOptions(
+                        InlayHintRegistrationOptions {
+                            inlay_hint_options: InlayHintOptions {
+                                resolve_provider: Some(true),
+                                work_done_progress_options: WorkDoneProgressOptions::default(),
+                            },
+                            text_document_registration_options: TextDocumentRegistrationOptions {
+                                document_selector: Some(vec![DocumentFilter {
+                                    language: Some("toml".to_string()),
+                                    pattern: Some("**/Cargo.toml".to_string()),
+                                    scheme: None,
+                                }]),
+                            },
+                            static_registration_options: Default::default(),
+                        },
+                    ),
+                )),
                 diagnostic_provider: Some(DiagnosticServerCapabilities::RegistrationOptions(
                     DiagnosticRegistrationOptions {
                         text_document_registration_options: TextDocumentRegistrationOptions {
@@ -132,12 +148,16 @@ impl LanguageServer for CargoAppraiser {
             }]),
         };
 
-        // Create the PublishDiagnosticsParams
+        // Create and publish the diagnostics
         let pub_params = PublishDiagnosticsParams {
-            uri: params.text_document.uri,
+            uri: params.text_document.uri.clone(),
             diagnostics: vec![diagnostic],
             version: None,
         };
+
+        self.client
+            .publish_diagnostics(pub_params.uri, pub_params.diagnostics, pub_params.version)
+            .await;
 
         if let Some(text) = params.text {
             self.tx
@@ -156,6 +176,7 @@ impl LanguageServer for CargoAppraiser {
         if !path.ends_with("Cargo.toml") {
             return Ok(None);
         };
+
         if let DecorationRenderer::InlayHint(renderer) = &self.render {
             Ok(Some(renderer.list(&path)))
         } else {
@@ -192,12 +213,7 @@ async fn main() {
         let state = Appraiser::new(client.clone(), render_tx.clone());
         let tx = state.initialize();
 
-        CargoAppraiser {
-            client,
-            tx,
-            render_tx,
-            render,
-        }
+        CargoAppraiser { client, tx, render }
     });
 
     Server::new(stdin, stdout, socket).serve(service).await;
