@@ -1,5 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
+use cargo::util::VersionExt;
+use semver::Version;
 use taplo::dom::node::DomNode;
 use tokio::sync::mpsc::{self, Sender};
 use tower_lsp::Client;
@@ -245,29 +247,59 @@ impl Appraiser {
                             }
                             let summaries = summaries_map.get(package_name).unwrap();
                             dep.summaries = Some(summaries.clone());
-                            //get summary with the highest version satisfies dep.version_req
-                            let mut max_version = None;
+
+                            //if not installed, we don't need to know the latest version
+                            if dep.resolved.is_none() {
+                                continue;
+                            }
+
+                            let installed = dep.resolved.as_ref().unwrap().version.clone();
+                            let req_version = dep.unresolved.as_ref().unwrap().version_req();
+
+                            let mut latest: Option<&Version> = None;
+                            let mut latest_matched: Option<&Version> = None;
                             for summary in summaries {
-                                let installed = dep
-                                    .resolved
-                                    .as_ref()
-                                    .map(|resolved| resolved.version.clone());
-                                if installed.is_some()
-                                    && installed.unwrap() == summary.version().clone()
-                                {
+                                if &installed == summary.version() {
                                     dep.matched_summary = Some(summary.clone());
                                 }
-                                let req_version = dep.unresolved.as_ref().unwrap().version_req();
-                                match max_version {
+                                let pp = installed.pre.is_empty();
+                                match latest {
                                     Some(cur) if summary.version() > cur => {
-                                        max_version = Some(summary.version());
+                                        latest = Some(summary.version());
                                         dep.latest_summary = Some(summary.clone());
                                     }
-                                    Some(_) => {}
                                     None => {
-                                        max_version = Some(summary.version());
+                                        latest = Some(summary.version());
                                         dep.latest_summary = Some(summary.clone());
                                     }
+                                    _ => {}
+                                }
+                                match (latest_matched, installed.is_prerelease()) {
+                                    (Some(cur), true)
+                                        if req_version.matches_prerelease(summary.version())
+                                            && summary.version() > cur =>
+                                    {
+                                        latest_matched = Some(summary.version());
+                                        dep.latest_matched_summary = Some(summary.clone());
+                                    }
+                                    (Some(cur), false)
+                                        if req_version.matches(summary.version())
+                                            && summary.version() > cur =>
+                                    {
+                                        latest_matched = Some(summary.version());
+                                        dep.latest_matched_summary = Some(summary.clone());
+                                    }
+                                    (None, true)
+                                        if req_version.matches_prerelease(summary.version()) =>
+                                    {
+                                        latest_matched = Some(summary.version());
+                                        dep.latest_matched_summary = Some(summary.clone());
+                                    }
+                                    (None, false) if req_version.matches(summary.version()) => {
+                                        latest_matched = Some(summary.version());
+                                        dep.latest_matched_summary = Some(summary.clone());
+                                    }
+                                    _ => {}
                                 }
                             }
                         }

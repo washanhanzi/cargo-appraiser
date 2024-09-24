@@ -23,8 +23,12 @@ pub struct Dependency {
     pub unresolved: Option<cargo::core::Dependency>,
     pub resolved: Option<cargo::core::package::SerializedPackage>,
     pub summaries: Option<Vec<Summary>>,
+    //the exact matched summary(the installed version)
     pub matched_summary: Option<Summary>,
+    //the latest summary only consider pre-release
     pub latest_summary: Option<Summary>,
+    //the latest summary that satisify the version requirement
+    pub latest_matched_summary: Option<Summary>,
 }
 
 impl Dependency {

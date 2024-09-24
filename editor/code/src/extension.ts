@@ -12,7 +12,7 @@ export function activate(context: ExtensionContext) {
 
     const traceOutputChannel = window.createOutputChannel("Cargo-appraiser Langauage Server")
     // Read the server path from the environment variable
-    const serverPath = process.env.CARGO_APPRAISER_PATh
+    const serverPath = process.env.CARGO_APPRAISER_PATH
 
     if (!serverPath) {
         window.showErrorMessage('CARGO_APPRAISER_PATH environment variable is not set. Unable to start the language server.')
@@ -22,9 +22,14 @@ export function activate(context: ExtensionContext) {
     // If the extension is launched in debug mode then the debug server options are used
     // Otherwise the run options are used
     const serverOptions: ServerOptions = {
-        run: { command: serverPath, transport: TransportKind.stdio },
+        run: {
+            command: serverPath,
+            args: ["--renderer", "vscode"],
+            transport: TransportKind.stdio,
+        },
         debug: {
             command: serverPath,
+            args: ["--renderer", "vscode"],
             transport: TransportKind.stdio,
         }
     }

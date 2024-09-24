@@ -1,10 +1,13 @@
+use clap::{arg, command, Parser};
+use config::{initialize_config, Config};
 use controller::{Appraiser, CargoDocumentEvent, CargoTomlPayload};
-use decoration::DecorationRenderer;
+use decoration::{DecorationRenderer, Renderer};
 use tokio::sync::mpsc::Sender;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+mod config;
 mod controller;
 mod decoration;
 mod entity;
@@ -19,7 +22,15 @@ struct CargoAppraiser {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for CargoAppraiser {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        //init config
+        let config: Config = params
+            .initialization_options
+            .map(serde_json::from_value)
+            .and_then(|v| v.ok())
+            .unwrap_or_default();
+        initialize_config(config);
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
@@ -163,6 +174,7 @@ impl LanguageServer for CargoAppraiser {
         if let DecorationRenderer::InlayHint(renderer) = &self.render {
             Ok(Some(renderer.list(&path)))
         } else {
+            //disable for non inlay hint renderer
             Ok(None)
         }
     }
@@ -184,13 +196,36 @@ impl LanguageServer for CargoAppraiser {
     }
 }
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    ///"inlayHint" or "vscode". "inlayHint" is for lsp inlay hints and "vscode" is for vscode decorations
+    #[arg(short, long, value_enum)]
+    renderer: Renderer,
+    ///stdio transport. now only work with stdio transport
+    #[arg(short, long, default_value = "true")]
+    stdio: bool,
+}
+
 #[tokio::main]
 async fn main() {
+    // Print unparsed arguments for debugging
+    eprintln!(
+        "Unparsed arguments: {:?}",
+        std::env::args().collect::<Vec<String>>()
+    );
+
+    // Parse command-line arguments
+    let args = Args::parse();
+
+    // Log the parsed arguments
+    eprintln!("Parsed arguments: {:?}", args);
+
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
     let (service, socket) = LspService::new(|client| {
-        let render = DecorationRenderer::new(client.clone());
+        let render = DecorationRenderer::new(client.clone(), args.renderer);
         let render_tx = render.init();
 
         let state = Appraiser::new(client.clone(), render_tx.clone());

@@ -1,3 +1,4 @@
+use clap::arg;
 use tokio::sync::mpsc::Sender;
 use tower_lsp::{
     lsp_types::{InlayHint, Range},
@@ -7,6 +8,14 @@ use tower_lsp::{
 use crate::entity::Dependency;
 
 pub mod inlay_hint;
+
+#[derive(clap::ValueEnum, Debug, Clone)]
+pub enum Renderer {
+    #[value(name = "inlayHint")]
+    InlayHint,
+    #[value(name = "vscode")]
+    VSCode,
+}
 
 pub trait VSCodeDecorationRenderer: Send + Sync + std::fmt::Debug {
     fn init(&self) -> Sender<DecorationEvent>;
@@ -25,8 +34,15 @@ pub enum DecorationRenderer {
 }
 
 impl DecorationRenderer {
-    pub fn new(client: Client) -> Self {
-        DecorationRenderer::InlayHint(Box::new(inlay_hint::InlayHintDecoration::new(client)))
+    pub fn new(client: Client, renderer: Renderer) -> Self {
+        match renderer {
+            Renderer::InlayHint => DecorationRenderer::InlayHint(Box::new(
+                inlay_hint::InlayHintDecoration::new(client),
+            )),
+            Renderer::VSCode => DecorationRenderer::InlayHint(Box::new(
+                inlay_hint::InlayHintDecoration::new(client),
+            )),
+        }
     }
     pub fn init(&self) -> Sender<DecorationEvent> {
         match self {

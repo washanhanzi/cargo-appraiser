@@ -2,11 +2,14 @@ use std::{collections::HashMap, sync::Arc};
 
 use cargo::core::SourceKind;
 use parking_lot::RwLock;
+use serde_json::json;
 use tokio::sync::mpsc::{self, Sender};
 use tower_lsp::{
     lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, InlayHintLabelPart, Position, Range},
     Client,
 };
+
+use crate::config::GLOBAL_CONFIG;
 
 use super::{DecorationEvent, InlayHintDecorationRenderer};
 
@@ -87,7 +90,13 @@ impl InlayHintDecoration {
                         let hint = InlayHint {
                             position: Position::new(range.end.line - 1, range.end.character),
                             label: InlayHintLabel::LabelParts(vec![InlayHintLabelPart {
-                                value: "Loading".to_string(),
+                                value: GLOBAL_CONFIG
+                                    .read()
+                                    .unwrap()
+                                    .renderer
+                                    .decoration_format
+                                    .loading
+                                    .to_string(),
                                 tooltip: None,
                                 location: None,
                                 command: None,
@@ -108,19 +117,73 @@ impl InlayHintDecoration {
                         inlay_hint_decoration_state::reset(&state, &path);
                     }
                     DecorationEvent::Dependency(path, id, range, p) => {
+                        let config = GLOBAL_CONFIG.read().unwrap();
                         let display = match p.unresolved.as_ref().unwrap().source_id().kind() {
-                            SourceKind::Path => "Local".to_string(),
+                            SourceKind::Path => config.renderer.decoration_format.local.to_string(),
                             SourceKind::Directory => "Directory".to_string(),
                             _ => {
-                                let installed_version =
-                                    p.resolved.map(|resolved| resolved.version.to_string());
-                                let latest_version =
-                                    p.latest_summary.map(|latest| latest.version().to_string());
-                                format!(
-                                    "{}, {}",
-                                    installed_version.unwrap_or("Not Installed".to_string()),
-                                    latest_version.unwrap_or_default()
-                                )
+                                match (
+                                    p.matched_summary,
+                                    p.latest_matched_summary,
+                                    p.latest_summary,
+                                ) {
+                                    (Some(matched), Some(latest_matched), Some(latest)) => {
+                                        let data = json!({
+                                            "installed": matched.version().to_string(),
+                                            "latest_matched": latest_matched.version().to_string(),
+                                            "latest": latest.version().to_string()
+                                        });
+                                        //latest
+                                        if matched.version() == latest_matched.version()
+                                            && latest_matched.version() == latest.version()
+                                        {
+                                            ribboncurls::render(
+                                                &config.renderer.decoration_format.latest,
+                                                &data.to_string(),
+                                                None,
+                                            )
+                                            .unwrap()
+                                        } else if matched.version() != latest_matched.version()
+                                            && latest_matched.version() == latest.version()
+                                        {
+                                            ribboncurls::render(
+                                                &config
+                                                    .renderer
+                                                    .decoration_format
+                                                    .compatible_latest,
+                                                &data.to_string(),
+                                                None,
+                                            )
+                                            .unwrap()
+                                        } else if matched.version() == latest_matched.version()
+                                            && latest_matched.version() != latest.version()
+                                        {
+                                            ribboncurls::render(
+                                                &config
+                                                    .renderer
+                                                    .decoration_format
+                                                    .noncompatible_latest,
+                                                &data.to_string(),
+                                                None,
+                                            )
+                                            .unwrap()
+                                        } else {
+                                            ribboncurls::render(
+                                                &config
+                                                    .renderer
+                                                    .decoration_format
+                                                    .mixed_upgradeable,
+                                                &data.to_string(),
+                                                None,
+                                            )
+                                            .unwrap()
+                                        }
+                                    }
+                                    (None, _, _) => {
+                                        config.renderer.decoration_format.not_installed.to_string()
+                                    }
+                                    _ => "".to_string(),
+                                }
                             }
                         };
 
