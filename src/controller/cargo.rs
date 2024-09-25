@@ -28,6 +28,7 @@ pub struct CargoResolveOutput {
     pub ctx: Ctx,
     //the hashmap key is toml_id, which is<table>:<package name>
     pub dependencies: HashMap<String, SerializedPackage>,
+    pub summaries: HashMap<String, Vec<Summary>>,
 }
 
 pub async fn parse_cargo_output(ctx: &Ctx) -> CargoResolveOutput {
@@ -97,10 +98,11 @@ pub async fn parse_cargo_output(ctx: &Ctx) -> CargoResolveOutput {
     CargoResolveOutput {
         ctx: ctx.clone(),
         dependencies: res,
+        summaries: summaries_map(&ctx.path),
     }
 }
 
-pub fn get_latest_version(path: &str) -> HashMap<String, Vec<Summary>> {
+fn summaries_map(path: &str) -> HashMap<String, Vec<Summary>> {
     let path = Path::new(path);
     let gctx = cargo::util::context::GlobalContext::default().unwrap();
     let workspace = cargo::core::Workspace::new(path, &gctx).unwrap();

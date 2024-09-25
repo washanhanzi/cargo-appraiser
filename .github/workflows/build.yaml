@@ -6,72 +6,186 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
+env:
+  APP_NAME: cargo-appraiser
+
 jobs:
-  build:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [
+          "x86_64-unknown-linux-gnu",
+          "aarch64-unknown-linux-gnu",
+          "armv7-unknown-linux-gnueabihf"
+        ]
+
+    steps:
+      # 1. Checkout the repository
+      - uses: actions/checkout@v4
+
+      # 2. Install Rust Toolchain
+      - name: Install Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      # 3. Install `cross`
+      - name: Install Cross
+        run: |
+          cargo install cross
+
+      # 4. Cache Cargo dependencies (optional but recommended)
+      - name: Cache Cargo Registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Cargo Git
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+
+      # 5. Cache Cross Docker Image (optional but recommended)
+      - name: Cache Cross Docker Image
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/cross
+          key: ${{ runner.os }}-cross-${{ matrix.target }}
+          restore-keys: |
+            ${{ runner.os }}-cross-
+
+      # 6. Build the project using `cross`
+      - name: Build with Cross
+        env:
+          RUSTFLAGS: "-Awarnings"
+        run: cross build --release --target ${{ matrix.target }} --bin ${{ env.APP_NAME }} --features vendored-openssl
+
+      # 7. Upload the build artifact
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ env.APP_NAME }}
+          if-no-files-found: error
+
+  build-macos:
     strategy:
       fail-fast: false
       matrix:
-        target:
-        - x86_64-unknown-linux-musl
-        - x86_64-apple-darwin
         include:
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
           - target: x86_64-apple-darwin
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
+            runs-on: macos-14-large
+          - target: aarch64-apple-darwin
+            runs-on: macos-latest
+
+    runs-on: ${{ matrix.runs-on }}
+
     steps:
       - uses: actions/checkout@v4
-      - name: Build Linux
-        if: matrix.os == 'ubuntu-latest'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install and configure OpenSSL
         run: |
-          docker run --rm -t \
-            -v $HOME/.cargo/registry/:/root/.cargo/registry \
-            -v "$(pwd)":/volume \
-            clux/muslrust:stable \
-            cargo build --release --bin kopium --target ${{ matrix.target }}
-      - name: Prepare macOS
-        if: matrix.os == 'macos-latest'
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          target: ${{ matrix.target }}
-          override: true
+          # Install OpenSSL@3 using Homebrew
+          brew install openssl@3
+          # Set OpenSSL environment variables
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@3)/include" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig" >> $GITHUB_ENV
+          echo "$(brew --prefix openssl@3)/bin" >> $GITHUB_PATH
+
       - name: Build macOS
-        if: matrix.os == 'macos-latest'
         uses: actions-rs/cargo@v1
+        env:
+          OPENSSL_DIR: ${{ env.OPENSSL_DIR }}
+          OPENSSL_INCLUDE_DIR: ${{ env.OPENSSL_INCLUDE_DIR }}
+          OPENSSL_LIB_DIR: ${{ env.OPENSSL_LIB_DIR }}
+          PKG_CONFIG_PATH: ${{ env.PKG_CONFIG_PATH }}
         with:
-          toolchain: stable
           command: build
-          args: --release --bin kopium --target ${{ matrix.target }}
-      - name: Upload
-        uses: actions/upload-artifact@v3
+          args: --release --bin ${{ env.APP_NAME }} --target ${{ matrix.target }}
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: kopium-${{ matrix.os }}-amd64
-          path: target/${{ matrix.target }}/release/kopium
+          name: ${{ env.APP_NAME }}-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ env.APP_NAME }}
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build Windows
+        run: cargo build --release --bin ${{ env.APP_NAME }} --target x86_64-pc-windows-msvc
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-x86_64-pc-windows-msvc
+          path: target/x86_64-pc-windows-msvc/release/${{ env.APP_NAME }}.exe
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
+    env:
+      TARGETS: >-
+        x86_64-unknown-linux-gnu
+        aarch64-unknown-linux-gnu
+        x86_64-apple-darwin
+        aarch64-apple-darwin
+        x86_64-pc-windows-msvc
+        armv7-unknown-linux-gnueabihf
+      FILES: >-
+        cargo-appraiser-linux-amd64
+        cargo-appraiser-linux-arm64
+        cargo-appraiser-darwin-amd64
+        cargo-appraiser-darwin-arm64
+        cargo-appraiser-windows-amd64
+        cargo-appraiser-linux-armhf
     steps:
-      - uses: actions/checkout@v4
-      - name: Download
-        uses: actions/download-artifact@v3
-      - name: Layout
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Rename and move artifacts
         run: |
-          mv kopium-ubuntu-latest-amd64/kopium ./kopium-linux-amd64
-          mv kopium-macos-latest-amd64/kopium ./kopium-darwin-amd64
-          rm -rf kopium-ubuntu-latest-amd64 kopium-macos-latest-amd64
+          mkdir -p ./artifacts
+          targets=(${{ env.TARGETS }})
+          files=(${{ env.FILES }})
+          for i in "${!targets[@]}"; do
+            artifact_name="${{ env.APP_NAME }}-${targets[$i]}"
+            output_name="${files[$i]}"
+
+            if [[ "${targets[$i]}" == *"-windows-"* ]]; then
+              mv "$artifact_name/${{ env.APP_NAME }}.exe" "./artifacts/$output_name.exe"
+            else
+              mv "$artifact_name/${{ env.APP_NAME }}" "./artifacts/$output_name"
+            fi
+          done
 
       - name: Release
-        uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          draft: true
+          draft: false
           fail_on_unmatched_files: true
-          files: |
-            kopium-darwin-amd64
-            kopium-linux-amd64
+          files: ./artifacts/**

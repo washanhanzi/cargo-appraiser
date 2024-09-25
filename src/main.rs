@@ -158,10 +158,6 @@ impl LanguageServer for CargoAppraiser {
                 .send(CargoDocumentEvent::Saved(CargoTomlPayload { path, text }))
                 .await
                 .unwrap();
-
-            // self.client
-            //     .log_message(MessageType::INFO, "Cargo.toml saved. ")
-            //     .await;
         };
     }
 

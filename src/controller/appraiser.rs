@@ -12,7 +12,7 @@ use crate::{
     usecase::{diff_symbol_maps, Walker},
 };
 
-use super::cargo::{get_latest_version, parse_cargo_output, CargoResolveOutput};
+use super::cargo::{parse_cargo_output, CargoResolveOutput};
 
 #[derive(Debug, Clone)]
 pub struct Ctx {
@@ -96,13 +96,6 @@ impl Appraiser {
                             path = Some(msg.path.to_string());
                             rev = 0;
                             dirty_nodes.clear();
-
-                            eprintln!("clear hints");
-
-                            render_tx
-                                .send(DecorationEvent::Reset(path.as_ref().unwrap().to_string()))
-                                .await
-                                .unwrap();
                         }
                         rev += 1;
 
@@ -207,7 +200,7 @@ impl Appraiser {
                             continue;
                         }
 
-                        //resolve cargo dependencies in child task
+                        //resolve cargo dependencies in another task
                         cargo_tx
                             .send(Ctx {
                                 path: msg.path.to_string(),
@@ -224,7 +217,7 @@ impl Appraiser {
                         if output.ctx.rev != rev {
                             continue;
                         }
-                        //populate deps usting cargo tree result
+                        //populate deps
                         for dep in &mut dependencies {
                             let key = dep.toml_key();
                             if output.dependencies.is_empty()
@@ -235,17 +228,12 @@ impl Appraiser {
                             // Take resolved out of the output.dependencies hashmap
                             let resolved = output.dependencies.remove(&key).unwrap();
                             dep.resolved = Some(resolved);
-                        }
 
-                        let summaries_map = get_latest_version(&output.ctx.path);
-
-                        //populate dep resolved and latest_summary
-                        for dep in &mut dependencies {
                             let package_name = dep.package_name();
-                            if !summaries_map.contains_key(package_name) {
+                            if !output.summaries.contains_key(package_name) {
                                 continue;
                             }
-                            let summaries = summaries_map.get(package_name).unwrap();
+                            let summaries = output.summaries.get(package_name).unwrap();
                             dep.summaries = Some(summaries.clone());
 
                             //if not installed, we don't need to know the latest version
@@ -262,7 +250,6 @@ impl Appraiser {
                                 if &installed == summary.version() {
                                     dep.matched_summary = Some(summary.clone());
                                 }
-                                let pp = installed.pre.is_empty();
                                 match latest {
                                     Some(cur) if summary.version() > cur => {
                                         latest = Some(summary.version());
@@ -302,11 +289,12 @@ impl Appraiser {
                                     _ => {}
                                 }
                             }
-                        }
 
-                        //send to render
-                        for dep in &dependencies {
-                            if dirty_nodes.contains_key(&dep.id) {
+                            //send to render
+                            if let Some(rev) = dirty_nodes.get(&dep.id) {
+                                if *rev > output.ctx.rev {
+                                    continue;
+                                }
                                 //send to render task
                                 render_tx
                                     .send(DecorationEvent::Dependency(
@@ -317,8 +305,8 @@ impl Appraiser {
                                     ))
                                     .await
                                     .unwrap();
+                                dirty_nodes.remove(&dep.id);
                             }
-                            continue;
                         }
                     }
                     _ => {}
