@@ -8,7 +8,7 @@ use tower_lsp::Client;
 
 use crate::{
     decoration::DecorationEvent,
-    entity::{cargo_dependency_to_toml_key, CargoNode, Dependency},
+    entity::{cargo_dependency_to_toml_key, CargoKey, CargoNode, Dependency},
     usecase::{diff_symbol_maps, Walker},
 };
 
@@ -90,6 +90,46 @@ impl Appraiser {
 
             while let Some(event) = rx.recv().await {
                 match event {
+                    CargoDocumentEvent::CargoLockChanged => {
+                        if path.is_none() {
+                            continue;
+                        }
+                        rev += 1;
+                        dirty_nodes.clear();
+
+                        //loop k,v of symbol_map
+                        for (k, v) in &symbol_map {
+                            //CargoKey::SimpleDependency or CargoKey::TableDependency
+                            if let CargoKey::SimpleDependency(_) | CargoKey::TableDependency(_) =
+                                v.key
+                            {
+                                dirty_nodes.insert(k.to_string(), rev);
+                            }
+                        }
+
+                        // Loop through both created and changed nodes
+                        for v in dirty_nodes.keys() {
+                            let range = symbol_map[v].range;
+                            // Send to a dedicated render task
+                            render_tx
+                                .send(DecorationEvent::DependencyLoading(
+                                    path.as_ref().unwrap().to_string(),
+                                    v.to_string(),
+                                    range,
+                                ))
+                                .await
+                                .unwrap();
+                        }
+
+                        //resolve cargo dependencies in another task
+                        cargo_tx
+                            .send(Ctx {
+                                path: path.as_ref().unwrap().to_string(),
+                                rev,
+                            })
+                            .await
+                            .unwrap();
+                    }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
                         //if opened or saved document is changed, reset rev and path
                         if msg.path != path.as_deref().unwrap_or_default() {

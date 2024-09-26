@@ -190,6 +190,19 @@ impl LanguageServer for CargoAppraiser {
             range: None,
         }))
     }
+
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        //check params.changes's item, if it end with "Cargo.lock"
+        for change in params.changes {
+            if change.uri.path().ends_with("Cargo.lock") {
+                //send refresh event
+                self.tx
+                    .send(CargoDocumentEvent::CargoLockChanged)
+                    .await
+                    .unwrap();
+            }
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -205,17 +218,8 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    // Print unparsed arguments for debugging
-    eprintln!(
-        "Unparsed arguments: {:?}",
-        std::env::args().collect::<Vec<String>>()
-    );
-
     // Parse command-line arguments
     let args = Args::parse();
-
-    // Log the parsed arguments
-    eprintln!("Parsed arguments: {:?}", args);
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();

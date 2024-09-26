@@ -40,7 +40,7 @@ export function activate(context: ExtensionContext) {
         documentSelector: [{ scheme: 'file', language: 'toml' }],
         synchronize: {
             // Notify the server about file changes to '.clientrc files contained in the workspace
-            fileEvents: workspace.createFileSystemWatcher('**/Cargo.toml')
+            fileEvents: workspace.createFileSystemWatcher('**/Cargo.lock')
         },
         outputChannel: traceOutputChannel
     }
