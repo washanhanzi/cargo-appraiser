@@ -90,6 +90,16 @@ impl Appraiser {
 
             while let Some(event) = rx.recv().await {
                 match event {
+                    CargoDocumentEvent::Closed(closed_path) => {
+                        if let Some(cur_path) = path.as_ref() {
+                            if cur_path.as_str() == closed_path {
+                                path = None;
+                                rev = 0;
+                                dirty_nodes.clear();
+                                symbol_map.clear();
+                            }
+                        }
+                    }
                     CargoDocumentEvent::CargoLockChanged => {
                         if path.is_none() {
                             continue;
@@ -107,20 +117,6 @@ impl Appraiser {
                             }
                         }
 
-                        // Loop through both created and changed nodes
-                        for v in dirty_nodes.keys() {
-                            let range = symbol_map[v].range;
-                            // Send to a dedicated render task
-                            render_tx
-                                .send(DecorationEvent::DependencyLoading(
-                                    path.as_ref().unwrap().to_string(),
-                                    v.to_string(),
-                                    range,
-                                ))
-                                .await
-                                .unwrap();
-                        }
-
                         //resolve cargo dependencies in another task
                         cargo_tx
                             .send(Ctx {
@@ -135,6 +131,7 @@ impl Appraiser {
                         if msg.path != path.as_deref().unwrap_or_default() {
                             path = Some(msg.path.to_string());
                             rev = 0;
+                            symbol_map.clear();
                             dirty_nodes.clear();
                         }
                         rev += 1;

@@ -110,7 +110,10 @@ impl LanguageServer for CargoAppraiser {
         if !path.ends_with("Cargo.toml") {
             return;
         };
-        eprintln!("did close: {}", path);
+        self.tx
+            .send(CargoDocumentEvent::Closed(path))
+            .await
+            .unwrap();
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
