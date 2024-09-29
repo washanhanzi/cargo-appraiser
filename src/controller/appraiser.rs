@@ -3,16 +3,26 @@ use std::{collections::HashMap, path::Path};
 use cargo::util::VersionExt;
 use semver::Version;
 use taplo::dom::node::DomNode;
-use tokio::sync::mpsc::{self, Sender};
-use tower_lsp::Client;
+use tokio::sync::{
+    mpsc::{self, Sender},
+    oneshot,
+};
+use tower_lsp::{
+    lsp_types::{Hover, Position, Range},
+    Client,
+};
 
 use crate::{
     decoration::DecorationEvent,
-    entity::{cargo_dependency_to_toml_key, CargoKey, CargoNode, Dependency},
+    entity::cargo_dependency_to_toml_key,
     usecase::{diff_symbol_maps, Walker},
 };
 
-use super::cargo::{parse_cargo_output, CargoResolveOutput};
+use super::{
+    cargo::{parse_cargo_output, CargoResolveOutput},
+    document_state,
+    hover::hover,
+};
 
 #[derive(Debug, Clone)]
 pub struct Ctx {
@@ -36,7 +46,7 @@ pub enum CargoDocumentEvent {
     //start to parse the document, update the state, and send event for cargo_tree task
     Opened(CargoTomlPayload),
     Saved(CargoTomlPayload),
-    //reset state
+    //reset state, String is path
     Closed(String),
     //result from cargo command
     //consolidate state and send render event
@@ -44,7 +54,10 @@ pub enum CargoDocumentEvent {
     //cargo.lock change
     //CargoLockCreated,
     CargoLockChanged,
-    CargoLockDeleted,
+    //code action, path and range
+    CodeAction(String, Range),
+    //hover event, path and position
+    Hovered(String, Position, oneshot::Sender<Hover>),
 }
 
 pub struct CargoTomlPayload {
@@ -67,10 +80,12 @@ impl Appraiser {
         tokio::spawn(async move {
             while let Some(event) = cargo_rx.recv().await {
                 let output = parse_cargo_output(&event).await;
-                tx_for_cargo
+                if let Err(e) = tx_for_cargo
                     .send(CargoDocumentEvent::CargoResolved(output))
                     .await
-                    .unwrap();
+                {
+                    eprintln!("cargo resolved tx error: {}", e);
+                }
             }
         });
 
@@ -79,62 +94,45 @@ impl Appraiser {
         let render_tx = self.render_tx.clone();
         tokio::spawn(async move {
             //state
-            let mut path: Option<String> = None;
-            let mut rev: usize = 0;
+            let mut state = document_state::DocumentState::new();
             //symbol_map store the ui representation of the Cargo.toml file, this is a snapshot of latest save
-            let mut symbol_map: HashMap<String, CargoNode> = HashMap::new();
-            //dependencies only store the dependencies in Cargo.toml, this is a snapshot of latest save
-            let mut dependencies: Vec<Dependency> = Vec::new();
-            //the dirty nodes of latest save
-            let mut dirty_nodes: HashMap<String, usize> = HashMap::new();
+            // let mut symbol_map: HashMap<String, CargoNode> = HashMap::new();
+            // let mut reverse_map: ReverseSymbolTree = ReverseSymbolTree::new(&symbol_map);
+            // //dependencies only store the dependencies in Cargo.toml, this is a snapshot of latest save
+            // let mut dependencies: Vec<Dependency> = Vec::new();
+            // //the dirty nodes of latest save
+            // let mut dirty_nodes: HashMap<String, usize> = HashMap::new();
 
             while let Some(event) = rx.recv().await {
                 match event {
-                    CargoDocumentEvent::Closed(closed_path) => {
-                        if let Some(cur_path) = path.as_ref() {
-                            if cur_path.as_str() == closed_path {
-                                path = None;
-                                rev = 0;
-                                dirty_nodes.clear();
-                                symbol_map.clear();
-                            }
-                        }
+                    CargoDocumentEvent::Hovered(req_path, pos, tx) => {
+                        let Some((symbol_map, reverse_map, dependencies)) = state.state(&req_path)
+                        else {
+                            continue;
+                        };
+                        let Some(node) = reverse_map.cargo_key(pos, symbol_map) else {
+                            continue;
+                        };
+                        let Some(dep) = dependencies.iter().find(|dep| dep.id == node.key.id())
+                        else {
+                            continue;
+                        };
+                        let Some(h) = hover(node, dep) else {
+                            continue;
+                        };
+                        tx.send(h).unwrap()
+                    }
+                    CargoDocumentEvent::Closed(req_path) => {
+                        state.close(&req_path);
                     }
                     CargoDocumentEvent::CargoLockChanged => {
-                        if path.is_none() {
-                            continue;
-                        }
-                        rev += 1;
-                        dirty_nodes.clear();
-
-                        //loop k,v of symbol_map
-                        for (k, v) in &symbol_map {
-                            //CargoKey::SimpleDependency or CargoKey::TableDependency
-                            if let CargoKey::SimpleDependency(_) | CargoKey::TableDependency(_) =
-                                v.key
-                            {
-                                dirty_nodes.insert(k.to_string(), rev);
-                            }
-                        }
-
-                        //resolve cargo dependencies in another task
-                        cargo_tx
-                            .send(Ctx {
-                                path: path.as_ref().unwrap().to_string(),
-                                rev,
-                            })
-                            .await
-                            .unwrap();
+                        state.clear();
+                        render_tx.send(DecorationEvent::Reset).await.unwrap();
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
-                        //if opened or saved document is changed, reset rev and path
-                        if msg.path != path.as_deref().unwrap_or_default() {
-                            path = Some(msg.path.to_string());
-                            rev = 0;
-                            symbol_map.clear();
-                            dirty_nodes.clear();
-                        }
-                        rev += 1;
+                        let rev = state.inc_rev(&msg.path);
+                        let (symbol_map, reverse_map, dirty_nodes, dependencies) =
+                            state.state_mut(&msg.path);
 
                         let (new_symbol_map, new_deps) = {
                             //parse cargo.toml text
@@ -199,30 +197,33 @@ impl Appraiser {
                         //created, changed, deleted nodes
                         //dirty nodes includes created, changed nodes
                         let (created, changed, deleted) =
-                            diff_symbol_maps(&symbol_map, &new_symbol_map, rev, &mut dirty_nodes);
+                            diff_symbol_maps(symbol_map, &new_symbol_map, rev, dirty_nodes);
 
                         //override old symbol map
-                        symbol_map = new_symbol_map;
+                        *symbol_map = new_symbol_map;
+                        //generate reverse symbol tree
+                        reverse_map.init(symbol_map);
 
                         // Loop through both created and changed nodes
                         for v in created.iter().chain(changed.iter()) {
-                            let range = symbol_map[v].range;
                             // Send to a dedicated render task
-                            render_tx
-                                .send(DecorationEvent::DependencyLoading(
-                                    path.as_ref().unwrap().to_string(),
-                                    v.to_string(),
-                                    range,
-                                ))
-                                .await
-                                .unwrap();
+                            if let Some(n) = symbol_map.get(v) {
+                                render_tx
+                                    .send(DecorationEvent::DependencyLoading(
+                                        msg.path.to_string(),
+                                        v.to_string(),
+                                        n.range,
+                                    ))
+                                    .await
+                                    .unwrap();
+                            }
                         }
 
                         for v in deleted {
                             //send to a dedicate render task
                             render_tx
                                 .send(DecorationEvent::DependencyRemove(
-                                    path.as_ref().unwrap().to_string(),
+                                    msg.path.to_string(),
                                     v.to_string(),
                                 ))
                                 .await
@@ -230,7 +231,7 @@ impl Appraiser {
                         }
 
                         //override old deps
-                        dependencies = new_deps;
+                        *dependencies = new_deps;
 
                         //no change to resolve
                         if dirty_nodes.is_empty() {
@@ -248,14 +249,12 @@ impl Appraiser {
                     }
                     CargoDocumentEvent::CargoResolved(mut output) => {
                         //compare path and rev
-                        if output.ctx.path != path.as_deref().unwrap_or_default() {
+                        if !state.check(&output.ctx.path, output.ctx.rev) {
                             continue;
                         }
-                        if output.ctx.rev != rev {
-                            continue;
-                        }
+                        let (_, _, dirty_nodes, dependencies) = state.state_mut(&output.ctx.path);
                         //populate deps
-                        for dep in &mut dependencies {
+                        for dep in dependencies {
                             let key = dep.toml_key();
                             if output.dependencies.is_empty()
                                 || !output.dependencies.contains_key(&key)
@@ -335,7 +334,7 @@ impl Appraiser {
                                 //send to render task
                                 render_tx
                                     .send(DecorationEvent::Dependency(
-                                        path.as_ref().unwrap().to_string(),
+                                        output.ctx.path.to_string(),
                                         dep.id.clone(),
                                         dep.range,
                                         dep.clone(),

@@ -14,7 +14,7 @@ pub enum CargoTable {
     Example,
     Test,
     Bench,
-    Dependencie(DependencyTable),
+    Dependencies(DependencyTable),
     Features,
     Workspace,
     Profile,
@@ -70,9 +70,11 @@ impl std::str::FromStr for CargoTable {
             "example" => Ok(CargoTable::Example),
             "test" => Ok(CargoTable::Test),
             "bench" => Ok(CargoTable::Bench),
-            "dependencies" => Ok(CargoTable::Dependencie(DependencyTable::Dependencies)),
-            "dev-dependencies" => Ok(CargoTable::Dependencie(DependencyTable::DevDependencies)),
-            "build-dependencies" => Ok(CargoTable::Dependencie(DependencyTable::BuildDependencies)),
+            "dependencies" => Ok(CargoTable::Dependencies(DependencyTable::Dependencies)),
+            "dev-dependencies" => Ok(CargoTable::Dependencies(DependencyTable::DevDependencies)),
+            "build-dependencies" => {
+                Ok(CargoTable::Dependencies(DependencyTable::BuildDependencies))
+            }
             "features" => Ok(CargoTable::Features),
             "workspace" => Ok(CargoTable::Workspace),
             "profile" => Ok(CargoTable::Profile),

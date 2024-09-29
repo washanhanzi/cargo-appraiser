@@ -5,7 +5,7 @@ use parking_lot::RwLock;
 use serde_json::json;
 use tokio::sync::mpsc::{self, Sender};
 use tower_lsp::{
-    lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, InlayHintLabelPart, Position, Range},
+    lsp_types::{InlayHint, InlayHintLabel, InlayHintLabelPart, Position},
     Client,
 };
 
@@ -24,7 +24,7 @@ mod inlay_hint_decoration_state {
 
     pub fn upsert(state: &RwLock<InlayHintDecorationState>, path: &str, id: &str, hint: InlayHint) {
         let mut state = state.write();
-        let path_map = state.entry(path.to_string()).or_insert(HashMap::new());
+        let path_map = state.entry(path.to_string()).or_default();
         path_map.insert(id.to_string(), hint);
     }
 
@@ -35,11 +35,9 @@ mod inlay_hint_decoration_state {
         }
     }
 
-    pub fn reset(state: &RwLock<InlayHintDecorationState>, path: &str) {
+    pub fn reset(state: &RwLock<InlayHintDecorationState>) {
         let mut state = state.write();
-        if let Some(path_map) = state.get_mut(path) {
-            path_map.clear();
-        }
+        state.clear();
     }
 
     pub fn list(state: &RwLock<InlayHintDecorationState>, path: &str) -> Vec<InlayHint> {
@@ -57,7 +55,6 @@ mod inlay_hint_decoration_state {
 #[derive(Debug, Clone)]
 pub struct InlayHintDecoration {
     client: Client,
-    initialized: bool,
     hints: Arc<RwLock<InlayHintDecorationState>>,
 }
 
@@ -65,7 +62,6 @@ impl InlayHintDecoration {
     pub fn new(client: Client) -> Self {
         Self {
             client,
-            initialized: false,
             hints: inlay_hint_decoration_state::new(),
         }
     }
@@ -73,7 +69,6 @@ impl InlayHintDecoration {
     pub fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
-            initialized: self.initialized,
             hints: Arc::clone(&self.hints),
         }
     }
@@ -88,7 +83,7 @@ impl InlayHintDecoration {
                 match event {
                     DecorationEvent::DependencyLoading(path, id, range) => {
                         let hint = InlayHint {
-                            position: Position::new(range.end.line - 1, range.end.character),
+                            position: Position::new(range.end.line, range.end.character),
                             label: InlayHintLabel::LabelParts(vec![InlayHintLabelPart {
                                 value: GLOBAL_CONFIG
                                     .read()
@@ -113,8 +108,8 @@ impl InlayHintDecoration {
                     DecorationEvent::DependencyRemove(path, id) => {
                         inlay_hint_decoration_state::remove(&state, &path, &id);
                     }
-                    DecorationEvent::Reset(path) => {
-                        inlay_hint_decoration_state::reset(&state, &path);
+                    DecorationEvent::Reset => {
+                        inlay_hint_decoration_state::reset(&state);
                     }
                     DecorationEvent::Dependency(path, id, range, p) => {
                         let config = GLOBAL_CONFIG.read().unwrap();
@@ -188,7 +183,7 @@ impl InlayHintDecoration {
                         };
 
                         let hint = InlayHint {
-                            position: Position::new(range.end.line - 1, range.end.character),
+                            position: Position::new(range.end.line, range.end.character),
                             label: InlayHintLabel::String(display),
                             kind: None,
                             text_edits: None,
@@ -210,8 +205,8 @@ impl InlayHintDecoration {
         inlay_hint_decoration_state::remove(&self.hints, &path, id);
     }
 
-    pub fn reset(&mut self, path: &str) {
-        inlay_hint_decoration_state::reset(&self.hints, &path);
+    pub fn reset(&mut self) {
+        inlay_hint_decoration_state::reset(&self.hints);
     }
 }
 

@@ -54,7 +54,7 @@ impl DecorationRenderer {
 
 #[derive(Clone)]
 pub enum DecorationEvent {
-    Reset(String),
+    Reset,
     DependencyRemove(String, String),
     DependencyLoading(String, String, Range),
     Dependency(String, String, Range, Dependency),

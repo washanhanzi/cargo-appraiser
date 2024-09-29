@@ -8,7 +8,7 @@ use super::{package::Package, CargoTable};
 //2. quick find the node from a range, like quick find what the given range point to
 
 //HashMap<id,TomlNode> is a raw representation of cargo.toml
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CargoNode {
     pub id: String,
     pub range: Range,
@@ -37,14 +37,38 @@ pub struct Manifest {
     package: Package,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub enum CargoKey {
     Table(CargoTable),
-    SimpleDependency(String),
-    TableDependency(String),
+    Dpendency(String, DependencyKey),
+    Key(String),
+}
+
+impl CargoKey {
+    pub fn is_dependency(&self) -> bool {
+        matches!(
+            self,
+            CargoKey::Dpendency(_, DependencyKey::SimpleDependency)
+                | CargoKey::Dpendency(_, DependencyKey::TableDependency)
+        )
+    }
+    pub fn id(&self) -> &str {
+        match self {
+            //TODO not ok
+            CargoKey::Table(_) => "table",
+            CargoKey::Dpendency(id, _) => id,
+            CargoKey::Key(id) => id,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub enum DependencyKey {
+    SimpleDependency,
+    TableDependency,
     TableDependencyVersion,
     TableDependencyFeatures,
-    TableDependencyFeature(String),
+    TableDependencyFeature,
     TableDependencyRegistry,
     TableDependencyGit,
     TableDependencyBranch,
@@ -56,5 +80,4 @@ pub enum CargoKey {
     TableDependencyDefaultFeatures,
     TableDependencyOptional,
     TableDependencyUnknownBool,
-    Key(String),
 }

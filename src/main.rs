@@ -2,7 +2,7 @@ use clap::{arg, command, Parser};
 use config::{initialize_config, Config};
 use controller::{Appraiser, CargoDocumentEvent, CargoTomlPayload};
 use decoration::{DecorationRenderer, Renderer};
-use tokio::sync::mpsc::Sender;
+use tokio::sync::{mpsc::Sender, oneshot};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -183,15 +183,34 @@ impl LanguageServer for CargoAppraiser {
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        let position = params.text_document_position_params.position;
-        let hover_text = format!(
-            "Hover request at line {}, character {}",
-            position.line, position.character
-        );
-        Ok(Some(Hover {
-            contents: HoverContents::Scalar(MarkedString::String(hover_text)),
-            range: None,
-        }))
+        let path = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .path()
+            .to_string();
+        if !path.ends_with("Cargo.toml") {
+            return Ok(None);
+        };
+        //create a once channel with payload Hover
+        let (tx, rx) = oneshot::channel();
+        if let Err(e) = self
+            .tx
+            .send(CargoDocumentEvent::Hovered(
+                path,
+                params.text_document_position_params.position,
+                tx,
+            ))
+            .await
+        {
+            eprintln!("error sending hover event: {}", e);
+        };
+        match rx.await {
+            Ok(hover) => return Ok(Some(hover)),
+            Err(_) => {
+                return Ok(None);
+            }
+        }
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
