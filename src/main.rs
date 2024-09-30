@@ -34,10 +34,30 @@ impl LanguageServer for CargoAppraiser {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(vec![
+                        ".".to_string(),
+                        "+".to_string(),
+                        "-".to_string(),
+                        "'".to_string(),
+                        "\"".to_string(),
+                        "0".to_string(),
+                        "1".to_string(),
+                        "2".to_string(),
+                        "3".to_string(),
+                        "4".to_string(),
+                        "5".to_string(),
+                        "6".to_string(),
+                        "7".to_string(),
+                        "8".to_string(),
+                        "9".to_string(),
+                    ]),
+                    ..Default::default()
+                }),
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
                         open_close: Some(true),
-                        change: None,
+                        change: Some(TextDocumentSyncKind::FULL),
                         will_save: None,
                         will_save_wait_until: None,
                         save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
@@ -103,6 +123,15 @@ impl LanguageServer for CargoAppraiser {
             }))
             .await
             .unwrap();
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        for change in params.content_changes {
+            self.tx
+                .send(CargoDocumentEvent::Changed(change.text))
+                .await
+                .unwrap();
+        }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -180,6 +209,14 @@ impl LanguageServer for CargoAppraiser {
 
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        eprintln!(
+            "completion: {}",
+            params.text_document_position.text_document.uri,
+        );
+        Ok(None)
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {

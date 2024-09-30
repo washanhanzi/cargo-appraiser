@@ -7,9 +7,12 @@ use lsp_async_stub::util::Mapper;
 use taplo::{dom::Node, util::join_ranges};
 use tower_lsp::lsp_types::{Position, Range};
 
-use crate::entity::{CargoKey, CargoNode, CargoTable, Dependency, DependencyKey, Value};
+use crate::entity::{
+    CargoKey, CargoNode, CargoTable, Dependency, DependencyKey, InvalidDependencyKey, InvalideKey,
+    Value,
+};
 
-//TODO maybe encapulate symbol_map and reverse_map as a struct
+//TODO maybe encapulate symbol_map and reverse_map
 
 pub struct ReverseSymbolTree(HashMap<u32, Vec<String>>);
 
@@ -31,7 +34,9 @@ impl ReverseSymbolTree {
         *self = Self(m);
     }
 
-    pub fn cargo_key(
+    //TODO for simple or table dependency, the crate name will never be matched
+    //if no match found, return the simple or table dependency node?
+    pub fn precise_match(
         &self,
         pos: Position,
         symbol_map: &HashMap<String, CargoNode>,
@@ -80,10 +85,6 @@ impl Walker {
     }
 
     pub fn walk_root(&mut self, id: &str, name: &str, node: &Node) {
-        // let range = self.mapper.range(join_ranges(node.text_ranges())).unwrap();
-        // let lsp_range = into_lsp_range(range);
-
-        // let text = serde_json::to_string(&node).unwrap();
         match node {
             Node::Table(t) => {
                 //the top level table node is not write into symbol map
@@ -182,9 +183,24 @@ impl Walker {
 
         let range = self.mapper.range(join_ranges(node.text_ranges())).unwrap();
         let lsp_range = into_lsp_range(range);
-        let text = serde_json::to_string(&node).unwrap();
+        let text = serde_json::to_string(&node).unwrap_or_default();
 
         match node {
+            //invalid node
+            Node::Invalid(_) => {
+                self.symbol_map.insert(
+                    id.to_string(),
+                    CargoNode {
+                        id: id.to_string(),
+                        range: lsp_range,
+                        text: name.to_string(),
+                        table,
+                        key: CargoKey::Invalid(InvalideKey::Dependency(
+                            InvalidDependencyKey::CrateName,
+                        )),
+                    },
+                );
+            }
             //inline table dependency
             Node::Table(t) => {
                 self.symbol_map.insert(
@@ -237,7 +253,7 @@ impl Walker {
                                 CargoNode {
                                     id: new_id,
                                     range: lsp_range,
-                                    text,
+                                    text: strip_quote(text),
                                     table,
                                     key: CargoKey::Dpendency(
                                         dep.id.to_string(),
@@ -311,7 +327,7 @@ impl Walker {
                     CargoNode {
                         id: id.to_string(),
                         range: lsp_range,
-                        text,
+                        text: strip_quote(text),
                         table,
                         key,
                     },
@@ -344,7 +360,7 @@ impl Walker {
                     CargoNode {
                         id: id.to_string(),
                         range: lsp_range,
-                        text,
+                        text: strip_quote(text),
                         table,
                         key,
                     },
@@ -366,7 +382,7 @@ impl Walker {
                     CargoNode {
                         id: id.to_string(),
                         range: lsp_range,
-                        text,
+                        text: strip_quote(text),
                         table,
                         key: CargoKey::Table(table),
                     },
@@ -383,7 +399,7 @@ impl Walker {
                     CargoNode {
                         id: id.to_string(),
                         range: lsp_range,
-                        text,
+                        text: strip_quote(text),
                         table,
                         key: CargoKey::Key(name.to_string()),
                     },
@@ -400,7 +416,7 @@ impl Walker {
                     CargoNode {
                         id: id.to_string(),
                         range: lsp_range,
-                        text,
+                        text: strip_quote(text),
                         table,
                         key: CargoKey::Key(name.to_string()),
                     },
@@ -459,4 +475,11 @@ pub fn diff_symbol_maps(
     }
 
     (created, changed, deleted)
+}
+
+fn strip_quote(s: String) -> String {
+    if s.starts_with('"') && s.ends_with('"') {
+        return s[1..s.len() - 1].to_string();
+    }
+    s
 }

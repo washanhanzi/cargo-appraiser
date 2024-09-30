@@ -42,6 +42,7 @@ pub enum CargoKey {
     Table(CargoTable),
     Dpendency(String, DependencyKey),
     Key(String),
+    Invalid(InvalideKey),
 }
 
 impl CargoKey {
@@ -52,12 +53,12 @@ impl CargoKey {
                 | CargoKey::Dpendency(_, DependencyKey::TableDependency)
         )
     }
-    pub fn id(&self) -> &str {
+    pub fn row_id(&self) -> &str {
         match self {
             //TODO not ok
-            CargoKey::Table(_) => "table",
             CargoKey::Dpendency(id, _) => id,
             CargoKey::Key(id) => id,
+            _ => "",
         }
     }
 }
@@ -80,4 +81,16 @@ pub enum DependencyKey {
     TableDependencyDefaultFeatures,
     TableDependencyOptional,
     TableDependencyUnknownBool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub enum InvalideKey {
+    Dependency(InvalidDependencyKey),
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub enum InvalidDependencyKey {
+    CrateName,
+    Version,
+    Feature,
 }

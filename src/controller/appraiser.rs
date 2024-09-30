@@ -2,7 +2,10 @@ use std::{collections::HashMap, path::Path};
 
 use cargo::util::VersionExt;
 use semver::Version;
-use taplo::dom::node::DomNode;
+use taplo::dom::{
+    node::{DomNode, Invalid},
+    Node,
+};
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -46,6 +49,7 @@ pub enum CargoDocumentEvent {
     //start to parse the document, update the state, and send event for cargo_tree task
     Opened(CargoTomlPayload),
     Saved(CargoTomlPayload),
+    Changed(String),
     //reset state, String is path
     Closed(String),
     //result from cargo command
@@ -110,10 +114,10 @@ impl Appraiser {
                         else {
                             continue;
                         };
-                        let Some(node) = reverse_map.cargo_key(pos, symbol_map) else {
+                        let Some(node) = reverse_map.precise_match(pos, symbol_map) else {
                             continue;
                         };
-                        let Some(dep) = dependencies.iter().find(|dep| dep.id == node.key.id())
+                        let Some(dep) = dependencies.iter().find(|dep| dep.id == node.key.row_id())
                         else {
                             continue;
                         };
@@ -129,6 +133,23 @@ impl Appraiser {
                         state.clear();
                         render_tx.send(DecorationEvent::Reset).await.unwrap();
                     }
+                    CargoDocumentEvent::Changed(text) => {
+                        let p = taplo::parser::parse(&text);
+                        let dom = p.into_dom();
+                        if dom.validate().is_err() {
+                            eprintln!("changed semantic Error: {:?}", dom.errors());
+                        }
+                        let table = dom.as_table().unwrap();
+                        let entries = table.entries().read();
+                        let mut walker = Walker::new(&text, entries.len());
+
+                        for (key, entry) in entries.iter() {
+                            if key.value().is_empty() {
+                                continue;
+                            }
+                            walker.walk_root(key.value(), key.value(), entry)
+                        }
+                    }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
                         let rev = state.inc_rev(&msg.path);
                         let (symbol_map, reverse_map, dirty_nodes, dependencies) =
@@ -141,11 +162,11 @@ impl Appraiser {
                             //This's a dumb full parsing
                             let p = taplo::parser::parse(&msg.text);
                             if !p.errors.is_empty() {
-                                eprintln!("syntax Error: {:?}", p.errors);
+                                continue;
                             }
                             let dom = p.into_dom();
                             if dom.validate().is_err() {
-                                eprintln!("semantic Error: {:?}", dom.errors());
+                                continue;
                             }
                             let table = dom.as_table().unwrap();
                             let entries = table.entries().read();
