@@ -102,6 +102,7 @@ pub async fn parse_cargo_output(ctx: &Ctx) -> CargoResolveOutput {
     }
 }
 
+//TODO the current Vec<Summary> didn't include yanked
 fn summaries_map(path: &str) -> HashMap<String, Vec<Summary>> {
     let path = Path::new(path);
     let gctx = cargo::util::context::GlobalContext::default().unwrap();

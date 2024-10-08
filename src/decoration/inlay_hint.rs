@@ -174,6 +174,18 @@ impl InlayHintDecoration {
                                             .unwrap()
                                         }
                                     }
+                                    (None, Some(latest_matched), _) => {
+                                        let data = json!({
+                                            "installed":p.resolved.unwrap().version ,
+                                            "latest_matched": latest_matched.version().to_string(),
+                                        });
+                                        ribboncurls::render(
+                                            &config.renderer.decoration_format.yanked,
+                                            &data.to_string(),
+                                            None,
+                                        )
+                                        .unwrap()
+                                    }
                                     (None, _, _) => {
                                         config.renderer.decoration_format.not_installed.to_string()
                                     }

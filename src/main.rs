@@ -150,40 +150,6 @@ impl LanguageServer for CargoAppraiser {
         if !path.ends_with("Cargo.toml") {
             return;
         };
-        let diagnostic = Diagnostic {
-            range: Range {
-                start: Position::new(5, 0),
-                end: Position::new(5, 80),
-            },
-            severity: Some(DiagnosticSeverity::INFORMATION),
-            code: None,
-            code_description: None,
-            source: Some("example-lsp".to_string()),
-            message: "This line is decorated".to_string(),
-            tags: None,
-            data: None,
-            related_information: Some(vec![DiagnosticRelatedInformation {
-                location: Location {
-                    uri: params.text_document.uri.clone(),
-                    range: Range {
-                        start: Position::new(5, 0),
-                        end: Position::new(5, 80),
-                    },
-                },
-                message: "This is the text to display without underlining".to_string(),
-            }]),
-        };
-
-        // Create and publish the diagnostics
-        let pub_params = PublishDiagnosticsParams {
-            uri: params.text_document.uri.clone(),
-            diagnostics: vec![diagnostic],
-            version: None,
-        };
-
-        self.client
-            .publish_diagnostics(pub_params.uri, pub_params.diagnostics, pub_params.version)
-            .await;
 
         if let Some(text) = params.text {
             self.tx

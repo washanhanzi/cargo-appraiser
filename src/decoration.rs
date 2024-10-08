@@ -77,6 +77,8 @@ pub struct DecorationFormat {
     pub compatible_latest: String,
     #[serde(default = "default_noncompatible_latest")]
     pub noncompatible_latest: String,
+    #[serde(default = "default_yanked")]
+    pub yanked: String,
 }
 
 impl Default for DecorationFormat {
@@ -89,6 +91,7 @@ impl Default for DecorationFormat {
             not_installed: default_not_installed(),
             loading: default_loading(),
             mixed_upgradeable: default_mixed_upgradeable(),
+            yanked: default_yanked(),
         }
     }
 }
@@ -119,4 +122,8 @@ fn default_loading() -> String {
 
 fn default_local() -> String {
     "Local".to_string()
+}
+
+fn default_yanked() -> String {
+    "❌ yanked {{installed}}, {{latest_matched}}".to_string()
 }
