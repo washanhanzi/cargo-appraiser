@@ -1,8 +1,11 @@
 # cargo-appraiser
 
-nothing here.
-
 WIP
+
+# Supported Editors
+
+- [VS Code](https://marketplace.visualstudio.com/items?itemName=washan.cargo-appraiser)
+- [Zed](https://github.com/washanhanzi/zed-cargo-appraiser)
 
 # Thanks to
 

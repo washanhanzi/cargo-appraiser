@@ -31,21 +31,17 @@
             },
             "problemMatcher": [
                 "$rustc"
-            ]
+            ],
+            "isBackground": true
         },
         {
             "type": "npm",
             "script": "watch:esbuild",
             "group": "build",
-            "problemMatcher": {
-                "base": "$esbuild-watch",
-                "fileLocation": [
-                    "relative",
-                    "${workspaceFolder}/editor/code/"
-                ]
-            },
+            "problemMatcher": "$esbuild-watch",
             "isBackground": true,
             "label": "npm: watch:esbuild",
+            "path": "editor/code/",
             "presentation": {
                 "group": "watch",
                 "reveal": "never"
@@ -55,15 +51,10 @@
             "type": "npm",
             "script": "watch:tsc",
             "group": "build",
-            "problemMatcher": {
-                "base": "$tsc-watch",
-                "fileLocation": [
-                    "relative",
-                    "${workspaceFolder}/editor/code/"
-                ]
-            },
+            "problemMatcher": "$tsc-watch",
             "isBackground": true,
             "label": "npm: watch:tsc",
+            "path": "editor/code/",
             "presentation": {
                 "group": "watch",
                 "reveal": "never"
