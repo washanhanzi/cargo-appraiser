@@ -11,7 +11,7 @@ use tower_lsp::{
 
 use crate::config::GLOBAL_CONFIG;
 
-use super::{DecorationEvent, InlayHintDecorationRenderer};
+use super::{formatted_string, version_decoration, DecorationEvent, InlayHintDecorationRenderer};
 
 type InlayHintDecorationState = HashMap<String, HashMap<String, InlayHint>>;
 
@@ -113,90 +113,11 @@ impl InlayHintDecoration {
                     }
                     DecorationEvent::Dependency(path, id, range, p) => {
                         let config = GLOBAL_CONFIG.read().unwrap();
-                        let display = match p.unresolved.as_ref().unwrap().source_id().kind() {
-                            SourceKind::Path => config.renderer.decoration_format.local.to_string(),
-                            SourceKind::Directory => "Directory".to_string(),
-                            _ => {
-                                match (
-                                    p.matched_summary,
-                                    p.latest_matched_summary,
-                                    p.latest_summary,
-                                ) {
-                                    (Some(matched), Some(latest_matched), Some(latest)) => {
-                                        let data = json!({
-                                            "installed": matched.version().to_string(),
-                                            "latest_matched": latest_matched.version().to_string(),
-                                            "latest": latest.version().to_string()
-                                        });
-                                        //latest
-                                        if matched.version() == latest_matched.version()
-                                            && latest_matched.version() == latest.version()
-                                        {
-                                            ribboncurls::render(
-                                                &config.renderer.decoration_format.latest,
-                                                &data.to_string(),
-                                                None,
-                                            )
-                                            .unwrap()
-                                        } else if matched.version() != latest_matched.version()
-                                            && latest_matched.version() == latest.version()
-                                        {
-                                            ribboncurls::render(
-                                                &config
-                                                    .renderer
-                                                    .decoration_format
-                                                    .compatible_latest,
-                                                &data.to_string(),
-                                                None,
-                                            )
-                                            .unwrap()
-                                        } else if matched.version() == latest_matched.version()
-                                            && latest_matched.version() != latest.version()
-                                        {
-                                            ribboncurls::render(
-                                                &config
-                                                    .renderer
-                                                    .decoration_format
-                                                    .noncompatible_latest,
-                                                &data.to_string(),
-                                                None,
-                                            )
-                                            .unwrap()
-                                        } else {
-                                            ribboncurls::render(
-                                                &config
-                                                    .renderer
-                                                    .decoration_format
-                                                    .mixed_upgradeable,
-                                                &data.to_string(),
-                                                None,
-                                            )
-                                            .unwrap()
-                                        }
-                                    }
-                                    (None, Some(latest_matched), _) => {
-                                        let data = json!({
-                                            "installed":p.resolved.unwrap().version ,
-                                            "latest_matched": latest_matched.version().to_string(),
-                                        });
-                                        ribboncurls::render(
-                                            &config.renderer.decoration_format.yanked,
-                                            &data.to_string(),
-                                            None,
-                                        )
-                                        .unwrap()
-                                    }
-                                    (None, _, _) => {
-                                        config.renderer.decoration_format.not_installed.to_string()
-                                    }
-                                    _ => "".to_string(),
-                                }
-                            }
-                        };
+                        let decoration = formatted_string(&p, &config.renderer.decoration_format);
 
                         let hint = InlayHint {
                             position: Position::new(range.end.line, range.end.character),
-                            label: InlayHintLabel::String(display),
+                            label: InlayHintLabel::String(decoration),
                             kind: None,
                             text_edits: None,
                             tooltip: None,

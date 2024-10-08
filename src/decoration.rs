@@ -1,3 +1,5 @@
+use cargo::core::SourceKind;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 use tower_lsp::{
@@ -5,7 +7,7 @@ use tower_lsp::{
     Client,
 };
 
-use crate::entity::Dependency;
+use crate::{controller::CargoTomlPayload, entity::Dependency};
 
 pub mod inlay_hint;
 
@@ -60,9 +62,135 @@ pub enum DecorationEvent {
     Dependency(String, String, Range, Dependency),
 }
 
+pub enum VersionDecoration {
+    //installed == latest_matched == latest
+    Latest,
+    Local,
+    NotInstalled,
+    //installed != latest_matched != latest
+    MixedUpgradeable,
+    //installed -> latest_matched == latest
+    CompatibleLatest,
+    //installed !-> latest_matched == latest
+    NoncompatibleLatest,
+    Yanked,
+    NotParsed,
+}
+
+#[derive(Debug, Default, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DecorationPayload {
+    installed: String,
+    latest_matched: String,
+    latest: String,
+}
+
+pub fn decoration_payload(dep: &Dependency) -> DecorationPayload {
+    let installed = match dep.resolved.as_ref() {
+        Some(resolved) => resolved.version.to_string(),
+        None => "".to_string(),
+    };
+    let latest_matched = match dep.latest_matched_summary.as_ref() {
+        Some(matched) => matched.version().to_string(),
+        None => "".to_string(),
+    };
+    let latest = match dep.latest_summary.as_ref() {
+        Some(latest) => latest.version().to_string(),
+        None => "".to_string(),
+    };
+    DecorationPayload {
+        installed,
+        latest_matched,
+        latest,
+    }
+}
+
+pub fn formatted_string(dep: &Dependency, formatter: &DecorationFormatter) -> String {
+    let version = version_decoration(dep);
+    let payload = decoration_payload(dep);
+    match version {
+        VersionDecoration::Latest => formatter
+            .latest
+            .replace("{{installed}}", &payload.installed)
+            .replace("{{latest_matched}}", &payload.latest_matched)
+            .replace("{{latest}}", &payload.latest),
+        VersionDecoration::Local => formatter
+            .local
+            .replace("{{installed}}", &payload.installed)
+            .replace("{{latest_matched}}", &payload.latest_matched)
+            .replace("{{latest}}", &payload.latest),
+        VersionDecoration::NotInstalled => formatter
+            .not_installed
+            .replace("{{installed}}", &payload.installed)
+            .replace("{{latest_matched}}", &payload.latest_matched)
+            .replace("{{latest}}", &payload.latest),
+        VersionDecoration::MixedUpgradeable => formatter
+            .mixed_upgradeable
+            .replace("{{installed}}", &payload.installed)
+            .replace("{{latest_matched}}", &payload.latest_matched)
+            .replace("{{latest}}", &payload.latest),
+        VersionDecoration::CompatibleLatest => formatter
+            .compatible_latest
+            .replace("{{installed}}", &payload.installed)
+            .replace("{{latest_matched}}", &payload.latest_matched)
+            .replace("{{latest}}", &payload.latest),
+        VersionDecoration::NoncompatibleLatest => formatter
+            .noncompatible_latest
+            .replace("{{installed}}", &payload.installed)
+            .replace("{{latest_matched}}", &payload.latest_matched)
+            .replace("{{latest}}", &payload.latest),
+        VersionDecoration::Yanked => formatter
+            .yanked
+            .replace("{{installed}}", &payload.installed)
+            .replace("{{latest_matched}}", &payload.latest_matched)
+            .replace("{{latest}}", &payload.latest),
+        _ => "".to_string(),
+    }
+}
+
+pub fn version_decoration(dep: &Dependency) -> VersionDecoration {
+    match dep.unresolved.as_ref().unwrap().source_id().kind() {
+        SourceKind::Path => VersionDecoration::Local,
+        //TODO idk what's this
+        SourceKind::Directory => VersionDecoration::Local,
+        _ => {
+            match (
+                dep.resolved.as_ref(),
+                dep.matched_summary.as_ref(),
+                dep.latest_matched_summary.as_ref(),
+                dep.latest_summary.as_ref(),
+            ) {
+                (Some(_), Some(matched), Some(latest_matched), Some(latest)) => {
+                    //latest
+                    if matched.version() == latest_matched.version()
+                        && latest_matched.version() == latest.version()
+                    {
+                        VersionDecoration::Latest
+                    } else if matched.version() != latest_matched.version()
+                        && latest_matched.version() == latest.version()
+                    {
+                        VersionDecoration::CompatibleLatest
+                    } else if matched.version() == latest_matched.version()
+                        && latest_matched.version() != latest.version()
+                    {
+                        VersionDecoration::NoncompatibleLatest
+                    } else {
+                        VersionDecoration::MixedUpgradeable
+                    }
+                }
+                (Some(_), None, Some(_), Some(_)) => VersionDecoration::Yanked,
+                (None, _, _, _) => VersionDecoration::NotInstalled,
+                //TODO get latest version for not installed
+                //TODO any other match arm?
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct DecorationFormat {
+pub struct DecorationFormatter {
     #[serde(default = "default_latest")]
     pub latest: String,
     #[serde(default = "default_local")]
@@ -81,7 +209,7 @@ pub struct DecorationFormat {
     pub yanked: String,
 }
 
-impl Default for DecorationFormat {
+impl Default for DecorationFormatter {
     fn default() -> Self {
         Self {
             latest: default_latest(),

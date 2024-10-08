@@ -2,7 +2,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 
-use crate::decoration::DecorationFormat;
+use crate::decoration::DecorationFormatter;
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -14,7 +14,7 @@ pub struct Config {
 #[serde(rename_all = "camelCase")]
 pub struct RendererConfig {
     #[serde(default)]
-    pub decoration_format: DecorationFormat,
+    pub decoration_format: DecorationFormatter,
 }
 
 pub static GLOBAL_CONFIG: Lazy<RwLock<Config>> = Lazy::new(|| RwLock::new(Config::default()));
