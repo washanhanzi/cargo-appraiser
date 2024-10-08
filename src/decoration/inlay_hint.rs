@@ -1,11 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use cargo::core::SourceKind;
 use parking_lot::RwLock;
-use serde_json::json;
 use tokio::sync::mpsc::{self, Sender};
 use tower_lsp::{
-    lsp_types::{InlayHint, InlayHintLabel, InlayHintLabelPart, Position},
+    lsp_types::{InlayHint, InlayHintLabel, InlayHintLabelPart, Position, Url},
     Client,
 };
 
@@ -13,7 +11,7 @@ use crate::config::GLOBAL_CONFIG;
 
 use super::{formatted_string, version_decoration, DecorationEvent, InlayHintDecorationRenderer};
 
-type InlayHintDecorationState = HashMap<String, HashMap<String, InlayHint>>;
+type InlayHintDecorationState = HashMap<Url, HashMap<String, InlayHint>>;
 
 mod inlay_hint_decoration_state {
     use super::*;
@@ -22,15 +20,15 @@ mod inlay_hint_decoration_state {
         Arc::new(RwLock::new(HashMap::new()))
     }
 
-    pub fn upsert(state: &RwLock<InlayHintDecorationState>, path: &str, id: &str, hint: InlayHint) {
+    pub fn upsert(state: &RwLock<InlayHintDecorationState>, uri: &Url, id: &str, hint: InlayHint) {
         let mut state = state.write();
-        let path_map = state.entry(path.to_string()).or_default();
+        let path_map = state.entry(uri.clone()).or_default();
         path_map.insert(id.to_string(), hint);
     }
 
-    pub fn remove(state: &RwLock<InlayHintDecorationState>, path: &str, id: &str) {
+    pub fn remove(state: &RwLock<InlayHintDecorationState>, uri: &Url, id: &str) {
         let mut state = state.write();
-        if let Some(path_map) = state.get_mut(path) {
+        if let Some(path_map) = state.get_mut(uri) {
             path_map.remove(id);
         }
     }
@@ -40,10 +38,10 @@ mod inlay_hint_decoration_state {
         state.clear();
     }
 
-    pub fn list(state: &RwLock<InlayHintDecorationState>, path: &str) -> Vec<InlayHint> {
+    pub fn list(state: &RwLock<InlayHintDecorationState>, uri: &Url) -> Vec<InlayHint> {
         let state = state.read();
         state
-            .get(path)
+            .get(uri)
             .cloned()
             .unwrap_or_default()
             .values()
@@ -134,8 +132,8 @@ impl InlayHintDecoration {
         render_tx
     }
 
-    pub fn remove(&mut self, path: &str, id: &str) {
-        inlay_hint_decoration_state::remove(&self.hints, &path, id);
+    pub fn remove(&mut self, uri: &Url, id: &str) {
+        inlay_hint_decoration_state::remove(&self.hints, uri, id);
     }
 
     pub fn reset(&mut self) {
@@ -148,7 +146,7 @@ impl InlayHintDecorationRenderer for InlayHintDecoration {
         self.initialize()
     }
 
-    fn list(&self, path: &str) -> Vec<InlayHint> {
-        inlay_hint_decoration_state::list(&self.hints, &path)
+    fn list(&self, uri: &Url) -> Vec<InlayHint> {
+        inlay_hint_decoration_state::list(&self.hints, uri)
     }
 }

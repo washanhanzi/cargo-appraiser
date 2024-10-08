@@ -1,13 +1,12 @@
 use cargo::core::SourceKind;
-use semver::Version;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 use tower_lsp::{
-    lsp_types::{InlayHint, Range},
+    lsp_types::{InlayHint, Range, Url},
     Client,
 };
 
-use crate::{controller::CargoTomlPayload, entity::Dependency};
+use crate::entity::Dependency;
 
 pub mod inlay_hint;
 
@@ -26,7 +25,7 @@ pub trait VSCodeDecorationRenderer: Send + Sync + std::fmt::Debug {
 pub trait InlayHintDecorationRenderer: Send + Sync + std::fmt::Debug {
     fn init(&self) -> Sender<DecorationEvent>;
     //only work for inlayHint renderer
-    fn list(&self, path: &str) -> Vec<InlayHint>;
+    fn list(&self, uri: &Url) -> Vec<InlayHint>;
 }
 
 #[derive(Debug)]
@@ -57,9 +56,9 @@ impl DecorationRenderer {
 #[derive(Clone)]
 pub enum DecorationEvent {
     Reset,
-    DependencyRemove(String, String),
-    DependencyLoading(String, String, Range),
-    Dependency(String, String, Range, Dependency),
+    DependencyRemove(Url, String),
+    DependencyLoading(Url, String, Range),
+    Dependency(Url, String, Range, Dependency),
 }
 
 pub enum VersionDecoration {

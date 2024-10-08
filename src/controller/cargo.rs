@@ -32,7 +32,9 @@ pub struct CargoResolveOutput {
 }
 
 pub async fn parse_cargo_output(ctx: &Ctx) -> CargoResolveOutput {
-    let path = Path::new(&ctx.path);
+    //TODO can we do better
+    let uri_clone = ctx.uri.clone();
+    let path = Path::new(uri_clone.path());
     let gctx = cargo::util::context::GlobalContext::default().unwrap();
     let workspace = cargo::core::Workspace::new(path, &gctx).unwrap();
     let current = workspace.current().unwrap();
@@ -98,7 +100,7 @@ pub async fn parse_cargo_output(ctx: &Ctx) -> CargoResolveOutput {
     CargoResolveOutput {
         ctx: ctx.clone(),
         dependencies: res,
-        summaries: summaries_map(&ctx.path),
+        summaries: summaries_map(uri_clone.path()),
     }
 }
 

@@ -9,6 +9,7 @@ WIP
 
 # Thanks to
 
+- [taplo](https://github.com/tamasfe/taplo)
 - [rust analyzer](https://github.com/rust-lang/rust-analyzer)
 - [cargo](https://github.com/rust-lang/cargo)
 - [cargotom](https://github.com/frederik-uni/cargotom)

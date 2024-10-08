@@ -2,16 +2,13 @@ use std::{collections::HashMap, path::Path};
 
 use cargo::util::VersionExt;
 use semver::Version;
-use taplo::dom::{
-    node::{DomNode, Invalid},
-    Node,
-};
+use taplo::dom::node::DomNode;
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
 };
 use tower_lsp::{
-    lsp_types::{Hover, Position, Range},
+    lsp_types::{CodeActionResponse, Hover, Position, Range, Url},
     Client,
 };
 
@@ -29,7 +26,7 @@ use super::{
 
 #[derive(Debug, Clone)]
 pub struct Ctx {
-    pub path: String,
+    pub uri: Url,
     pub rev: usize,
 }
 
@@ -51,7 +48,7 @@ pub enum CargoDocumentEvent {
     Saved(CargoTomlPayload),
     Changed(String),
     //reset state, String is path
-    Closed(String),
+    Closed(Url),
     //result from cargo command
     //consolidate state and send render event
     CargoResolved(CargoResolveOutput),
@@ -59,13 +56,13 @@ pub enum CargoDocumentEvent {
     //CargoLockCreated,
     CargoLockChanged,
     //code action, path and range
-    CodeAction(String, Range),
+    CodeAction(Url, Range, oneshot::Sender<CodeActionResponse>),
     //hover event, path and position
-    Hovered(String, Position, oneshot::Sender<Hover>),
+    Hovered(Url, Position, oneshot::Sender<Hover>),
 }
 
 pub struct CargoTomlPayload {
-    pub path: String,
+    pub uri: Url,
     pub text: String,
 }
 
@@ -109,8 +106,8 @@ impl Appraiser {
 
             while let Some(event) = rx.recv().await {
                 match event {
-                    CargoDocumentEvent::Hovered(req_path, pos, tx) => {
-                        let Some((symbol_map, reverse_map, dependencies)) = state.state(&req_path)
+                    CargoDocumentEvent::Hovered(uri, pos, tx) => {
+                        let Some((symbol_map, reverse_map, dependencies)) = state.state(&uri)
                         else {
                             continue;
                         };
@@ -126,8 +123,26 @@ impl Appraiser {
                         };
                         tx.send(h).unwrap()
                     }
-                    CargoDocumentEvent::Closed(req_path) => {
-                        state.close(&req_path);
+                    CargoDocumentEvent::CodeAction(uri, range, tx) => {
+                        let Some((symbol_map, reverse_map, dependencies)) = state.state(&uri)
+                        else {
+                            continue;
+                        };
+                        eprintln!("code action: {:?}", range);
+                        let Some(node) = reverse_map.precise_match(range.start, symbol_map) else {
+                            continue;
+                        };
+                        let Some(dep) = dependencies.iter().find(|dep| dep.id == node.key.row_id())
+                        else {
+                            continue;
+                        };
+                        if dep.resolved.is_some() {
+                            eprintln!("code action: {:?}", dep.resolved.as_ref().unwrap().name);
+                            tx.send(CodeActionResponse::new()).unwrap();
+                        }
+                    }
+                    CargoDocumentEvent::Closed(uri) => {
+                        state.close(&uri);
                     }
                     CargoDocumentEvent::CargoLockChanged => {
                         state.clear();
@@ -151,9 +166,9 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
-                        let rev = state.inc_rev(&msg.path);
+                        let rev = state.inc_rev(&msg.uri);
                         let (symbol_map, reverse_map, dirty_nodes, dependencies) =
-                            state.state_mut(&msg.path);
+                            state.state_mut(&msg.uri);
 
                         let (new_symbol_map, new_deps) = {
                             //parse cargo.toml text
@@ -181,7 +196,9 @@ impl Appraiser {
                             }
 
                             //get dependencies
-                            let path = Path::new(&msg.path);
+                            //TODO ?? save the clone
+                            let uri_clone = msg.uri.clone();
+                            let path = Path::new(uri_clone.path());
                             let gctx = cargo::util::context::GlobalContext::default().unwrap();
                             //TODO ERROR parse manifest
                             let workspace = cargo::core::Workspace::new(path, &gctx).unwrap();
@@ -231,7 +248,7 @@ impl Appraiser {
                             if let Some(n) = symbol_map.get(v) {
                                 render_tx
                                     .send(DecorationEvent::DependencyLoading(
-                                        msg.path.to_string(),
+                                        msg.uri.clone(),
                                         v.to_string(),
                                         n.range,
                                     ))
@@ -244,7 +261,7 @@ impl Appraiser {
                             //send to a dedicate render task
                             render_tx
                                 .send(DecorationEvent::DependencyRemove(
-                                    msg.path.to_string(),
+                                    msg.uri.clone(),
                                     v.to_string(),
                                 ))
                                 .await
@@ -262,7 +279,7 @@ impl Appraiser {
                         //resolve cargo dependencies in another task
                         cargo_tx
                             .send(Ctx {
-                                path: msg.path.to_string(),
+                                uri: msg.uri.clone(),
                                 rev,
                             })
                             .await
@@ -270,10 +287,10 @@ impl Appraiser {
                     }
                     CargoDocumentEvent::CargoResolved(mut output) => {
                         //compare path and rev
-                        if !state.check(&output.ctx.path, output.ctx.rev) {
+                        if !state.check(&output.ctx.uri, output.ctx.rev) {
                             continue;
                         }
-                        let (_, _, dirty_nodes, dependencies) = state.state_mut(&output.ctx.path);
+                        let (_, _, dirty_nodes, dependencies) = state.state_mut(&output.ctx.uri);
                         //populate deps
                         for dep in dependencies {
                             let key = dep.toml_key();
@@ -351,7 +368,7 @@ impl Appraiser {
                                 //send to render task
                                 render_tx
                                     .send(DecorationEvent::Dependency(
-                                        output.ctx.path.to_string(),
+                                        output.ctx.uri.clone(),
                                         dep.id.clone(),
                                         dep.range,
                                         dep.clone(),

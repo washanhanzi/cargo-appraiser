@@ -33,6 +33,7 @@ impl LanguageServer for CargoAppraiser {
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![
@@ -111,14 +112,13 @@ impl LanguageServer for CargoAppraiser {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let path = params.text_document.uri.path().to_string();
-        if !path.ends_with("Cargo.toml") {
+        let uri = params.text_document.uri;
+        if !uri.path().ends_with("Cargo.toml") {
             return;
         };
-        eprintln!("did open: {}", path);
         self.tx
             .send(CargoDocumentEvent::Opened(CargoTomlPayload {
-                path,
+                uri,
                 text: params.text_document.text,
             }))
             .await
@@ -135,38 +135,35 @@ impl LanguageServer for CargoAppraiser {
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let path = params.text_document.uri.path().to_string();
-        if !path.ends_with("Cargo.toml") {
+        let uri = params.text_document.uri;
+        if !uri.path().ends_with("Cargo.toml") {
             return;
         };
-        self.tx
-            .send(CargoDocumentEvent::Closed(path))
-            .await
-            .unwrap();
+        self.tx.send(CargoDocumentEvent::Closed(uri)).await.unwrap();
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
-        let path = params.text_document.uri.path().to_string();
-        if !path.ends_with("Cargo.toml") {
+        let uri = params.text_document.uri;
+        if !uri.path().ends_with("Cargo.toml") {
             return;
         };
 
         if let Some(text) = params.text {
             self.tx
-                .send(CargoDocumentEvent::Saved(CargoTomlPayload { path, text }))
+                .send(CargoDocumentEvent::Saved(CargoTomlPayload { uri, text }))
                 .await
                 .unwrap();
         };
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
-        let path = params.text_document.uri.path().to_string();
-        if !path.ends_with("Cargo.toml") {
+        let uri = params.text_document.uri;
+        if !uri.path().ends_with("Cargo.toml") {
             return Ok(None);
         };
 
         if let DecorationRenderer::InlayHint(renderer) = &self.render {
-            Ok(Some(renderer.list(&path)))
+            Ok(Some(renderer.list(&uri)))
         } else {
             //disable for non inlay hint renderer
             Ok(None)
@@ -185,13 +182,31 @@ impl LanguageServer for CargoAppraiser {
         Ok(None)
     }
 
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri;
+        let path = uri.path().to_string();
+        if !path.ends_with("Cargo.toml") {
+            return Ok(None);
+        };
+        let (tx, rx) = oneshot::channel();
+        if let Err(e) = self
+            .tx
+            .send(CargoDocumentEvent::CodeAction(uri, params.range, tx))
+            .await
+        {
+            eprintln!("error sending code action event: {}", e);
+        };
+        match rx.await {
+            Ok(code_action) => return Ok(Some(code_action)),
+            Err(_) => {
+                return Ok(None);
+            }
+        }
+    }
+
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        let path = params
-            .text_document_position_params
-            .text_document
-            .uri
-            .path()
-            .to_string();
+        let uri = params.text_document_position_params.text_document.uri;
+        let path = uri.path().to_string();
         if !path.ends_with("Cargo.toml") {
             return Ok(None);
         };
@@ -200,7 +215,7 @@ impl LanguageServer for CargoAppraiser {
         if let Err(e) = self
             .tx
             .send(CargoDocumentEvent::Hovered(
-                path,
+                uri,
                 params.text_document_position_params.position,
                 tx,
             ))
