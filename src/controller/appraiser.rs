@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 
 use cargo::util::VersionExt;
 use semver::Version;
@@ -13,6 +13,7 @@ use tower_lsp::{
 };
 
 use crate::{
+    controller::code_action::code_action,
     decoration::DecorationEvent,
     entity::cargo_dependency_to_toml_key,
     usecase::{diff_symbol_maps, Walker},
@@ -121,14 +122,13 @@ impl Appraiser {
                         let Some(h) = hover(node, dep) else {
                             continue;
                         };
-                        tx.send(h).unwrap()
+                        let _ = tx.send(h);
                     }
                     CargoDocumentEvent::CodeAction(uri, range, tx) => {
                         let Some((symbol_map, reverse_map, dependencies)) = state.state(&uri)
                         else {
                             continue;
                         };
-                        eprintln!("code action: {:?}", range);
                         let Some(node) = reverse_map.precise_match(range.start, symbol_map) else {
                             continue;
                         };
@@ -136,17 +136,22 @@ impl Appraiser {
                         else {
                             continue;
                         };
-                        if dep.resolved.is_some() {
-                            eprintln!("code action: {:?}", dep.resolved.as_ref().unwrap().name);
-                            tx.send(CodeActionResponse::new()).unwrap();
-                        }
+                        let Some(action) = code_action(uri, node, dep) else {
+                            continue;
+                        };
+                        let _ = tx.send(action);
                     }
                     CargoDocumentEvent::Closed(uri) => {
                         state.close(&uri);
                     }
                     CargoDocumentEvent::CargoLockChanged => {
-                        state.clear();
-                        render_tx.send(DecorationEvent::Reset).await.unwrap();
+                        //clear state except the "current" uri
+                        let Some((uri, rev)) = state.clear_except_current() else {
+                            continue;
+                        };
+                        if let Err(e) = cargo_tx.send(Ctx { uri, rev }).await {
+                            eprintln!("cargo lock changed tx error: {}", e);
+                        }
                     }
                     CargoDocumentEvent::Changed(text) => {
                         let p = taplo::parser::parse(&text);
@@ -169,6 +174,9 @@ impl Appraiser {
                         let rev = state.inc_rev(&msg.uri);
                         let (symbol_map, reverse_map, dirty_nodes, dependencies) =
                             state.state_mut(&msg.uri);
+                        let Ok(path) = msg.uri.to_file_path() else {
+                            continue;
+                        };
 
                         let (new_symbol_map, new_deps) = {
                             //parse cargo.toml text
@@ -196,12 +204,10 @@ impl Appraiser {
                             }
 
                             //get dependencies
-                            //TODO ?? save the clone
-                            let uri_clone = msg.uri.clone();
-                            let path = Path::new(uri_clone.path());
                             let gctx = cargo::util::context::GlobalContext::default().unwrap();
                             //TODO ERROR parse manifest
-                            let workspace = cargo::core::Workspace::new(path, &gctx).unwrap();
+                            let workspace =
+                                cargo::core::Workspace::new(path.as_path(), &gctx).unwrap();
                             //TODO if it's error, it's a virtual workspace
                             let current = workspace.current().unwrap();
                             let mut unresolved = HashMap::new();
@@ -213,7 +219,7 @@ impl Appraiser {
                             let (new_symbol_map, mut new_deps) = walker.consume();
 
                             //loop new_deps, get unresolved
-                            for dep in &mut new_deps {
+                            for (_, dep) in &mut new_deps {
                                 let key = dep.toml_key();
                                 if unresolved.contains_key(&key) {
                                     //take out value from unresolved
@@ -243,7 +249,30 @@ impl Appraiser {
                         reverse_map.init(symbol_map);
 
                         // Loop through both created and changed nodes
-                        for v in created.iter().chain(changed.iter()) {
+                        for v in &created {
+                            dependencies.push(new_deps.get(v).unwrap().clone());
+                            // Send to a dedicated render task
+                            if let Some(n) = symbol_map.get(v) {
+                                render_tx
+                                    .send(DecorationEvent::DependencyLoading(
+                                        msg.uri.clone(),
+                                        v.to_string(),
+                                        n.range,
+                                    ))
+                                    .await
+                                    .unwrap();
+                            }
+                        }
+
+                        for v in &changed {
+                            //find dep in dependencies with same id and replace it
+                            for dep in dependencies.iter_mut() {
+                                if dep.id == v.as_str() {
+                                    if let Some(new_dep) = new_deps.get(v) {
+                                        *dep = new_dep.clone();
+                                    }
+                                }
+                            }
                             // Send to a dedicated render task
                             if let Some(n) = symbol_map.get(v) {
                                 render_tx
@@ -258,6 +287,8 @@ impl Appraiser {
                         }
 
                         for v in deleted {
+                            //inplace mutate dependencies
+                            dependencies.retain(|dep| dep.id != v);
                             //send to a dedicate render task
                             render_tx
                                 .send(DecorationEvent::DependencyRemove(
@@ -268,13 +299,14 @@ impl Appraiser {
                                 .unwrap();
                         }
 
-                        //override old deps
-                        *dependencies = new_deps;
-
                         //no change to resolve
                         if dirty_nodes.is_empty() {
                             continue;
                         }
+
+                        //override old deps
+                        //or better we only override the changed deps
+                        // *dependencies = new_deps;
 
                         //resolve cargo dependencies in another task
                         cargo_tx

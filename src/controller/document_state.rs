@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub struct DocumentState {
-    pub possible_cur: Option<String>,
+    pub cur_uri: Option<Url>,
     pub rev_map: HashMap<Url, usize>,
     pub symbol_map: HashMap<Url, HashMap<String, CargoNode>>,
     pub reverse_map: HashMap<Url, ReverseSymbolTree>,
@@ -19,7 +19,7 @@ pub struct DocumentState {
 impl DocumentState {
     pub fn new() -> Self {
         Self {
-            possible_cur: None,
+            cur_uri: None,
             rev_map: HashMap::new(),
             symbol_map: HashMap::new(),
             reverse_map: HashMap::new(),
@@ -36,9 +36,7 @@ impl DocumentState {
         &ReverseSymbolTree,
         &Vec<Dependency>,
     )> {
-        let Some(symbol_map) = self.symbol_map(uri) else {
-            return None;
-        };
+        let (symbol_map) = self.symbol_map(uri)?;
         let Some(reverse_map) = self.reverse_map(uri) else {
             return None;
         };
@@ -80,10 +78,6 @@ impl DocumentState {
         self.rev(uri) == rev
     }
 
-    pub fn active(&mut self, path: &str) {
-        self.possible_cur = Some(path.to_string());
-    }
-
     pub fn symbol_map(&self, uri: &Url) -> Option<&HashMap<String, CargoNode>> {
         self.symbol_map.get(uri)
     }
@@ -120,6 +114,7 @@ impl DocumentState {
     }
 
     pub fn inc_rev(&mut self, uri: &Url) -> usize {
+        self.cur_uri = Some(uri.clone());
         *self.rev_map.entry(uri.clone()).or_insert(0) += 1;
         self.rev(uri)
     }
@@ -137,11 +132,22 @@ impl DocumentState {
     }
 
     pub fn clear(&mut self) {
-        self.possible_cur = None;
+        self.cur_uri = None;
         self.rev_map.clear();
         self.symbol_map.clear();
         self.reverse_map.clear();
         self.dependencies.clear();
         self.dirty_nodes.clear();
+    }
+
+    pub fn clear_except_current(&mut self) -> Option<(Url, usize)> {
+        let uri = self.cur_uri.as_ref()?;
+        self.rev_map.retain(|k, _| k == uri);
+        self.symbol_map.retain(|k, _| k == uri);
+        self.reverse_map.retain(|k, _| k == uri);
+        self.dependencies.retain(|k, _| k == uri);
+        self.dirty_nodes.retain(|k, _| k == uri);
+        *self.rev_map.get_mut(uri).unwrap() += 1;
+        Some((uri.clone(), self.rev(uri)))
     }
 }

@@ -66,12 +66,12 @@ impl ReverseSymbolTree {
 
 pub struct Walker {
     symbol_map: HashMap<String, CargoNode>,
-    deps: Vec<Dependency>,
+    deps: HashMap<String, Dependency>,
     mapper: Mapper,
 }
 
 impl Walker {
-    pub fn consume(self) -> (HashMap<String, CargoNode>, Vec<Dependency>) {
+    pub fn consume(self) -> (HashMap<String, CargoNode>, HashMap<String, Dependency>) {
         (self.symbol_map, self.deps)
     }
 
@@ -79,7 +79,7 @@ impl Walker {
         let mapper = Mapper::new_utf16(text, false);
         Self {
             symbol_map: HashMap::with_capacity(capacity),
-            deps: Vec::with_capacity(capacity),
+            deps: HashMap::with_capacity(capacity),
             mapper,
         }
     }
@@ -87,20 +87,17 @@ impl Walker {
     pub fn walk_root(&mut self, id: &str, name: &str, node: &Node) {
         match node {
             Node::Table(t) => {
-                //the top level table node is not write into symbol map
                 let parsed_table = CargoTable::from_str(name).unwrap();
                 match parsed_table {
-                    //TODO parse package
                     CargoTable::Package => {}
                     CargoTable::Dependencies(dep_table) => {
                         let entries = t.entries().read();
                         for (key, entry) in entries.iter() {
                             let new_id = id.to_string() + "." + key.value();
                             let mut dep = Dependency {
-                                id: new_id.to_string(),
+                                id: new_id.clone(),
                                 ..Default::default()
                             };
-                            //dependency
                             dep.name = key.value().to_string();
                             let range =
                                 self.mapper.range(join_ranges(entry.text_ranges())).unwrap();
@@ -115,7 +112,7 @@ impl Walker {
                                 None,
                                 &mut dep,
                             );
-                            self.deps.push(dep);
+                            self.deps.insert(new_id, dep);
                         }
                     }
                     CargoTable::Target => {
@@ -131,7 +128,7 @@ impl Walker {
                                 None,
                                 &mut dep,
                             );
-                            self.deps.push(dep);
+                            self.deps.insert(new_id, dep);
                         }
                     }
                     _ => self.enter_generic(id, name, parsed_table, node),

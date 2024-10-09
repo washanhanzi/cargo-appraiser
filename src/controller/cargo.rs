@@ -32,11 +32,16 @@ pub struct CargoResolveOutput {
 }
 
 pub async fn parse_cargo_output(ctx: &Ctx) -> CargoResolveOutput {
-    //TODO can we do better
-    let uri_clone = ctx.uri.clone();
-    let path = Path::new(uri_clone.path());
+    //TODO refactor
+    let Ok(path) = ctx.uri.to_file_path() else {
+        return CargoResolveOutput {
+            ctx: ctx.clone(),
+            dependencies: HashMap::new(),
+            summaries: HashMap::new(),
+        };
+    };
     let gctx = cargo::util::context::GlobalContext::default().unwrap();
-    let workspace = cargo::core::Workspace::new(path, &gctx).unwrap();
+    let workspace = cargo::core::Workspace::new(path.as_path(), &gctx).unwrap();
     let current = workspace.current().unwrap();
     let deps = current.dependencies();
 
@@ -100,13 +105,13 @@ pub async fn parse_cargo_output(ctx: &Ctx) -> CargoResolveOutput {
     CargoResolveOutput {
         ctx: ctx.clone(),
         dependencies: res,
-        summaries: summaries_map(uri_clone.path()),
+        //TODO maybe reuse gctx
+        summaries: summaries_map(path.as_path()),
     }
 }
 
 //TODO the current Vec<Summary> didn't include yanked
-fn summaries_map(path: &str) -> HashMap<String, Vec<Summary>> {
-    let path = Path::new(path);
+fn summaries_map(path: &Path) -> HashMap<String, Vec<Summary>> {
     let gctx = cargo::util::context::GlobalContext::default().unwrap();
     let workspace = cargo::core::Workspace::new(path, &gctx).unwrap();
 

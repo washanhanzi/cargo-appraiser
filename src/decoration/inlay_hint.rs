@@ -9,7 +9,7 @@ use tower_lsp::{
 
 use crate::config::GLOBAL_CONFIG;
 
-use super::{formatted_string, version_decoration, DecorationEvent, InlayHintDecorationRenderer};
+use super::{formatted_string, DecorationEvent, InlayHintDecorationRenderer};
 
 type InlayHintDecorationState = HashMap<Url, HashMap<String, InlayHint>>;
 

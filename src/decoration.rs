@@ -61,6 +61,7 @@ pub enum DecorationEvent {
     Dependency(Url, String, Range, Dependency),
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum VersionDecoration {
     //installed == latest_matched == latest
     Latest,
