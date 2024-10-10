@@ -3,7 +3,7 @@ use tower_lsp::lsp_types::Range;
 
 use super::{DependencyTable, Value};
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Dependency {
     pub id: String,
     pub range: Range,
