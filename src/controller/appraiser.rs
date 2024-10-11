@@ -288,12 +288,14 @@ impl Appraiser {
                                         Some(cur)
                                             if summary.version() > cur
                                                 && summary.version().is_prerelease()
-                                                    == cur.is_prerelease() =>
+                                                    == installed.is_prerelease() =>
                                         {
                                             latest = Some(summary.version());
                                             dep.latest_summary = Some(summary.clone());
                                         }
-                                        None => {
+                                        None if summary.version().is_prerelease()
+                                            == installed.is_prerelease() =>
+                                        {
                                             latest = Some(summary.version());
                                             dep.latest_summary = Some(summary.clone());
                                         }

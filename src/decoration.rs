@@ -150,7 +150,10 @@ pub fn formatted_string(dep: &Dependency, formatter: &DecorationFormatter) -> St
 }
 
 pub fn version_decoration(dep: &Dependency) -> VersionDecoration {
-    match dep.unresolved.as_ref().unwrap().source_id().kind() {
+    let Some(unresolved) = dep.unresolved.as_ref() else {
+        return VersionDecoration::NotParsed;
+    };
+    match unresolved.source_id().kind() {
         SourceKind::Path => VersionDecoration::Local,
         //TODO idk what's this
         SourceKind::Directory => VersionDecoration::Local,

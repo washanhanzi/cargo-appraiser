@@ -155,10 +155,13 @@ impl LanguageServer for CargoAppraiser {
         };
 
         if let Some(text) = params.text {
-            self.tx
+            if let Err(e) = self
+                .tx
                 .send(CargoDocumentEvent::Saved(CargoTomlPayload { uri, text }))
                 .await
-                .unwrap();
+            {
+                eprintln!("error sending saved event: {}", e);
+            };
         };
     }
 
