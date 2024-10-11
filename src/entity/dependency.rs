@@ -3,7 +3,7 @@ use tower_lsp::lsp_types::Range;
 
 use super::{DependencyTable, Value};
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Dependency {
     pub id: String,
     pub range: Range,
@@ -45,6 +45,21 @@ impl Dependency {
             None => "",
         };
         format!("{}:{}:{}", self.table, self.name, platform)
+    }
+
+    pub fn merge_range(&mut self, dep: Dependency) {
+        self.range = dep.range;
+        self.version = dep.version;
+        self.features = dep.features;
+        self.registry = dep.registry;
+        self.git = dep.git;
+        self.branch = dep.branch;
+        self.tag = dep.tag;
+        self.path = dep.path;
+        self.rev = dep.rev;
+        self.package = dep.package;
+        self.workspace = dep.workspace;
+        self.platform = dep.platform;
     }
 }
 

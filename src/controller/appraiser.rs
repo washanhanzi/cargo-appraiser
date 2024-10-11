@@ -1,8 +1,5 @@
-use std::collections::HashMap;
-
 use cargo::util::VersionExt;
 use semver::Version;
-use taplo::dom::node::DomNode;
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -13,15 +10,11 @@ use tower_lsp::{
 };
 
 use crate::{
-    controller::code_action::code_action,
-    decoration::DecorationEvent,
-    entity::cargo_dependency_to_toml_key,
-    usecase::{diff_symbol_maps, Walker},
+    controller::code_action::code_action, decoration::DecorationEvent, usecase::Workspace,
 };
 
 use super::{
     cargo::{parse_cargo_output, CargoResolveOutput},
-    document_state,
     hover::hover,
 };
 
@@ -47,7 +40,7 @@ pub enum CargoDocumentEvent {
     //start to parse the document, update the state, and send event for cargo_tree task
     Opened(CargoTomlPayload),
     Saved(CargoTomlPayload),
-    Changed(String),
+    Changed(CargoTomlPayload),
     //reset state, String is path
     Closed(Url),
     //result from cargo command
@@ -96,7 +89,7 @@ impl Appraiser {
         let render_tx = self.render_tx.clone();
         tokio::spawn(async move {
             //state
-            let mut state = document_state::DocumentState::new();
+            let mut state = Workspace::new();
             //symbol_map store the ui representation of the Cargo.toml file, this is a snapshot of latest save
             // let mut symbol_map: HashMap<String, CargoNode> = HashMap::new();
             // let mut reverse_map: ReverseSymbolTree = ReverseSymbolTree::new(&symbol_map);
@@ -108,15 +101,13 @@ impl Appraiser {
             while let Some(event) = rx.recv().await {
                 match event {
                     CargoDocumentEvent::Hovered(uri, pos, tx) => {
-                        let Some((symbol_map, reverse_map, dependencies)) = state.state(&uri)
-                        else {
+                        let Some(doc) = state.state(&uri) else {
                             continue;
                         };
-                        let Some(node) = reverse_map.precise_match(pos, symbol_map) else {
+                        let Some(node) = doc.precise_match(pos) else {
                             continue;
                         };
-                        let Some(dep) = dependencies.iter().find(|dep| dep.id == node.key.row_id())
-                        else {
+                        let Some(dep) = doc.dependency(node.key.row_id()) else {
                             continue;
                         };
                         let Some(h) = hover(node, dep) else {
@@ -125,15 +116,13 @@ impl Appraiser {
                         let _ = tx.send(h);
                     }
                     CargoDocumentEvent::CodeAction(uri, range, tx) => {
-                        let Some((symbol_map, reverse_map, dependencies)) = state.state(&uri)
-                        else {
+                        let Some(doc) = state.state(&uri) else {
                             continue;
                         };
-                        let Some(node) = reverse_map.precise_match(range.start, symbol_map) else {
+                        let Some(node) = doc.precise_match(range.start) else {
                             continue;
                         };
-                        let Some(dep) = dependencies.iter().find(|dep| dep.id == node.key.row_id())
-                        else {
+                        let Some(dep) = doc.dependency(node.key.row_id()) else {
                             continue;
                         };
                         let Some(action) = code_action(uri, node, dep) else {
@@ -142,117 +131,66 @@ impl Appraiser {
                         let _ = tx.send(action);
                     }
                     CargoDocumentEvent::Closed(uri) => {
-                        state.close(&uri);
+                        state.del(&uri);
                     }
                     CargoDocumentEvent::CargoLockChanged => {
                         //clear state except the "current" uri
-                        let Some((uri, rev)) = state.clear_except_current() else {
+                        let Some(doc) = state.clear_except_current() else {
                             continue;
                         };
-                        if let Err(e) = cargo_tx.send(Ctx { uri, rev }).await {
+                        if let Err(e) = cargo_tx
+                            .send(Ctx {
+                                uri: doc.uri.clone(),
+                                rev: doc.rev,
+                            })
+                            .await
+                        {
                             eprintln!("cargo lock changed tx error: {}", e);
                         }
                     }
-                    CargoDocumentEvent::Changed(text) => {
-                        let p = taplo::parser::parse(&text);
-                        let dom = p.into_dom();
-                        if dom.validate().is_err() {
-                            eprintln!("changed semantic Error: {:?}", dom.errors());
-                        }
-                        let table = dom.as_table().unwrap();
-                        let entries = table.entries().read();
-                        let mut walker = Walker::new(&text, entries.len());
-
-                        for (key, entry) in entries.iter() {
-                            if key.value().is_empty() {
-                                continue;
+                    CargoDocumentEvent::Changed(msg) => {
+                        let diff = state.partial_reconsile(&msg.uri, &msg.text);
+                        let doc = state.state(&msg.uri).unwrap();
+                        for v in &diff.range_updated {
+                            if let Some(node) = doc.symbol(v) {
+                                render_tx
+                                    .send(DecorationEvent::DependencyRangeUpdate(
+                                        msg.uri.clone(),
+                                        v.to_string(),
+                                        node.range,
+                                    ))
+                                    .await
+                                    .unwrap();
                             }
-                            walker.walk_root(key.value(), key.value(), entry)
+                        }
+                        for v in &diff.value_updated {
+                            render_tx
+                                .send(DecorationEvent::DependencyRemove(
+                                    msg.uri.clone(),
+                                    v.to_string(),
+                                ))
+                                .await
+                                .unwrap();
+                        }
+
+                        for v in &diff.deleted {
+                            render_tx
+                                .send(DecorationEvent::DependencyRemove(
+                                    msg.uri.clone(),
+                                    v.to_string(),
+                                ))
+                                .await
+                                .unwrap();
                         }
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
-                        let rev = state.inc_rev(&msg.uri);
-                        let (symbol_map, reverse_map, dirty_nodes, dependencies) =
-                            state.state_mut(&msg.uri);
-                        let Ok(path) = msg.uri.to_file_path() else {
-                            continue;
-                        };
-
-                        let (new_symbol_map, new_deps) = {
-                            //parse cargo.toml text
-                            //I'm too stupid to apprehend the rowan tree
-                            //else I would use incremental patching
-                            //This's a dumb full parsing
-                            let p = taplo::parser::parse(&msg.text);
-                            if !p.errors.is_empty() {
-                                continue;
-                            }
-                            let dom = p.into_dom();
-                            if dom.validate().is_err() {
-                                continue;
-                            }
-                            let table = dom.as_table().unwrap();
-                            let entries = table.entries().read();
-
-                            let mut walker = Walker::new(&msg.text, entries.len());
-
-                            for (key, entry) in entries.iter() {
-                                if key.value().is_empty() {
-                                    continue;
-                                }
-                                walker.walk_root(key.value(), key.value(), entry)
-                            }
-
-                            //get dependencies
-                            let gctx = cargo::util::context::GlobalContext::default().unwrap();
-                            //TODO ERROR parse manifest
-                            let workspace =
-                                cargo::core::Workspace::new(path.as_path(), &gctx).unwrap();
-                            //TODO if it's error, it's a virtual workspace
-                            let current = workspace.current().unwrap();
-                            let mut unresolved = HashMap::new();
-                            for dep in current.dependencies() {
-                                let key = cargo_dependency_to_toml_key(dep);
-                                unresolved.insert(key, dep);
-                            }
-
-                            let (new_symbol_map, mut new_deps) = walker.consume();
-
-                            //loop new_deps, get unresolved
-                            for (_, dep) in &mut new_deps {
-                                let key = dep.toml_key();
-                                if unresolved.contains_key(&key) {
-                                    //take out value from unresolved
-                                    let u = unresolved.remove(&key).unwrap();
-                                    //update value to dep.unresolved
-                                    dep.unresolved = Some(u.clone());
-                                }
-                            }
-
-                            (new_symbol_map, new_deps)
-                            //reconsile dependencies
-                        }; // This block ensures taplo::dom objects are dropped before the await point
-
-                        //diff
-                        //diff walker.symbol_map with latest saved symbol_map
-                        //if symbol_map is empty, then every nodes is newly created
-                        //diff compare range and text equablity
-                        //diff result contains:
-                        //created, changed, deleted nodes
-                        //dirty nodes includes created, changed nodes
-                        let (created, changed, deleted) =
-                            diff_symbol_maps(symbol_map, &new_symbol_map, rev, dirty_nodes);
-
-                        //override old symbol map
-                        *symbol_map = new_symbol_map;
-                        //generate reverse symbol tree
-                        reverse_map.init(symbol_map);
+                        let diff = state.reconsile(&msg.uri, &msg.text);
+                        let doc = state.state(&msg.uri).unwrap();
 
                         // Loop through both created and changed nodes
-                        for v in &created {
-                            dependencies.push(new_deps.get(v).unwrap().clone());
+                        for v in &diff.created {
                             // Send to a dedicated render task
-                            if let Some(n) = symbol_map.get(v) {
+                            if let Some(n) = doc.symbol(v) {
                                 render_tx
                                     .send(DecorationEvent::DependencyLoading(
                                         msg.uri.clone(),
@@ -264,17 +202,9 @@ impl Appraiser {
                             }
                         }
 
-                        for v in &changed {
-                            //find dep in dependencies with same id and replace it
-                            for dep in dependencies.iter_mut() {
-                                if dep.id == v.as_str() {
-                                    if let Some(new_dep) = new_deps.get(v) {
-                                        *dep = new_dep.clone();
-                                    }
-                                }
-                            }
+                        for v in diff.range_updated.iter().chain(diff.value_updated.iter()) {
                             // Send to a dedicated render task
-                            if let Some(n) = symbol_map.get(v) {
+                            if let Some(n) = doc.symbol(v) {
                                 render_tx
                                     .send(DecorationEvent::DependencyLoading(
                                         msg.uri.clone(),
@@ -286,10 +216,7 @@ impl Appraiser {
                             }
                         }
 
-                        for v in deleted {
-                            //inplace mutate dependencies
-                            dependencies.retain(|dep| dep.id != v);
-                            //send to a dedicate render task
+                        for v in &diff.deleted {
                             render_tx
                                 .send(DecorationEvent::DependencyRemove(
                                     msg.uri.clone(),
@@ -300,31 +227,39 @@ impl Appraiser {
                         }
 
                         //no change to resolve
-                        if dirty_nodes.is_empty() {
+                        if !doc.is_dirty() {
                             continue;
                         }
 
-                        //override old deps
-                        //or better we only override the changed deps
-                        // *dependencies = new_deps;
+                        for v in doc.dirty_nodes.keys() {
+                            if let Some(n) = doc.symbol(v) {
+                                render_tx
+                                    .send(DecorationEvent::DependencyLoading(
+                                        msg.uri.clone(),
+                                        v.to_string(),
+                                        n.range,
+                                    ))
+                                    .await
+                                    .unwrap();
+                            }
+                        }
 
                         //resolve cargo dependencies in another task
                         cargo_tx
                             .send(Ctx {
                                 uri: msg.uri.clone(),
-                                rev,
+                                rev: doc.rev,
                             })
                             .await
                             .unwrap();
                     }
                     CargoDocumentEvent::CargoResolved(mut output) => {
-                        //compare path and rev
-                        if !state.check(&output.ctx.uri, output.ctx.rev) {
+                        let Some(doc) = state.state_mut_with_rev(&output.ctx.uri, output.ctx.rev)
+                        else {
                             continue;
-                        }
-                        let (_, _, dirty_nodes, dependencies) = state.state_mut(&output.ctx.uri);
+                        };
                         //populate deps
-                        for dep in dependencies {
+                        for dep in doc.dependencies.values_mut() {
                             let key = dep.toml_key();
                             if !output.dependencies.is_empty()
                                 && output.dependencies.contains_key(&key)
@@ -350,7 +285,11 @@ impl Appraiser {
                                         dep.matched_summary = Some(summary.clone());
                                     }
                                     match latest {
-                                        Some(cur) if summary.version() > cur => {
+                                        Some(cur)
+                                            if summary.version() > cur
+                                                && summary.version().is_prerelease()
+                                                    == cur.is_prerelease() =>
+                                        {
                                             latest = Some(summary.version());
                                             dep.latest_summary = Some(summary.clone());
                                         }
@@ -393,7 +332,7 @@ impl Appraiser {
                             }
 
                             //send to render
-                            if let Some(rev) = dirty_nodes.get(&dep.id) {
+                            if let Some(rev) = doc.dirty_nodes.get(&dep.id) {
                                 if *rev > output.ctx.rev {
                                     continue;
                                 }
@@ -407,7 +346,7 @@ impl Appraiser {
                                     ))
                                     .await
                                     .unwrap();
-                                dirty_nodes.remove(&dep.id);
+                                doc.dirty_nodes.remove(&dep.id);
                             }
                         }
                     }

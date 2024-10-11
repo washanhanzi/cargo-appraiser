@@ -127,10 +127,16 @@ impl LanguageServer for CargoAppraiser {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         for change in params.content_changes {
-            self.tx
-                .send(CargoDocumentEvent::Changed(change.text))
+            if let Err(e) = self
+                .tx
+                .send(CargoDocumentEvent::Changed(CargoTomlPayload {
+                    uri: params.text_document.uri.clone(),
+                    text: change.text,
+                }))
                 .await
-                .unwrap();
+            {
+                eprintln!("error sending changed event: {}", e);
+            };
         }
     }
 

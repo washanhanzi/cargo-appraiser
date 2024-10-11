@@ -12,58 +12,6 @@ use crate::entity::{
     Value,
 };
 
-//TODO maybe encapulate symbol_map and reverse_map
-
-pub struct ReverseSymbolTree(HashMap<u32, Vec<String>>);
-
-impl ReverseSymbolTree {
-    pub fn new() -> Self {
-        Self(HashMap::new())
-    }
-
-    pub fn init(&mut self, symbol_map: &HashMap<String, CargoNode>) {
-        if symbol_map.is_empty() {
-            return;
-        }
-        let mut m: HashMap<u32, Vec<String>> = HashMap::new();
-        for (id, node) in symbol_map {
-            for line in node.range.start.line..=node.range.end.line {
-                m.entry(line).or_default().push(id.clone());
-            }
-        }
-        *self = Self(m);
-    }
-
-    //TODO for simple or table dependency, the crate name will never be matched
-    //if no match found, return the simple or table dependency node?
-    pub fn precise_match(
-        &self,
-        pos: Position,
-        symbol_map: &HashMap<String, CargoNode>,
-    ) -> Option<CargoNode> {
-        let ids = self.0.get(&pos.line)?;
-        let mut best_match: Option<CargoNode> = None;
-        let mut best_width: u32 = u32::MAX;
-
-        for id in ids {
-            let Some(node) = symbol_map.get(id) else {
-                continue;
-            };
-            if node.range.start.character <= pos.character
-                && node.range.end.character >= pos.character
-            {
-                let width = node.range.end.character - node.range.start.character;
-                if width < best_width {
-                    best_width = width;
-                    best_match = Some(node.clone());
-                }
-            }
-        }
-
-        best_match
-    }
-}
-
 pub struct Walker {
     symbol_map: HashMap<String, CargoNode>,
     deps: HashMap<String, Dependency>,
@@ -436,42 +384,74 @@ fn into_lsp_range(range: lsp_async_stub::util::Range) -> Range {
     }
 }
 
+pub struct SymbolDiff {
+    pub created: Vec<String>,
+    pub range_updated: Vec<String>,
+    pub value_updated: Vec<String>,
+    pub deleted: Vec<String>,
+}
+
 //now only diff dependency nodes
-pub fn diff_symbol_maps(
-    old_map: &HashMap<String, CargoNode>,
+pub fn diff_symbols(
+    old_map: Option<&HashMap<String, CargoNode>>,
     new_map: &HashMap<String, CargoNode>,
-    rev: usize,
-    dirty_nodes: &mut HashMap<String, usize>,
-) -> (Vec<String>, Vec<String>, Vec<String>) {
+) -> SymbolDiff {
+    let Some(old_map) = old_map else {
+        return SymbolDiff {
+            created: new_map
+                .iter()
+                .filter(|(_, node)| node.key.is_dependency())
+                .map(|(k, _)| k.to_string())
+                .collect(),
+            range_updated: vec![],
+            value_updated: vec![],
+            deleted: vec![],
+        };
+    };
     let old_keys: HashSet<_> = old_map
         .iter()
         .filter(|(_, node)| node.key.is_dependency())
-        .map(|(k, _)| k.clone())
+        .map(|(k, _)| k.as_str())
         .collect();
     let new_keys: HashSet<_> = new_map
         .iter()
         .filter(|(_, node)| node.key.is_dependency())
-        .map(|(k, _)| k.clone())
+        .map(|(k, _)| k.as_str())
         .collect();
 
-    let created: Vec<String> = new_keys.difference(&old_keys).cloned().collect();
-    let deleted: Vec<String> = old_keys.difference(&new_keys).cloned().collect();
-    let changed: Vec<String> = old_keys
+    let created: Vec<String> = new_keys
+        .difference(&old_keys)
+        .map(|&s| s.to_string())
+        .collect();
+    let deleted: Vec<String> = old_keys
+        .difference(&new_keys)
+        .map(|&s| s.to_string())
+        .collect();
+    let range_updated: Vec<String> = old_keys
         .intersection(&new_keys)
-        .filter(|&key| {
+        .filter(|&&key| {
             let old_node = &old_map[key];
             let new_node = &new_map[key];
-            old_node.range != new_node.range || old_node.text != new_node.text
+            old_node.range != new_node.range
         })
-        .cloned()
+        .map(|&s| s.to_string())
+        .collect();
+    let field_updated: Vec<String> = old_keys
+        .intersection(&new_keys)
+        .filter(|&&key| {
+            let old_node = &old_map[key];
+            let new_node = &new_map[key];
+            old_node.text != new_node.text
+        })
+        .map(|&s| s.to_string())
         .collect();
 
-    // Update the dirty_nodes map
-    for id in created.iter().chain(changed.iter()) {
-        dirty_nodes.insert(id.clone(), rev);
+    SymbolDiff {
+        created,
+        range_updated,
+        value_updated: field_updated,
+        deleted,
     }
-
-    (created, changed, deleted)
 }
 
 fn strip_quote(s: String) -> String {

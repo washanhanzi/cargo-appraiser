@@ -56,6 +56,7 @@ impl DecorationRenderer {
 #[derive(Clone)]
 pub enum DecorationEvent {
     Reset,
+    DependencyRangeUpdate(Url, String, Range),
     DependencyRemove(Url, String),
     DependencyLoading(Url, String, Range),
     Dependency(Url, String, Range, Dependency),

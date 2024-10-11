@@ -26,6 +26,20 @@ mod inlay_hint_decoration_state {
         path_map.insert(id.to_string(), hint);
     }
 
+    pub fn update_range(
+        state: &RwLock<InlayHintDecorationState>,
+        uri: &Url,
+        id: &str,
+        range: tower_lsp::lsp_types::Range,
+    ) {
+        let mut state = state.write();
+        if let Some(path_map) = state.get_mut(uri) {
+            if let Some(hint) = path_map.get_mut(id) {
+                hint.position = Position::new(range.end.line, range.end.character);
+            }
+        }
+    }
+
     pub fn remove(state: &RwLock<InlayHintDecorationState>, uri: &Url, id: &str) {
         let mut state = state.write();
         if let Some(path_map) = state.get_mut(uri) {
@@ -124,6 +138,9 @@ impl InlayHintDecoration {
                             data: None,
                         };
                         inlay_hint_decoration_state::upsert(&state, &path, &id, hint);
+                    }
+                    DecorationEvent::DependencyRangeUpdate(path, id, range) => {
+                        inlay_hint_decoration_state::update_range(&state, &path, &id, range);
                     }
                 }
                 client.inlay_hint_refresh().await.unwrap();
