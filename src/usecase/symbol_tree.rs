@@ -9,7 +9,7 @@ use tower_lsp::lsp_types::{Position, Range};
 
 use crate::entity::{
     CargoKey, CargoNode, CargoTable, Dependency, DependencyKey, InvalidDependencyKey, InvalideKey,
-    Value,
+    SymbolDiff, Value,
 };
 
 pub struct Walker {
@@ -382,13 +382,6 @@ fn into_lsp_range(range: lsp_async_stub::util::Range) -> Range {
             character: range.end.character as u32,
         },
     }
-}
-
-pub struct SymbolDiff {
-    pub created: Vec<String>,
-    pub range_updated: Vec<String>,
-    pub value_updated: Vec<String>,
-    pub deleted: Vec<String>,
 }
 
 //now only diff dependency nodes

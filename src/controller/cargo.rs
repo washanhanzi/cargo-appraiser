@@ -31,18 +31,20 @@ pub struct CargoResolveOutput {
     pub summaries: HashMap<String, Vec<Summary>>,
 }
 
-pub async fn parse_cargo_output(ctx: &Ctx) -> CargoResolveOutput {
+pub async fn parse_cargo_output(ctx: &Ctx) -> Option<CargoResolveOutput> {
     //TODO refactor
     let Ok(path) = ctx.uri.to_file_path() else {
-        return CargoResolveOutput {
-            ctx: ctx.clone(),
-            dependencies: HashMap::new(),
-            summaries: HashMap::new(),
-        };
+        return None;
     };
-    let gctx = cargo::util::context::GlobalContext::default().unwrap();
-    let workspace = cargo::core::Workspace::new(path.as_path(), &gctx).unwrap();
-    let current = workspace.current().unwrap();
+    let Ok(gctx) = cargo::util::context::GlobalContext::default() else {
+        return None;
+    };
+    let Ok(workspace) = cargo::core::Workspace::new(path.as_path(), &gctx) else {
+        return None;
+    };
+    let Ok(current) = workspace.current() else {
+        return None;
+    };
     let deps = current.dependencies();
 
     let mut edge_kinds = HashSet::with_capacity(3);
@@ -102,12 +104,12 @@ pub async fn parse_cargo_output(ctx: &Ctx) -> CargoResolveOutput {
         }
     }
 
-    CargoResolveOutput {
+    Some(CargoResolveOutput {
         ctx: ctx.clone(),
         dependencies: res,
         //TODO maybe reuse gctx
         summaries: summaries_map(path.as_path()),
-    }
+    })
 }
 
 //TODO the current Vec<Summary> didn't include yanked

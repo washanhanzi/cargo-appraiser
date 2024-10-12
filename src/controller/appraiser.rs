@@ -15,6 +15,7 @@ use crate::{
 
 use super::{
     cargo::{parse_cargo_output, CargoResolveOutput},
+    change_timer::ChangeTimer,
     hover::hover,
 };
 
@@ -41,6 +42,7 @@ pub enum CargoDocumentEvent {
     Opened(CargoTomlPayload),
     Saved(CargoTomlPayload),
     Changed(CargoTomlPayload),
+    ChangeTimer(Ctx),
     //reset state, String is path
     Closed(Url),
     //result from cargo command
@@ -74,15 +76,20 @@ impl Appraiser {
         let tx_for_cargo = tx.clone();
         tokio::spawn(async move {
             while let Some(event) = cargo_rx.recv().await {
-                let output = parse_cargo_output(&event).await;
-                if let Err(e) = tx_for_cargo
-                    .send(CargoDocumentEvent::CargoResolved(output))
-                    .await
-                {
-                    eprintln!("cargo resolved tx error: {}", e);
+                if let Some(output) = parse_cargo_output(&event).await {
+                    if let Err(e) = tx_for_cargo
+                        .send(CargoDocumentEvent::CargoResolved(output))
+                        .await
+                    {
+                        eprintln!("cargo resolved tx error: {}", e);
+                    }
                 }
             }
         });
+
+        //timer task
+        let timer = ChangeTimer::new(tx.clone(), 3000);
+        let timer_tx = timer.spawn();
 
         //main loop
         //render task sender
@@ -149,7 +156,7 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::Changed(msg) => {
-                        let diff = state.partial_reconsile(&msg.uri, &msg.text);
+                        let diff = state.reconsile(&msg.uri, &msg.text);
                         let doc = state.state(&msg.uri).unwrap();
                         for v in &diff.range_updated {
                             if let Some(node) = doc.symbol(v) {
@@ -182,76 +189,23 @@ impl Appraiser {
                                 .await
                                 .unwrap();
                         }
-                    }
-                    CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
-                        let diff = state.reconsile(&msg.uri, &msg.text);
-                        let doc = state.state(&msg.uri).unwrap();
-
-                        // Loop through both created and changed nodes
-                        for v in &diff.created {
-                            // Send to a dedicated render task
-                            if let Some(n) = doc.symbol(v) {
-                                render_tx
-                                    .send(DecorationEvent::DependencyLoading(
-                                        msg.uri.clone(),
-                                        v.to_string(),
-                                        n.range,
-                                    ))
-                                    .await
-                                    .unwrap();
-                            }
-                        }
-
-                        for v in diff.range_updated.iter().chain(diff.value_updated.iter()) {
-                            // Send to a dedicated render task
-                            if let Some(n) = doc.symbol(v) {
-                                render_tx
-                                    .send(DecorationEvent::DependencyLoading(
-                                        msg.uri.clone(),
-                                        v.to_string(),
-                                        n.range,
-                                    ))
-                                    .await
-                                    .unwrap();
-                            }
-                        }
-
-                        for v in &diff.deleted {
-                            render_tx
-                                .send(DecorationEvent::DependencyRemove(
-                                    msg.uri.clone(),
-                                    v.to_string(),
-                                ))
-                                .await
-                                .unwrap();
-                        }
-
-                        //no change to resolve
-                        if !doc.is_dirty() {
-                            continue;
-                        }
-
-                        for v in doc.dirty_nodes.keys() {
-                            if let Some(n) = doc.symbol(v) {
-                                render_tx
-                                    .send(DecorationEvent::DependencyLoading(
-                                        msg.uri.clone(),
-                                        v.to_string(),
-                                        n.range,
-                                    ))
-                                    .await
-                                    .unwrap();
-                            }
-                        }
-
-                        //resolve cargo dependencies in another task
-                        cargo_tx
+                        timer_tx
                             .send(Ctx {
-                                uri: msg.uri.clone(),
+                                uri: msg.uri,
                                 rev: doc.rev,
                             })
                             .await
                             .unwrap();
+                    }
+                    CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
+                        let _ = state.reconsile(&msg.uri, &msg.text);
+
+                        start_resolve(&msg.uri, &mut state, &render_tx, &cargo_tx).await;
+                    }
+                    CargoDocumentEvent::ChangeTimer(ctx) => {
+                        if state.check_rev(&ctx.uri, ctx.rev) {
+                            start_resolve(&ctx.uri, &mut state, &render_tx, &cargo_tx).await;
+                        }
                     }
                     CargoDocumentEvent::CargoResolved(mut output) => {
                         let Some(doc) = state.state_mut_with_rev(&output.ctx.uri, output.ctx.rev)
@@ -357,5 +311,45 @@ impl Appraiser {
             }
         });
         tx
+    }
+}
+
+async fn start_resolve(
+    uri: &Url,
+    state: &mut Workspace,
+    render_tx: &Sender<DecorationEvent>,
+    cargo_tx: &Sender<Ctx>,
+) {
+    //start from here the resolve process
+    state.populate_dependencies(uri);
+    let doc = state.state(uri).unwrap();
+
+    //no change to resolve
+    if !doc.is_dirty() {
+        return;
+    }
+
+    for v in doc.dirty_nodes.keys() {
+        if let Some(n) = doc.symbol(v) {
+            render_tx
+                .send(DecorationEvent::DependencyLoading(
+                    uri.clone(),
+                    v.to_string(),
+                    n.range,
+                ))
+                .await
+                .unwrap();
+        }
+    }
+
+    //resolve cargo dependencies in another task
+    if let Err(e) = cargo_tx
+        .send(Ctx {
+            uri: uri.clone(),
+            rev: doc.rev,
+        })
+        .await
+    {
+        eprintln!("cargo resolve tx error: {}", e);
     }
 }

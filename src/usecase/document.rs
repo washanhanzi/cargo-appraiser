@@ -2,13 +2,9 @@ use std::collections::HashMap;
 
 use tower_lsp::lsp_types::{Position, Url};
 
-use crate::entity::{cargo_dependency_to_toml_key, CargoNode, Dependency};
+use crate::entity::{cargo_dependency_to_toml_key, CargoNode, Dependency, SymbolDiff};
 
-use super::{
-    diff_symbols,
-    symbol_tree::{self, SymbolDiff},
-    ReverseSymbolTree, Walker,
-};
+use super::{diff_symbols, ReverseSymbolTree, Walker};
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -24,15 +20,7 @@ pub struct Document {
 impl Document {
     pub fn parse(uri: &Url, text: &str) -> Self {
         let p = taplo::parser::parse(text);
-        if !p.errors.is_empty() {
-            //TODO
-            unreachable!()
-        }
         let dom = p.into_dom();
-        if dom.validate().is_err() {
-            //TODO
-            unreachable!()
-        }
         let table = dom.as_table().unwrap();
         let entries = table.entries().read();
 
@@ -101,9 +89,13 @@ impl Document {
             //get dependencies
             let gctx = cargo::util::context::GlobalContext::default().unwrap();
             //TODO ERROR parse manifest
-            let workspace = cargo::core::Workspace::new(path.as_path(), &gctx).unwrap();
+            let Ok(workspace) = cargo::core::Workspace::new(path.as_path(), &gctx) else {
+                return;
+            };
             //TODO if it's error, it's a virtual workspace
-            let current = workspace.current().unwrap();
+            let Ok(current) = workspace.current() else {
+                return;
+            };
             let mut unresolved = HashMap::with_capacity(current.dependencies().len());
             for dep in current.dependencies() {
                 let key = cargo_dependency_to_toml_key(dep);

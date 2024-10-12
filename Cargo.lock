@@ -265,6 +265,7 @@ dependencies = [
  "taplo",
  "tokio",
  "tower-lsp",
+ "tracing",
 ]
 
 [[package]]

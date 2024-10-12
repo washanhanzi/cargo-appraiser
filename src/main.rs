@@ -203,7 +203,13 @@ impl LanguageServer for CargoAppraiser {
             .send(CargoDocumentEvent::CodeAction(uri, params.range, tx))
             .await
         {
-            eprintln!("error sending code action event: {}", e);
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    &format!("error sending code action event: {}", e),
+                )
+                .await;
+            return Ok(None);
         };
         match rx.await {
             Ok(code_action) => return Ok(Some(code_action)),
@@ -230,7 +236,13 @@ impl LanguageServer for CargoAppraiser {
             ))
             .await
         {
-            eprintln!("error sending hover event: {}", e);
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    &format!("error sending hover event: {}", e),
+                )
+                .await;
+            return Ok(None);
         };
         match rx.await {
             Ok(hover) => return Ok(Some(hover)),

@@ -1,9 +1,10 @@
 use std::collections::{hash_map::Entry, HashMap};
 
-use cargo::ops::new;
 use tower_lsp::lsp_types::Url;
 
-use super::{document::Document, symbol_tree::SymbolDiff};
+use crate::entity::SymbolDiff;
+
+use super::document::Document;
 
 pub struct Workspace {
     pub cur_uri: Option<Url>,
@@ -20,6 +21,10 @@ impl Workspace {
 
     pub fn state(&self, uri: &Url) -> Option<&Document> {
         self.documents.get(uri)
+    }
+
+    pub fn check_rev(&self, uri: &Url, rev: usize) -> bool {
+        self.state(uri).map(|doc| doc.rev == rev).unwrap_or(false)
     }
 
     pub fn state_mut(&mut self, uri: &Url) -> Option<&mut Document> {
@@ -46,25 +51,6 @@ impl Workspace {
         }
     }
 
-    pub fn partial_reconsile(&mut self, uri: &Url, text: &str) -> SymbolDiff {
-        let mut new_doc = Document::parse(uri, text);
-        self.cur_uri = Some(uri.clone());
-        //TODO refactor, maybe we can do better to avoid string allocation
-        match self.documents.entry(uri.clone()) {
-            Entry::Occupied(mut entry) => {
-                let diff = Document::diff_symbols(Some(entry.get()), &new_doc);
-                entry.get_mut().reconsile(new_doc, &diff);
-                diff
-            }
-            Entry::Vacant(entry) => {
-                let diff = Document::diff_symbols(None, &new_doc);
-                new_doc.self_reconsile(&diff);
-                entry.insert(new_doc);
-                diff
-            }
-        }
-    }
-
     pub fn reconsile(&mut self, uri: &Url, text: &str) -> SymbolDiff {
         let mut new_doc = Document::parse(uri, text);
         self.cur_uri = Some(uri.clone());
@@ -82,6 +68,12 @@ impl Workspace {
                 entry.insert(new_doc);
                 diff
             }
+        }
+    }
+
+    pub fn populate_dependencies(&mut self, uri: &Url) {
+        if let Some(doc) = self.state_mut(uri) {
+            doc.populate_dependencies();
         }
     }
 }
