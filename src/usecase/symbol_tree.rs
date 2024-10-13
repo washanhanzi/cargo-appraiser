@@ -311,7 +311,7 @@ impl Walker {
                     },
                 );
             }
-            _ => unreachable!(),
+            _ => {}
         }
     }
 

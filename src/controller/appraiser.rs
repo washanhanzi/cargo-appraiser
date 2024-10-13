@@ -32,6 +32,7 @@ pub struct Ctx {
 pub struct Appraiser {
     client: Client,
     render_tx: Sender<DecorationEvent>,
+    timeout: u64,
 }
 
 //TODO audit: cargo.toml and cargo.lock always stay together, if we get the full dep tree from cargo tree
@@ -43,7 +44,7 @@ pub enum CargoDocumentEvent {
     Saved(CargoTomlPayload),
     Changed(CargoTomlPayload),
     ChangeTimer(Ctx),
-    //reset state, String is path
+    //reset document state
     Closed(Url),
     //result from cargo command
     //consolidate state and send render event
@@ -63,8 +64,12 @@ pub struct CargoTomlPayload {
 }
 
 impl Appraiser {
-    pub fn new(client: Client, render_tx: Sender<DecorationEvent>) -> Self {
-        Self { client, render_tx }
+    pub fn new(client: Client, render_tx: Sender<DecorationEvent>, timeout: u64) -> Self {
+        Self {
+            client,
+            render_tx,
+            timeout,
+        }
     }
     pub fn initialize(&self) -> Sender<CargoDocumentEvent> {
         //create mpsc channel
@@ -88,7 +93,7 @@ impl Appraiser {
         });
 
         //timer task
-        let timer = ChangeTimer::new(tx.clone(), 3000);
+        let timer = ChangeTimer::new(tx.clone(), self.timeout);
         let timer_tx = timer.spawn();
 
         //main loop
@@ -97,13 +102,6 @@ impl Appraiser {
         tokio::spawn(async move {
             //state
             let mut state = Workspace::new();
-            //symbol_map store the ui representation of the Cargo.toml file, this is a snapshot of latest save
-            // let mut symbol_map: HashMap<String, CargoNode> = HashMap::new();
-            // let mut reverse_map: ReverseSymbolTree = ReverseSymbolTree::new(&symbol_map);
-            // //dependencies only store the dependencies in Cargo.toml, this is a snapshot of latest save
-            // let mut dependencies: Vec<Dependency> = Vec::new();
-            // //the dirty nodes of latest save
-            // let mut dirty_nodes: HashMap<String, usize> = HashMap::new();
 
             while let Some(event) = rx.recv().await {
                 match event {
@@ -217,6 +215,7 @@ impl Appraiser {
                             let key = dep.toml_key();
                             if !output.dependencies.is_empty()
                                 && output.dependencies.contains_key(&key)
+                                && doc.dirty_nodes.contains_key(&dep.id)
                             {
                                 // Take resolved out of the output.dependencies hashmap
                                 let resolved = output.dependencies.remove(&key).unwrap();
@@ -285,25 +284,33 @@ impl Appraiser {
                                         _ => {}
                                     }
                                 }
-                            }
-
-                            //send to render
-                            if let Some(rev) = doc.dirty_nodes.get(&dep.id) {
-                                if *rev > output.ctx.rev {
-                                    continue;
+                                //send to render
+                                if let Some(rev) = doc.dirty_nodes.get(&dep.id) {
+                                    if *rev > output.ctx.rev {
+                                        continue;
+                                    }
+                                    //send to render task
+                                    render_tx
+                                        .send(DecorationEvent::Dependency(
+                                            output.ctx.uri.clone(),
+                                            dep.id.clone(),
+                                            dep.range,
+                                            dep.clone(),
+                                        ))
+                                        .await
+                                        .unwrap();
+                                    doc.dirty_nodes.remove(&dep.id);
                                 }
-                                //send to render task
-                                render_tx
-                                    .send(DecorationEvent::Dependency(
-                                        output.ctx.uri.clone(),
-                                        dep.id.clone(),
-                                        dep.range,
-                                        dep.clone(),
-                                    ))
-                                    .await
-                                    .unwrap();
-                                doc.dirty_nodes.remove(&dep.id);
                             }
+                        }
+                        if doc.is_dirty() {
+                            timer_tx
+                                .send(Ctx {
+                                    uri: output.ctx.uri,
+                                    rev: doc.rev,
+                                })
+                                .await
+                                .unwrap();
                         }
                     }
                     _ => {}

@@ -192,7 +192,22 @@ pub fn version_decoration(dep: &Dependency) -> VersionDecoration {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// decoration formatter
+/// the formatter may has 3 template strings:
+/// - installed: the installed version
+/// - latest_matched: the latest compatible version
+/// - latest: the latest version, the latest version may or may not be compatilbe with the version requirement
+///
+/// the formatter has 7 fields:
+/// latest: the dependency has the latest version installed
+/// local: the dependency is a local path dependency
+/// not_installed: the dependency is not installed
+/// loading: the dependency is loading
+/// mixed_upgradeable: the installed version has an compatible upgrade, and the latest version is not compatible with the current version requirement
+/// compatible_latest: the installed version can update to latest version
+/// noncompatible_latest: the installed version can't upate to latest version
+/// yanked: the installed version is yanked
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DecorationFormatter {
     #[serde(default = "default_latest")]

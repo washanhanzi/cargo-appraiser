@@ -42,12 +42,15 @@ impl Workspace {
     }
 
     pub fn clear_except_current(&mut self) -> Option<&Document> {
-        match self.cur_uri.as_ref() {
-            None => None,
-            Some(uri) => {
-                self.documents.retain(|_, doc| &doc.uri == uri);
-                self.state(uri)
+        let uri = self.cur_uri.as_ref()?.clone();
+        self.documents.retain(|_, doc| doc.uri == uri);
+        let doc = self.state_mut(&uri);
+        match doc {
+            Some(doc) => {
+                doc.rev += 1;
+                Some(doc)
             }
+            None => None,
         }
     }
 

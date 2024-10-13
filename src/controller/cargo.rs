@@ -32,7 +32,6 @@ pub struct CargoResolveOutput {
 }
 
 pub async fn parse_cargo_output(ctx: &Ctx) -> Option<CargoResolveOutput> {
-    //TODO refactor
     let Ok(path) = ctx.uri.to_file_path() else {
         return None;
     };

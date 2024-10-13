@@ -184,10 +184,6 @@ impl LanguageServer for CargoAppraiser {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        eprintln!(
-            "completion: {}",
-            params.text_document_position.text_document.uri,
-        );
         Ok(None)
     }
 
@@ -272,6 +268,9 @@ struct Args {
     ///"inlayHint" or "vscode". "inlayHint" is for lsp inlay hints and "vscode" is for vscode decorations
     #[arg(short, long, value_enum)]
     renderer: Renderer,
+    ///delay(milliseconds) for cargo to resolve dependencies after a document change event, default is 3000
+    #[arg(short, long, default_value = "3000")]
+    delay: u64,
     ///stdio transport. now only work with stdio transport
     #[arg(short, long, default_value = "true")]
     stdio: bool,
@@ -289,7 +288,7 @@ async fn main() {
         let render = DecorationRenderer::new(client.clone(), args.renderer);
         let render_tx = render.init();
 
-        let state = Appraiser::new(client.clone(), render_tx.clone());
+        let state = Appraiser::new(client.clone(), render_tx.clone(), args.delay);
         let tx = state.initialize();
 
         CargoAppraiser { client, tx, render }

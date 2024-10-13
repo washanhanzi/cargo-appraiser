@@ -101,7 +101,7 @@ impl InlayHintDecoration {
                                     .read()
                                     .unwrap()
                                     .renderer
-                                    .decoration_format
+                                    .decoration_formatter
                                     .loading
                                     .to_string(),
                                 tooltip: None,
@@ -125,7 +125,8 @@ impl InlayHintDecoration {
                     }
                     DecorationEvent::Dependency(path, id, range, p) => {
                         let config = GLOBAL_CONFIG.read().unwrap();
-                        let decoration = formatted_string(&p, &config.renderer.decoration_format);
+                        let decoration =
+                            formatted_string(&p, &config.renderer.decoration_formatter);
 
                         let hint = InlayHint {
                             position: Position::new(range.end.line, range.end.character),
