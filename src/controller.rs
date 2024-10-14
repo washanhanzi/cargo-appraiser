@@ -1,6 +1,7 @@
 pub mod appraiser;
 mod cargo;
 mod code_action;
+mod completion;
 mod debouncer;
 mod hover;
 

@@ -4,7 +4,7 @@ WIP
 
 # Config
 
-```json
+```jsonc
 {
     "renderer": {
         // the formatter may has 3 template strings:
@@ -12,10 +12,15 @@ WIP
         // - latest_matched: the latest compatible version
         // - latest: the latest version, the latest version may or may not be compatilbe with the version requirement
         //
+        // a dependency is waiting for resolve for 2 possible reasons:
+        // 1. wait for `cargo` to run. `Cargo.toml` is not saved, so `cargo` haven't picked up the change.
+        // 2. wait for `cargo` to finish. `cargo` is running in process to resolve the dependency.
+        //
         // the formatter has 7 fields:
         // latest: the dependency has the latest version installed
         // local: the dependency is a local path dependency
         // not_installed: the dependency is not installed
+        // waiting: the dependency is waiting for resolve
         // mixed_upgradeable: the installed version has an compatible upgrade, and the latest version is not compatible with the current version requirement
         // compatible_latest: the installed version can update to latest version
         // noncompatible_latest: the installed version can't upate to latest version

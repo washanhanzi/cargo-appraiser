@@ -5,7 +5,7 @@ use tokio::sync::{
     oneshot,
 };
 use tower_lsp::{
-    lsp_types::{CodeActionResponse, Hover, Position, Range, Url},
+    lsp_types::{CodeActionResponse, CompletionResponse, Hover, Position, Range, Url},
     Client,
 };
 
@@ -55,6 +55,7 @@ pub enum CargoDocumentEvent {
     CodeAction(Url, Range, oneshot::Sender<CodeActionResponse>),
     //hover event, path and position
     Hovered(Url, Position, oneshot::Sender<Hover>),
+    Completion(Url, Position, oneshot::Sender<CompletionResponse>),
 }
 
 pub struct CargoTomlPayload {

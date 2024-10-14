@@ -6,6 +6,8 @@ use tokio::sync::{mpsc::Sender, oneshot};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
+use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 mod config;
 mod controller;
@@ -95,9 +97,7 @@ impl LanguageServer for CargoAppraiser {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "cargo-appraiser server initialized!")
-            .await;
+        info!("cargo-appraiser server initialized!");
     }
 
     async fn diagnostic(
@@ -116,13 +116,21 @@ impl LanguageServer for CargoAppraiser {
         if !uri.path().ends_with("Cargo.toml") {
             return;
         };
-        self.tx
+        if let Err(e) = self
+            .tx
             .send(CargoDocumentEvent::Opened(CargoTomlPayload {
                 uri,
                 text: params.text_document.text,
             }))
             .await
-            .unwrap();
+        {
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    &format!("error sending opened event: {}", e),
+                )
+                .await;
+        };
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -135,7 +143,12 @@ impl LanguageServer for CargoAppraiser {
                 }))
                 .await
             {
-                eprintln!("error sending changed event: {}", e);
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        &format!("error sending changed event: {}", e),
+                    )
+                    .await;
             };
         }
     }
@@ -145,7 +158,14 @@ impl LanguageServer for CargoAppraiser {
         if !uri.path().ends_with("Cargo.toml") {
             return;
         };
-        self.tx.send(CargoDocumentEvent::Closed(uri)).await.unwrap();
+        if let Err(e) = self.tx.send(CargoDocumentEvent::Closed(uri)).await {
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    &format!("error sending closed event: {}", e),
+                )
+                .await;
+        };
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
@@ -160,7 +180,12 @@ impl LanguageServer for CargoAppraiser {
                 .send(CargoDocumentEvent::Saved(CargoTomlPayload { uri, text }))
                 .await
             {
-                eprintln!("error sending saved event: {}", e);
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        &format!("error sending saved event: {}", e),
+                    )
+                    .await;
             };
         };
     }
@@ -184,13 +209,34 @@ impl LanguageServer for CargoAppraiser {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        if !uri.path().ends_with("Cargo.toml") {
+            return Ok(None);
+        };
+        let (tx, rx) = oneshot::channel();
+        if let Err(e) = self
+            .tx
+            .send(CargoDocumentEvent::Completion(
+                uri,
+                params.text_document_position.position,
+                tx,
+            ))
+            .await
+        {
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    &format!("error sending completion event: {}", e),
+                )
+                .await;
+            return Ok(None);
+        };
         Ok(None)
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = params.text_document.uri;
-        let path = uri.path().to_string();
-        if !path.ends_with("Cargo.toml") {
+        if !uri.path().ends_with("Cargo.toml") {
             return Ok(None);
         };
         let (tx, rx) = oneshot::channel();
@@ -217,8 +263,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
-        let path = uri.path().to_string();
-        if !path.ends_with("Cargo.toml") {
+        if !uri.path().ends_with("Cargo.toml") {
             return Ok(None);
         };
         //create a once channel with payload Hover
@@ -253,10 +298,14 @@ impl LanguageServer for CargoAppraiser {
         for change in params.changes {
             if change.uri.path().ends_with("Cargo.lock") {
                 //send refresh event
-                self.tx
-                    .send(CargoDocumentEvent::CargoLockChanged)
-                    .await
-                    .unwrap();
+                if let Err(e) = self.tx.send(CargoDocumentEvent::CargoLockChanged).await {
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            &format!("error sending cargo lock changed event: {}", e),
+                        )
+                        .await;
+                }
             }
         }
     }
@@ -280,6 +329,16 @@ async fn main() {
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
+
+    //logging
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .init();
 
     let (service, socket) = LspService::new(|client| {
         let render = DecorationRenderer::new(client.clone(), args.renderer);
