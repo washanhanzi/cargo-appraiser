@@ -93,7 +93,7 @@ impl InlayHintDecoration {
         tokio::spawn(async move {
             while let Some(event) = render_rx.recv().await {
                 match event {
-                    DecorationEvent::DependencyLoading(path, id, range) => {
+                    DecorationEvent::DependencyWaiting(path, id, range) => {
                         let hint = InlayHint {
                             position: Position::new(range.end.line, range.end.character),
                             label: InlayHintLabel::LabelParts(vec![InlayHintLabelPart {
@@ -102,7 +102,7 @@ impl InlayHintDecoration {
                                     .unwrap()
                                     .renderer
                                     .decoration_formatter
-                                    .loading
+                                    .waiting
                                     .to_string(),
                                 tooltip: None,
                                 location: None,

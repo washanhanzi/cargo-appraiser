@@ -58,7 +58,7 @@ pub enum DecorationEvent {
     Reset,
     DependencyRangeUpdate(Url, String, Range),
     DependencyRemove(Url, String),
-    DependencyLoading(Url, String, Range),
+    DependencyWaiting(Url, String, Range),
     Dependency(Url, String, Range, Dependency),
 }
 
@@ -216,8 +216,8 @@ pub struct DecorationFormatter {
     pub local: String,
     #[serde(default = "default_not_installed")]
     pub not_installed: String,
-    #[serde(default = "default_loading")]
-    pub loading: String,
+    #[serde(default = "default_waiting")]
+    pub waiting: String,
     #[serde(default = "default_mixed_upgradeable")]
     pub mixed_upgradeable: String,
     #[serde(default = "default_compatible_latest")]
@@ -236,7 +236,7 @@ impl Default for DecorationFormatter {
             local: default_local(),
             noncompatible_latest: default_noncompatible_latest(),
             not_installed: default_not_installed(),
-            loading: default_loading(),
+            waiting: default_waiting(),
             mixed_upgradeable: default_mixed_upgradeable(),
             yanked: default_yanked(),
         }
@@ -263,8 +263,8 @@ fn default_not_installed() -> String {
     "Not installed".to_string()
 }
 
-fn default_loading() -> String {
-    "Loading...".to_string()
+fn default_waiting() -> String {
+    "Waiting...".to_string()
 }
 
 fn default_local() -> String {

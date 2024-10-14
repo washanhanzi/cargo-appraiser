@@ -15,7 +15,7 @@ use crate::{
 
 use super::{
     cargo::{parse_cargo_output, CargoResolveOutput},
-    change_timer::ChangeTimer,
+    debouncer::Debouncer,
     hover::hover,
 };
 
@@ -43,7 +43,7 @@ pub enum CargoDocumentEvent {
     Opened(CargoTomlPayload),
     Saved(CargoTomlPayload),
     Changed(CargoTomlPayload),
-    ChangeTimer(Ctx),
+    ReadyToResolve(Ctx),
     //reset document state
     Closed(Url),
     //result from cargo command
@@ -93,8 +93,8 @@ impl Appraiser {
         });
 
         //timer task
-        let timer = ChangeTimer::new(tx.clone(), self.timeout);
-        let timer_tx = timer.spawn();
+        let mut debouncer = Debouncer::new(tx.clone(), 300, 3000);
+        debouncer.spawn();
 
         //main loop
         //render task sender
@@ -143,18 +143,18 @@ impl Appraiser {
                         let Some(doc) = state.clear_except_current() else {
                             continue;
                         };
-                        if let Err(e) = cargo_tx
-                            .send(Ctx {
+                        if let Err(e) = debouncer
+                            .send_interactive(Ctx {
                                 uri: doc.uri.clone(),
                                 rev: doc.rev,
                             })
                             .await
                         {
-                            eprintln!("cargo lock changed tx error: {}", e);
+                            eprintln!("debounder send interactive error: {}", e);
                         }
                     }
                     CargoDocumentEvent::Changed(msg) => {
-                        let diff = state.reconsile(&msg.uri, &msg.text);
+                        let (diff, _) = state.reconsile(&msg.uri, &msg.text);
                         let doc = state.state(&msg.uri).unwrap();
                         for v in &diff.range_updated {
                             if let Some(node) = doc.symbol(v) {
@@ -187,20 +187,25 @@ impl Appraiser {
                                 .await
                                 .unwrap();
                         }
-                        timer_tx
-                            .send(Ctx {
+                        if let Err(e) = debouncer
+                            .send_background(Ctx {
                                 uri: msg.uri,
                                 rev: doc.rev,
                             })
                             .await
-                            .unwrap();
+                        {
+                            eprintln!("debounder send interactive error: {}", e);
+                        }
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
-                        let _ = state.reconsile(&msg.uri, &msg.text);
+                        let (_, rev) = state.reconsile(&msg.uri, &msg.text);
 
-                        start_resolve(&msg.uri, &mut state, &render_tx, &cargo_tx).await;
+                        if let Err(e) = debouncer.send_interactive(Ctx { uri: msg.uri, rev }).await
+                        {
+                            eprintln!("debounder send interactive error: {}", e);
+                        }
                     }
-                    CargoDocumentEvent::ChangeTimer(ctx) => {
+                    CargoDocumentEvent::ReadyToResolve(ctx) => {
                         if state.check_rev(&ctx.uri, ctx.rev) {
                             start_resolve(&ctx.uri, &mut state, &render_tx, &cargo_tx).await;
                         }
@@ -304,13 +309,15 @@ impl Appraiser {
                             }
                         }
                         if doc.is_dirty() {
-                            timer_tx
-                                .send(Ctx {
+                            if let Err(e) = debouncer
+                                .send_background(Ctx {
                                     uri: output.ctx.uri,
                                     rev: doc.rev,
                                 })
                                 .await
-                                .unwrap();
+                            {
+                                eprintln!("debounder send background error: {}", e);
+                            }
                         }
                     }
                     _ => {}
@@ -339,7 +346,7 @@ async fn start_resolve(
     for v in doc.dirty_nodes.keys() {
         if let Some(n) = doc.symbol(v) {
             render_tx
-                .send(DecorationEvent::DependencyLoading(
+                .send(DecorationEvent::DependencyWaiting(
                     uri.clone(),
                     v.to_string(),
                     n.range,

@@ -54,7 +54,7 @@ impl Workspace {
         }
     }
 
-    pub fn reconsile(&mut self, uri: &Url, text: &str) -> SymbolDiff {
+    pub fn reconsile(&mut self, uri: &Url, text: &str) -> (SymbolDiff, usize) {
         let mut new_doc = Document::parse(uri, text);
         self.cur_uri = Some(uri.clone());
         match self.documents.entry(uri.clone()) {
@@ -62,14 +62,15 @@ impl Workspace {
                 let diff = Document::diff_symbols(Some(entry.get()), &new_doc);
                 entry.get_mut().reconsile(new_doc, &diff);
                 entry.get_mut().populate_dependencies();
-                diff
+                (diff, entry.get().rev)
             }
             Entry::Vacant(entry) => {
                 let diff = Document::diff_symbols(None, &new_doc);
                 new_doc.self_reconsile(&diff);
                 new_doc.populate_dependencies();
+                let rev = new_doc.rev;
                 entry.insert(new_doc);
-                diff
+                (diff, rev)
             }
         }
     }
