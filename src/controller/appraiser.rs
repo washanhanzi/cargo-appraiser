@@ -32,7 +32,6 @@ pub struct Ctx {
 pub struct Appraiser {
     client: Client,
     render_tx: Sender<DecorationEvent>,
-    timeout: u64,
 }
 
 //TODO audit: cargo.toml and cargo.lock always stay together, if we get the full dep tree from cargo tree
@@ -64,12 +63,8 @@ pub struct CargoTomlPayload {
 }
 
 impl Appraiser {
-    pub fn new(client: Client, render_tx: Sender<DecorationEvent>, timeout: u64) -> Self {
-        Self {
-            client,
-            render_tx,
-            timeout,
-        }
+    pub fn new(client: Client, render_tx: Sender<DecorationEvent>) -> Self {
+        Self { client, render_tx }
     }
     pub fn initialize(&self) -> Sender<CargoDocumentEvent> {
         //create mpsc channel
