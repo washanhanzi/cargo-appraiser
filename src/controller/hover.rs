@@ -1,9 +1,9 @@
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkedString};
 
-use crate::entity::{CargoKey, CargoNode, Dependency, DependencyKey};
+use crate::entity::{Dependency, DependencyEntryKind, EntryKind, TomlEntry};
 
-pub fn hover(node: CargoNode, dep: &Dependency) -> Option<Hover> {
-    if let CargoKey::Dpendency(id, key) = &node.key {
+pub fn hover(node: TomlEntry, dep: &Dependency) -> Option<Hover> {
+    if let EntryKind::Dependency(id, key) = &node.kind {
         hover_dependency(id, key, &node, dep)
     } else {
         None
@@ -12,12 +12,12 @@ pub fn hover(node: CargoNode, dep: &Dependency) -> Option<Hover> {
 
 fn hover_dependency(
     id: &str,
-    key: &DependencyKey,
-    node: &CargoNode,
+    key: &DependencyEntryKind,
+    node: &TomlEntry,
     dep: &Dependency,
 ) -> Option<Hover> {
     match key {
-        DependencyKey::TableDependencyVersion | DependencyKey::SimpleDependency => {
+        DependencyEntryKind::TableDependencyVersion | DependencyEntryKind::SimpleDependency => {
             let summaries = dep.summaries.as_ref()?;
             let mut versions = summaries
                 .iter()
@@ -37,7 +37,7 @@ fn hover_dependency(
                 range: Some(node.range),
             })
         }
-        DependencyKey::TableDependencyFeatures | DependencyKey::TableDependencyFeature => {
+        DependencyEntryKind::TableDependencyFeatures | DependencyEntryKind::TableDependencyFeature => {
             let resolved = dep.resolved.as_ref()?;
             let features = resolved.features.clone();
             let feature_list = features

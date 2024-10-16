@@ -23,6 +23,7 @@ export async function activate(context: ExtensionContext) {
 
     // If the extension is launched in debug mode then the debug server options are used
     // Otherwise the run options are used
+    // add env rust log level set to debug
     const serverOptions: ServerOptions = {
         run: {
             command: serverPath,

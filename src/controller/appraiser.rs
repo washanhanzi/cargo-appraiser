@@ -8,9 +8,13 @@ use tower_lsp::{
     lsp_types::{CodeActionResponse, CompletionResponse, Hover, Position, Range, Url},
     Client,
 };
+use tracing::{error, info};
 
 use crate::{
-    controller::code_action::code_action, decoration::DecorationEvent, usecase::Workspace,
+    controller::{code_action::code_action, completion::completion},
+    decoration::DecorationEvent,
+    entity::{CargoTable, DependencyKeyKind, DependencyTable, KeyKind, TomlKey},
+    usecase::Workspace,
 };
 
 use super::{
@@ -30,7 +34,6 @@ pub struct Ctx {
 //track current opened cargo.toml file and rev
 #[derive(Debug)]
 pub struct Appraiser {
-    client: Client,
     render_tx: Sender<DecorationEvent>,
 }
 
@@ -55,7 +58,7 @@ pub enum CargoDocumentEvent {
     CodeAction(Url, Range, oneshot::Sender<CodeActionResponse>),
     //hover event, path and position
     Hovered(Url, Position, oneshot::Sender<Hover>),
-    Completion(Url, Position, oneshot::Sender<CompletionResponse>),
+    Completion(Url, Position, oneshot::Sender<Option<CompletionResponse>>),
 }
 
 pub struct CargoTomlPayload {
@@ -64,8 +67,8 @@ pub struct CargoTomlPayload {
 }
 
 impl Appraiser {
-    pub fn new(client: Client, render_tx: Sender<DecorationEvent>) -> Self {
-        Self { client, render_tx }
+    pub fn new(render_tx: Sender<DecorationEvent>) -> Self {
+        Self { render_tx }
     }
     pub fn initialize(&self) -> Sender<CargoDocumentEvent> {
         //create mpsc channel
@@ -82,7 +85,7 @@ impl Appraiser {
                         .send(CargoDocumentEvent::CargoResolved(output))
                         .await
                     {
-                        eprintln!("cargo resolved tx error: {}", e);
+                        error!("error sending cargo resolved event: {}", e);
                     }
                 }
             }
@@ -105,10 +108,10 @@ impl Appraiser {
                         let Some(doc) = state.state(&uri) else {
                             continue;
                         };
-                        let Some(node) = doc.precise_match(pos) else {
+                        let Some(node) = doc.precise_match_entry(pos) else {
                             continue;
                         };
-                        let Some(dep) = doc.dependency(node.key.row_id()) else {
+                        let Some(dep) = doc.dependency(node.kind.row_id()) else {
                             continue;
                         };
                         let Some(h) = hover(node, dep) else {
@@ -116,14 +119,24 @@ impl Appraiser {
                         };
                         let _ = tx.send(h);
                     }
+                    CargoDocumentEvent::Completion(uri, pos, tx) => {
+                        let Some(doc) = state.state(&uri) else {
+                            continue;
+                        };
+                        info!("pos: {:?}", doc.tree.keys);
+                        let entry = doc.precise_match_entry(pos);
+                        let key = doc.precise_match_key(pos);
+                        let completion = completion(key, entry).await;
+                        let _ = tx.send(completion);
+                    }
                     CargoDocumentEvent::CodeAction(uri, range, tx) => {
                         let Some(doc) = state.state(&uri) else {
                             continue;
                         };
-                        let Some(node) = doc.precise_match(range.start) else {
+                        let Some(node) = doc.precise_match_entry(range.start) else {
                             continue;
                         };
-                        let Some(dep) = doc.dependency(node.key.row_id()) else {
+                        let Some(dep) = doc.dependency(node.kind.row_id()) else {
                             continue;
                         };
                         let Some(action) = code_action(uri, node, dep) else {
@@ -153,7 +166,7 @@ impl Appraiser {
                         let (diff, _) = state.reconsile(&msg.uri, &msg.text);
                         let doc = state.state(&msg.uri).unwrap();
                         for v in &diff.range_updated {
-                            if let Some(node) = doc.symbol(v) {
+                            if let Some(node) = doc.entry(v) {
                                 render_tx
                                     .send(DecorationEvent::DependencyRangeUpdate(
                                         msg.uri.clone(),
@@ -340,7 +353,7 @@ async fn start_resolve(
     }
 
     for v in doc.dirty_nodes.keys() {
-        if let Some(n) = doc.symbol(v) {
+        if let Some(n) = doc.entry(v) {
             render_tx
                 .send(DecorationEvent::DependencyWaiting(
                     uri.clone(),

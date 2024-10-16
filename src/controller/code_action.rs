@@ -6,11 +6,11 @@ use tower_lsp::lsp_types::{
 
 use crate::{
     decoration::{version_decoration, VersionDecoration},
-    entity::{CargoKey, CargoNode, Dependency, DependencyKey},
+    entity::{EntryKind, TomlEntry, Dependency, DependencyEntryKind},
 };
 
-pub fn code_action(uri: Url, node: CargoNode, dep: &Dependency) -> Option<CodeActionResponse> {
-    if let CargoKey::Dpendency(id, key) = &node.key {
+pub fn code_action(uri: Url, node: TomlEntry, dep: &Dependency) -> Option<CodeActionResponse> {
+    if let EntryKind::Dependency(id, key) = &node.kind {
         code_action_dependency(uri, id, key, &node, dep)
     } else {
         None
@@ -20,12 +20,12 @@ pub fn code_action(uri: Url, node: CargoNode, dep: &Dependency) -> Option<CodeAc
 pub fn code_action_dependency(
     uri: Url,
     id: &str,
-    key: &DependencyKey,
-    node: &CargoNode,
+    key: &DependencyEntryKind,
+    node: &TomlEntry,
     dep: &Dependency,
 ) -> Option<CodeActionResponse> {
     match key {
-        DependencyKey::SimpleDependency | DependencyKey::TableDependencyVersion => {
+        DependencyEntryKind::SimpleDependency | DependencyEntryKind::TableDependencyVersion => {
             let mut actions: CodeActionResponse = vec![];
             let version_deco = version_decoration(dep);
             if version_deco == VersionDecoration::Latest {

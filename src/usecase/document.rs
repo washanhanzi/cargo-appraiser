@@ -2,16 +2,16 @@ use std::collections::HashMap;
 
 use tower_lsp::lsp_types::{Position, Url};
 
-use crate::entity::{cargo_dependency_to_toml_key, CargoNode, Dependency, SymbolDiff};
+use crate::entity::{cargo_dependency_to_toml_key, Dependency, EntryDiff, TomlEntry, TomlKey};
 
-use super::{diff_symbols, ReverseSymbolTree, Walker};
+use super::{diff_dependency_entries, symbol_tree::SymbolTree, ReverseSymbolTree, Walker};
 
 #[derive(Debug, Clone)]
 pub struct Document {
     pub uri: Url,
     pub rev: usize,
-    pub symbols: HashMap<String, CargoNode>,
-    pub reverse_symbols: ReverseSymbolTree,
+    pub tree: SymbolTree,
+    pub reverse_tree: ReverseSymbolTree,
     //might be empty
     pub dependencies: HashMap<String, Dependency>,
     pub dirty_nodes: HashMap<String, usize>,
@@ -33,27 +33,29 @@ impl Document {
             walker.walk_root(key.value(), key.value(), entry)
         }
 
-        let (symbols, deps) = walker.consume();
-        let len = symbols.len();
-        let reverse_symbols = ReverseSymbolTree::parse(&symbols);
+        let (tree, deps) = walker.consume();
+        let len = entries.len();
+        let reverse_symbols = ReverseSymbolTree::parse(&tree);
         Self {
             uri: uri.clone(),
             rev: 0,
-            symbols,
-            reverse_symbols,
+            tree,
+            reverse_tree: reverse_symbols,
             dependencies: deps,
             dirty_nodes: HashMap::with_capacity(len),
         }
     }
 
-    pub fn diff_symbols(old: Option<&Document>, new: &Document) -> SymbolDiff {
-        let old = old.map(|d| &d.symbols);
-        diff_symbols(old, &new.symbols)
+    //currently only diff dependency entries
+    pub fn diff(old: Option<&Document>, new: &Document) -> EntryDiff {
+        let old = old.map(|d| &d.tree.entries);
+        diff_dependency_entries(old, &new.tree.entries)
     }
 
-    pub fn reconsile(&mut self, mut new: Document, diff: &SymbolDiff) {
-        self.symbols = new.symbols;
-        self.reverse_symbols = new.reverse_symbols;
+    pub fn reconsile(&mut self, mut new: Document, diff: &EntryDiff) {
+        self.tree.entries = new.tree.entries;
+        self.tree.keys = new.tree.keys;
+        self.reverse_tree = new.reverse_tree;
         self.rev += 1;
         //merge dependencies
         for v in diff.created.iter().chain(&diff.value_updated) {
@@ -70,7 +72,7 @@ impl Document {
         }
     }
 
-    pub fn self_reconsile(&mut self, diff: &SymbolDiff) {
+    pub fn self_reconsile(&mut self, diff: &EntryDiff) {
         self.rev += 1;
         //merge dependencies
         for v in diff
@@ -116,15 +118,65 @@ impl Document {
         !self.dirty_nodes.is_empty()
     }
 
-    pub fn precise_match(&self, pos: Position) -> Option<CargoNode> {
-        self.reverse_symbols.precise_match(pos, &self.symbols)
+    pub fn precise_match_entry(&self, pos: Position) -> Option<TomlEntry> {
+        self.reverse_tree
+            .precise_match_entry(pos, &self.tree.entries)
+    }
+
+    pub fn precise_match_key(&self, pos: Position) -> Option<TomlKey> {
+        self.reverse_tree.precise_match_key(pos, &self.tree.keys)
     }
 
     pub fn dependency(&self, id: &str) -> Option<&Dependency> {
         self.dependencies.get(id)
     }
 
-    pub fn symbol(&self, id: &str) -> Option<&CargoNode> {
-        self.symbols.get(id)
+    pub fn entry(&self, id: &str) -> Option<&TomlEntry> {
+        self.tree.entries.get(id)
+    }
+}
+
+mod tests {
+    use tower_lsp::lsp_types::Url;
+
+    use crate::{
+        entity::{
+            CargoTable, DependencyEntryKind, DependencyKeyKind, DependencyTable, EntryKind, KeyKind,
+        },
+        usecase::document::Document,
+    };
+
+    #[test]
+    fn test_parse() {
+        let doc = Document::parse(
+            &Url::parse("file:///C:/Users/test.toml").unwrap(),
+            r#"
+            [dependencies]
+            a = "0.1.0"
+            b
+            "#,
+        );
+        assert_eq!(doc.tree.keys.len(), 2);
+        assert_eq!(doc.tree.entries.len(), 1);
+        for (_, v) in doc.tree.keys.iter() {
+            assert_eq!(
+                v.table,
+                CargoTable::Dependencies(DependencyTable::Dependencies)
+            );
+            assert_eq!(v.kind, KeyKind::Dependency(DependencyKeyKind::CrateName));
+        }
+        for (_, v) in doc.tree.entries.iter() {
+            assert_eq!(
+                v.table,
+                CargoTable::Dependencies(DependencyTable::Dependencies)
+            );
+            assert_eq!(
+                v.kind,
+                EntryKind::Dependency(
+                    "dependencies.a".to_string(),
+                    DependencyEntryKind::SimpleDependency
+                )
+            );
+        }
     }
 }

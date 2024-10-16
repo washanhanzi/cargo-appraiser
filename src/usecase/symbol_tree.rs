@@ -4,29 +4,46 @@ use std::{
 };
 
 use lsp_async_stub::util::Mapper;
-use taplo::{dom::Node, util::join_ranges};
+use taplo::{
+    dom::{node::Key, Node},
+    util::join_ranges,
+};
 use tower_lsp::lsp_types::{Position, Range};
 
 use crate::entity::{
-    CargoKey, CargoNode, CargoTable, Dependency, DependencyKey, InvalidDependencyKey, InvalideKey,
-    SymbolDiff, Value,
+    CargoTable, Dependency, DependencyEntryKind, DependencyKeyKind, EntryDiff, EntryKind, KeyKind,
+    TomlEntry, TomlKey, Value,
 };
 
+#[derive(Debug, Clone)]
+pub struct SymbolTree {
+    pub entries: HashMap<String, TomlEntry>,
+    pub keys: HashMap<String, TomlKey>,
+}
+
 pub struct Walker {
-    symbol_map: HashMap<String, CargoNode>,
+    keys_map: HashMap<String, TomlKey>,
+    entries_map: HashMap<String, TomlEntry>,
     deps: HashMap<String, Dependency>,
     mapper: Mapper,
 }
 
 impl Walker {
-    pub fn consume(self) -> (HashMap<String, CargoNode>, HashMap<String, Dependency>) {
-        (self.symbol_map, self.deps)
+    pub fn consume(self) -> (SymbolTree, HashMap<String, Dependency>) {
+        (
+            SymbolTree {
+                keys: self.keys_map,
+                entries: self.entries_map,
+            },
+            self.deps,
+        )
     }
 
     pub fn new(text: &str, capacity: usize) -> Self {
         let mapper = Mapper::new_utf16(text, false);
         Self {
-            symbol_map: HashMap::with_capacity(capacity),
+            keys_map: HashMap::with_capacity(capacity),
+            entries_map: HashMap::with_capacity(capacity),
             deps: HashMap::with_capacity(capacity),
             mapper,
         }
@@ -42,18 +59,20 @@ impl Walker {
                         let entries = t.entries().read();
                         for (key, entry) in entries.iter() {
                             let new_id = id.to_string() + "." + key.value();
+
+                            //insert dep
                             let mut dep = Dependency {
                                 id: new_id.clone(),
                                 ..Default::default()
                             };
                             dep.name = key.value().to_string();
-                            let range =
-                                self.mapper.range(join_ranges(entry.text_ranges())).unwrap();
-                            let lsp_range = into_lsp_range(range);
-                            dep.range = lsp_range;
+                            dep.range = into_lsp_range(
+                                self.mapper.range(join_ranges(entry.text_ranges())).unwrap(),
+                            );
                             dep.table = dep_table;
                             self.enter_dependency(
                                 &new_id,
+                                key,
                                 key.value(),
                                 parsed_table,
                                 entry,
@@ -70,6 +89,7 @@ impl Walker {
                             let mut dep = Dependency::default();
                             self.enter_dependency(
                                 &new_id,
+                                key,
                                 key.value(),
                                 parsed_table,
                                 entry,
@@ -89,6 +109,7 @@ impl Walker {
     fn enter_dependency(
         &mut self,
         id: &str,
+        key: &Key,
         name: &str,
         table: CargoTable,
         node: &Node,
@@ -103,7 +124,7 @@ impl Walker {
                 let entries = t.entries().read();
                 for (key, entry) in entries.iter() {
                     let new_id = id.to_string() + "." + key.value();
-                    self.enter_dependency(&new_id, key.value(), table, entry, Some(name), dep);
+                    self.enter_dependency(&new_id, key, key.value(), table, entry, Some(name), dep);
                 }
             }
             return;
@@ -120,7 +141,15 @@ impl Walker {
                     let range = self.mapper.range(join_ranges(node.text_ranges())).unwrap();
                     let lsp_range = into_lsp_range(range);
                     dep.range = lsp_range;
-                    self.enter_dependency(&new_id, key.value(), parsed_table, entry, platform, dep);
+                    self.enter_dependency(
+                        &new_id,
+                        key,
+                        key.value(),
+                        parsed_table,
+                        entry,
+                        platform,
+                        dep,
+                    );
                 }
             }
             return;
@@ -133,54 +162,70 @@ impl Walker {
         match node {
             //invalid node
             Node::Invalid(_) => {
-                self.symbol_map.insert(
-                    id.to_string(),
-                    CargoNode {
-                        id: id.to_string(),
-                        range: lsp_range,
-                        text: name.to_string(),
+                //insert key
+                let key_id = id.to_string() + ".key";
+                self.keys_map.insert(
+                    key_id.to_string(),
+                    TomlKey {
+                        id: key_id,
+                        range: into_lsp_range(
+                            self.mapper.range(join_ranges(key.text_ranges())).unwrap(),
+                        ),
+                        text: key.value().to_string(),
                         table,
-                        key: CargoKey::Invalid(InvalideKey::Dependency(
-                            InvalidDependencyKey::CrateName,
-                        )),
+                        kind: KeyKind::Dependency(DependencyKeyKind::CrateName),
                     },
                 );
             }
             //inline table dependency
             Node::Table(t) => {
-                self.symbol_map.insert(
+                //insert key
+                let key_id = id.to_string() + ".key";
+                self.keys_map.insert(
+                    key_id.to_string(),
+                    TomlKey {
+                        id: key_id,
+                        range: into_lsp_range(
+                            self.mapper.range(join_ranges(key.text_ranges())).unwrap(),
+                        ),
+                        text: key.value().to_string(),
+                        table,
+                        kind: KeyKind::Dependency(DependencyKeyKind::CrateName),
+                    },
+                );
+                self.entries_map.insert(
                     id.to_string(),
-                    CargoNode {
+                    TomlEntry {
                         id: id.to_string(),
                         range: lsp_range,
                         text,
                         table,
-                        key: CargoKey::Dpendency(
+                        kind: EntryKind::Dependency(
                             dep.id.to_string(),
-                            DependencyKey::TableDependency,
+                            DependencyEntryKind::TableDependency,
                         ),
                     },
                 );
                 let entries = t.entries().read();
                 for (key, entry) in entries.iter() {
                     let new_id = id.to_string() + "." + key.value();
-                    self.enter_dependency(&new_id, key.value(), table, entry, platform, dep);
+                    self.enter_dependency(&new_id, key, key.value(), table, entry, platform, dep);
                 }
             }
             //feature array
             Node::Array(arr) => {
                 if name == "features" {
                     //feature array
-                    self.symbol_map.insert(
+                    self.entries_map.insert(
                         id.to_string(),
-                        CargoNode {
+                        TomlEntry {
                             id: id.to_string(),
                             range: lsp_range,
                             text,
                             table,
-                            key: CargoKey::Dpendency(
+                            kind: EntryKind::Dependency(
                                 dep.id.to_string(),
-                                DependencyKey::TableDependencyFeatures,
+                                DependencyEntryKind::TableDependencyFeatures,
                             ),
                         },
                     );
@@ -193,16 +238,16 @@ impl Walker {
                         let text = serde_json::to_string(f).unwrap();
                         if let Node::Str(s) = f {
                             features.push(Value::new(new_id.to_string(), s.value().to_string()));
-                            self.symbol_map.insert(
+                            self.entries_map.insert(
                                 new_id.to_string(),
-                                CargoNode {
+                                TomlEntry {
                                     id: new_id,
                                     range: lsp_range,
                                     text: strip_quote(text),
                                     table,
-                                    key: CargoKey::Dpendency(
+                                    kind: EntryKind::Dependency(
                                         dep.id.to_string(),
-                                        DependencyKey::TableDependencyFeature,
+                                        DependencyEntryKind::TableDependencyFeature,
                                     ),
                                 },
                             );
@@ -220,61 +265,90 @@ impl Walker {
                 let key = match name {
                     "version" => {
                         dep.version = Some(Value::new(id.to_string(), s.value().to_string()));
-                        CargoKey::Dpendency(
+                        EntryKind::Dependency(
                             dep.id.to_string(),
-                            DependencyKey::TableDependencyVersion,
+                            DependencyEntryKind::TableDependencyVersion,
                         )
                     }
                     "branch" => {
                         dep.branch = Some(Value::new(id.to_string(), s.value().to_string()));
-                        CargoKey::Dpendency(
+                        EntryKind::Dependency(
                             dep.id.to_string(),
-                            DependencyKey::TableDependencyBranch,
+                            DependencyEntryKind::TableDependencyBranch,
                         )
                     }
                     "tag" => {
                         dep.tag = Some(Value::new(id.to_string(), s.value().to_string()));
-                        CargoKey::Dpendency(dep.id.to_string(), DependencyKey::TableDependencyTag)
+                        EntryKind::Dependency(
+                            dep.id.to_string(),
+                            DependencyEntryKind::TableDependencyTag,
+                        )
                     }
                     "path" => {
                         dep.path = Some(Value::new(id.to_string(), s.value().to_string()));
-                        CargoKey::Dpendency(dep.id.to_string(), DependencyKey::TableDependencyPath)
+                        EntryKind::Dependency(
+                            dep.id.to_string(),
+                            DependencyEntryKind::TableDependencyPath,
+                        )
                     }
                     "rev" => {
                         dep.rev = Some(Value::new(id.to_string(), s.value().to_string()));
-                        CargoKey::Dpendency(dep.id.to_string(), DependencyKey::TableDependencyRev)
+                        EntryKind::Dependency(
+                            dep.id.to_string(),
+                            DependencyEntryKind::TableDependencyRev,
+                        )
                     }
                     "git" => {
                         dep.git = Some(Value::new(id.to_string(), s.value().to_string()));
-                        CargoKey::Dpendency(dep.id.to_string(), DependencyKey::TableDependencyGit)
+                        EntryKind::Dependency(
+                            dep.id.to_string(),
+                            DependencyEntryKind::TableDependencyGit,
+                        )
                     }
                     "registry" => {
                         dep.registry = Some(Value::new(id.to_string(), s.value().to_string()));
-                        CargoKey::Dpendency(
+                        EntryKind::Dependency(
                             dep.id.to_string(),
-                            DependencyKey::TableDependencyRegistry,
+                            DependencyEntryKind::TableDependencyRegistry,
                         )
                     }
                     "package" => {
                         dep.package = Some(Value::new(id.to_string(), s.value().to_string()));
-                        CargoKey::Dpendency(
+                        EntryKind::Dependency(
                             dep.id.to_string(),
-                            DependencyKey::TableDependencyPackage,
+                            DependencyEntryKind::TableDependencyPackage,
                         )
                     }
                     _ => {
+                        //insert key
+                        let key_id = id.to_string() + ".key";
+                        self.keys_map.insert(
+                            key_id.to_string(),
+                            TomlKey {
+                                id: key_id,
+                                range: into_lsp_range(
+                                    self.mapper.range(join_ranges(key.text_ranges())).unwrap(),
+                                ),
+                                text: key.value().to_string(),
+                                table,
+                                kind: KeyKind::Dependency(DependencyKeyKind::CrateName),
+                            },
+                        );
                         dep.version = Some(Value::new(id.to_string(), s.value().to_string()));
-                        CargoKey::Dpendency(dep.id.to_string(), DependencyKey::SimpleDependency)
+                        EntryKind::Dependency(
+                            dep.id.to_string(),
+                            DependencyEntryKind::SimpleDependency,
+                        )
                     }
                 };
-                self.symbol_map.insert(
+                self.entries_map.insert(
                     id.to_string(),
-                    CargoNode {
+                    TomlEntry {
                         id: id.to_string(),
                         range: lsp_range,
                         text: strip_quote(text),
                         table,
-                        key,
+                        kind: key,
                     },
                 );
             }
@@ -282,32 +356,32 @@ impl Walker {
                 let key = match name {
                     "workspace" => {
                         dep.workspace = Some(Value::new(id.to_string(), b.value()));
-                        CargoKey::Dpendency(
+                        EntryKind::Dependency(
                             dep.id.to_string(),
-                            DependencyKey::TableDependencyWorkspace,
+                            DependencyEntryKind::TableDependencyWorkspace,
                         )
                     }
-                    "default-features" => CargoKey::Dpendency(
+                    "default-features" => EntryKind::Dependency(
                         dep.id.to_string(),
-                        DependencyKey::TableDependencyDefaultFeatures,
+                        DependencyEntryKind::TableDependencyDefaultFeatures,
                     ),
-                    "optional" => CargoKey::Dpendency(
+                    "optional" => EntryKind::Dependency(
                         dep.id.to_string(),
-                        DependencyKey::TableDependencyOptional,
+                        DependencyEntryKind::TableDependencyOptional,
                     ),
-                    _ => CargoKey::Dpendency(
+                    _ => EntryKind::Dependency(
                         dep.id.to_string(),
-                        DependencyKey::TableDependencyUnknownBool,
+                        DependencyEntryKind::TableDependencyUnknownBool,
                     ),
                 };
-                self.symbol_map.insert(
+                self.entries_map.insert(
                     id.to_string(),
-                    CargoNode {
+                    TomlEntry {
                         id: id.to_string(),
                         range: lsp_range,
                         text: strip_quote(text),
                         table,
-                        key,
+                        kind: key,
                     },
                 );
             }
@@ -322,14 +396,14 @@ impl Walker {
         let text = serde_json::to_string(&node).unwrap();
         match node {
             Node::Table(t) => {
-                self.symbol_map.insert(
+                self.entries_map.insert(
                     id.to_string(),
-                    CargoNode {
+                    TomlEntry {
                         id: id.to_string(),
                         range: lsp_range,
                         text: strip_quote(text),
                         table,
-                        key: CargoKey::Table(table),
+                        kind: EntryKind::Table(table),
                     },
                 );
                 let entries = t.entries().read();
@@ -339,14 +413,14 @@ impl Walker {
                 }
             }
             Node::Array(arr) => {
-                self.symbol_map.insert(
+                self.entries_map.insert(
                     id.to_string(),
-                    CargoNode {
+                    TomlEntry {
                         id: id.to_string(),
                         range: lsp_range,
                         text: strip_quote(text),
                         table,
-                        key: CargoKey::Key(name.to_string()),
+                        kind: EntryKind::Value(name.to_string()),
                     },
                 );
                 let items = arr.items().read();
@@ -356,14 +430,14 @@ impl Walker {
                 }
             }
             _ => {
-                self.symbol_map.insert(
+                self.entries_map.insert(
                     id.to_string(),
-                    CargoNode {
+                    TomlEntry {
                         id: id.to_string(),
                         range: lsp_range,
                         text: strip_quote(text),
                         table,
-                        key: CargoKey::Key(name.to_string()),
+                        kind: EntryKind::Value(name.to_string()),
                     },
                 );
             }
@@ -384,16 +458,15 @@ fn into_lsp_range(range: lsp_async_stub::util::Range) -> Range {
     }
 }
 
-//now only diff dependency nodes
-pub fn diff_symbols(
-    old_map: Option<&HashMap<String, CargoNode>>,
-    new_map: &HashMap<String, CargoNode>,
-) -> SymbolDiff {
+pub fn diff_dependency_entries(
+    old_map: Option<&HashMap<String, TomlEntry>>,
+    new_map: &HashMap<String, TomlEntry>,
+) -> EntryDiff {
     let Some(old_map) = old_map else {
-        return SymbolDiff {
+        return EntryDiff {
             created: new_map
                 .iter()
-                .filter(|(_, node)| node.key.is_dependency())
+                .filter(|(_, node)| node.kind.is_dependency())
                 .map(|(k, _)| k.to_string())
                 .collect(),
             range_updated: vec![],
@@ -403,12 +476,12 @@ pub fn diff_symbols(
     };
     let old_keys: HashSet<_> = old_map
         .iter()
-        .filter(|(_, node)| node.key.is_dependency())
+        .filter(|(_, node)| node.kind.is_dependency())
         .map(|(k, _)| k.as_str())
         .collect();
     let new_keys: HashSet<_> = new_map
         .iter()
-        .filter(|(_, node)| node.key.is_dependency())
+        .filter(|(_, node)| node.kind.is_dependency())
         .map(|(k, _)| k.as_str())
         .collect();
 
@@ -439,7 +512,7 @@ pub fn diff_symbols(
         .map(|&s| s.to_string())
         .collect();
 
-    SymbolDiff {
+    EntryDiff {
         created,
         range_updated,
         value_updated: field_updated,

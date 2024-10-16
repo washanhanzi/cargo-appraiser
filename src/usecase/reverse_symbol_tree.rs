@@ -2,52 +2,91 @@ use std::collections::HashMap;
 
 use tower_lsp::lsp_types::Position;
 
-use crate::entity::CargoNode;
+use crate::entity::{TomlEntry, TomlKey};
+
+use super::symbol_tree::SymbolTree;
 
 #[derive(Debug, Clone)]
-pub struct ReverseSymbolTree(HashMap<u32, Vec<String>>);
+pub struct ReverseSymbolTree {
+    entries: HashMap<u32, Vec<String>>,
+    keys: HashMap<u32, Vec<String>>,
+}
 
 impl ReverseSymbolTree {
     pub fn new() -> Self {
-        Self(HashMap::new())
+        Self {
+            entries: HashMap::new(),
+            keys: HashMap::new(),
+        }
     }
 
-    pub fn parse(symbols: &HashMap<String, CargoNode>) -> Self {
+    pub fn parse(tree: &SymbolTree) -> Self {
+        Self {
+            entries: Self::parse_entries(&tree.entries),
+            keys: Self::parse_keys(&tree.keys),
+        }
+    }
+
+    fn parse_entries(entries: &HashMap<String, TomlEntry>) -> HashMap<u32, Vec<String>> {
         let mut m: HashMap<u32, Vec<String>> = HashMap::new();
-        for (id, node) in symbols {
+        for (id, node) in entries {
             for line in node.range.start.line..=node.range.end.line {
                 m.entry(line).or_default().push(id.clone());
             }
         }
-        Self(m)
+        m
     }
 
-    pub fn init(&mut self, symbols: &HashMap<String, CargoNode>) {
-        if symbols.is_empty() {
-            return;
-        }
+    fn parse_keys(keys: &HashMap<String, TomlKey>) -> HashMap<u32, Vec<String>> {
         let mut m: HashMap<u32, Vec<String>> = HashMap::new();
-        for (id, node) in symbols {
+        for (id, node) in keys {
             for line in node.range.start.line..=node.range.end.line {
                 m.entry(line).or_default().push(id.clone());
             }
         }
-        *self = Self(m);
+        m
     }
 
     //TODO for simple or table dependency, the crate name will never be matched
     //if no match found, return the simple or table dependency node?
-    pub fn precise_match(
+    pub fn precise_match_entry(
         &self,
         pos: Position,
-        symbol_map: &HashMap<String, CargoNode>,
-    ) -> Option<CargoNode> {
-        let ids = self.0.get(&pos.line)?;
-        let mut best_match: Option<CargoNode> = None;
+        entries: &HashMap<String, TomlEntry>,
+    ) -> Option<TomlEntry> {
+        let ids = self.entries.get(&pos.line)?;
+        let mut best_match: Option<TomlEntry> = None;
         let mut best_width: u32 = u32::MAX;
 
         for id in ids {
-            let Some(node) = symbol_map.get(id) else {
+            let Some(node) = entries.get(id) else {
+                continue;
+            };
+            if node.range.start.character <= pos.character
+                && node.range.end.character >= pos.character
+            {
+                let width = node.range.end.character - node.range.start.character;
+                if width < best_width {
+                    best_width = width;
+                    best_match = Some(node.clone());
+                }
+            }
+        }
+
+        best_match
+    }
+
+    pub fn precise_match_key(
+        &self,
+        pos: Position,
+        keys: &HashMap<String, TomlKey>,
+    ) -> Option<TomlKey> {
+        let ids = self.keys.get(&pos.line)?;
+        let mut best_match: Option<TomlKey> = None;
+        let mut best_width: u32 = u32::MAX;
+
+        for id in ids {
+            let Some(node) = keys.get(id) else {
                 continue;
             };
             if node.range.start.character <= pos.character

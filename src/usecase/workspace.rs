@@ -2,7 +2,7 @@ use std::collections::{hash_map::Entry, HashMap};
 
 use tower_lsp::lsp_types::Url;
 
-use crate::entity::SymbolDiff;
+use crate::entity::EntryDiff;
 
 use super::document::Document;
 
@@ -54,18 +54,18 @@ impl Workspace {
         }
     }
 
-    pub fn reconsile(&mut self, uri: &Url, text: &str) -> (SymbolDiff, usize) {
+    pub fn reconsile(&mut self, uri: &Url, text: &str) -> (EntryDiff, usize) {
         let mut new_doc = Document::parse(uri, text);
         self.cur_uri = Some(uri.clone());
         match self.documents.entry(uri.clone()) {
             Entry::Occupied(mut entry) => {
-                let diff = Document::diff_symbols(Some(entry.get()), &new_doc);
+                let diff = Document::diff(Some(entry.get()), &new_doc);
                 entry.get_mut().reconsile(new_doc, &diff);
                 entry.get_mut().populate_dependencies();
                 (diff, entry.get().rev)
             }
             Entry::Vacant(entry) => {
-                let diff = Document::diff_symbols(None, &new_doc);
+                let diff = Document::diff(None, &new_doc);
                 new_doc.self_reconsile(&diff);
                 new_doc.populate_dependencies();
                 let rev = new_doc.rev;

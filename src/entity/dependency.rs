@@ -75,11 +75,3 @@ pub fn cargo_dependency_to_toml_key(dep: &cargo::core::Dependency) -> String {
         platform
     )
 }
-
-// pub fn cargo_package_to_dependency(pkg: &cargo::core::Package) -> String {
-//     let mut dep = Dependency::default();
-//     dep.id = pkg.name().to_string();
-//     dep.name = pkg.name().to_string();
-//     dep.version = pkg.version().to_string();
-//     dep
-// }

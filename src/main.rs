@@ -6,8 +6,7 @@ use tokio::sync::{mpsc::Sender, oneshot};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
-use tracing::info;
-use tracing_subscriber::EnvFilter;
+use tracing::{error, info, warn};
 
 mod config;
 mod controller;
@@ -124,12 +123,7 @@ impl LanguageServer for CargoAppraiser {
             }))
             .await
         {
-            self.client
-                .log_message(
-                    MessageType::ERROR,
-                    &format!("error sending opened event: {}", e),
-                )
-                .await;
+            error!("error sending opened event: {}", e);
         };
     }
 
@@ -143,12 +137,7 @@ impl LanguageServer for CargoAppraiser {
                 }))
                 .await
             {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        &format!("error sending changed event: {}", e),
-                    )
-                    .await;
+                error!("error sending changed event: {}", e);
             };
         }
     }
@@ -159,12 +148,7 @@ impl LanguageServer for CargoAppraiser {
             return;
         };
         if let Err(e) = self.tx.send(CargoDocumentEvent::Closed(uri)).await {
-            self.client
-                .log_message(
-                    MessageType::ERROR,
-                    &format!("error sending closed event: {}", e),
-                )
-                .await;
+            error!("error sending closed event: {}", e);
         };
     }
 
@@ -180,12 +164,7 @@ impl LanguageServer for CargoAppraiser {
                 .send(CargoDocumentEvent::Saved(CargoTomlPayload { uri, text }))
                 .await
             {
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        &format!("error sending saved event: {}", e),
-                    )
-                    .await;
+                error!("error sending saved event: {}", e);
             };
         };
     }
@@ -223,15 +202,15 @@ impl LanguageServer for CargoAppraiser {
             ))
             .await
         {
-            self.client
-                .log_message(
-                    MessageType::ERROR,
-                    &format!("error sending completion event: {}", e),
-                )
-                .await;
+            error!("error sending completion event: {}", e);
             return Ok(None);
         };
-        Ok(None)
+        match rx.await {
+            Ok(completion) => return Ok(completion),
+            Err(_) => {
+                return Ok(None);
+            }
+        }
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
@@ -245,12 +224,7 @@ impl LanguageServer for CargoAppraiser {
             .send(CargoDocumentEvent::CodeAction(uri, params.range, tx))
             .await
         {
-            self.client
-                .log_message(
-                    MessageType::ERROR,
-                    &format!("error sending code action event: {}", e),
-                )
-                .await;
+            error!("error sending code action event: {}", e);
             return Ok(None);
         };
         match rx.await {
@@ -277,12 +251,7 @@ impl LanguageServer for CargoAppraiser {
             ))
             .await
         {
-            self.client
-                .log_message(
-                    MessageType::ERROR,
-                    &format!("error sending hover event: {}", e),
-                )
-                .await;
+            error!("error sending hover event: {}", e);
             return Ok(None);
         };
         match rx.await {
@@ -299,12 +268,7 @@ impl LanguageServer for CargoAppraiser {
             if change.uri.path().ends_with("Cargo.lock") {
                 //send refresh event
                 if let Err(e) = self.tx.send(CargoDocumentEvent::CargoLockChanged).await {
-                    self.client
-                        .log_message(
-                            MessageType::ERROR,
-                            &format!("error sending cargo lock changed event: {}", e),
-                        )
-                        .await;
+                    error!("error sending cargo lock changed event: {}", e);
                 }
             }
         }
@@ -344,7 +308,7 @@ async fn main() {
         let render = DecorationRenderer::new(client.clone(), args.renderer);
         let render_tx = render.init();
 
-        let state = Appraiser::new(client.clone(), render_tx.clone());
+        let state = Appraiser::new(render_tx.clone());
         let tx = state.initialize();
 
         CargoAppraiser { client, tx, render }

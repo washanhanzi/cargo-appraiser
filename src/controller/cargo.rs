@@ -70,6 +70,7 @@ pub async fn parse_cargo_output(ctx: &Ctx) -> Option<CargoResolveOutput> {
     let requested_kinds = CompileKind::from_requested_targets(workspace.gctx(), &[]).unwrap();
     let mut target_data = RustcTargetData::new(&workspace, &[CompileKind::Host]).unwrap();
     let specs = opts.packages.to_package_id_specs(&workspace).unwrap();
+    // Convert Result to Option
     let ws_resolve = cargo::ops::resolve_ws_with_opts(
         &workspace,
         &mut target_data,
@@ -80,7 +81,7 @@ pub async fn parse_cargo_output(ctx: &Ctx) -> Option<CargoResolveOutput> {
         ForceAllTargets::No,
         false,
     )
-    .unwrap();
+    .ok()?;
 
     let package_map: HashMap<PackageId, &Package> = ws_resolve
         .pkg_set

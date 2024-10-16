@@ -1,10 +1,14 @@
 mod dependency;
+mod entry;
+mod key;
 mod manifest;
 mod package;
-mod symbol;
 mod table;
+mod value;
 
 pub use dependency::*;
+pub use entry::*;
+pub use key::*;
 pub use manifest::*;
-pub use symbol::*;
 pub use table::*;
+pub use value::*;
