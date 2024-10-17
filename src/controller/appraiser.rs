@@ -13,13 +13,14 @@ use tracing::{error, info};
 use crate::{
     controller::{code_action::code_action, completion::completion},
     decoration::DecorationEvent,
-    entity::{CargoTable, DependencyKeyKind, DependencyTable, KeyKind, TomlKey},
+    entity::CargoError,
     usecase::Workspace,
 };
 
 use super::{
-    cargo::{parse_cargo_output, CargoResolveOutput},
+    cargo::{cargo_resolve, CargoResolveOutput},
     debouncer::Debouncer,
+    diagnostic::{self, DiagnosticController},
     hover::hover,
 };
 
@@ -34,6 +35,7 @@ pub struct Ctx {
 //track current opened cargo.toml file and rev
 #[derive(Debug)]
 pub struct Appraiser {
+    client: Client,
     render_tx: Sender<DecorationEvent>,
 }
 
@@ -59,6 +61,7 @@ pub enum CargoDocumentEvent {
     //hover event, path and position
     Hovered(Url, Position, oneshot::Sender<Hover>),
     Completion(Url, Position, oneshot::Sender<Option<CompletionResponse>>),
+    Diagnostic(Url, CargoError),
 }
 
 pub struct CargoTomlPayload {
@@ -67,8 +70,8 @@ pub struct CargoTomlPayload {
 }
 
 impl Appraiser {
-    pub fn new(render_tx: Sender<DecorationEvent>) -> Self {
-        Self { render_tx }
+    pub fn new(client: Client, render_tx: Sender<DecorationEvent>) -> Self {
+        Self { client, render_tx }
     }
     pub fn initialize(&self) -> Sender<CargoDocumentEvent> {
         //create mpsc channel
@@ -80,12 +83,22 @@ impl Appraiser {
         let tx_for_cargo = tx.clone();
         tokio::spawn(async move {
             while let Some(event) = cargo_rx.recv().await {
-                if let Some(output) = parse_cargo_output(&event).await {
-                    if let Err(e) = tx_for_cargo
-                        .send(CargoDocumentEvent::CargoResolved(output))
-                        .await
-                    {
-                        error!("error sending cargo resolved event: {}", e);
+                match cargo_resolve(&event).await {
+                    Ok(output) => {
+                        if let Err(e) = tx_for_cargo
+                            .send(CargoDocumentEvent::CargoResolved(output))
+                            .await
+                        {
+                            error!("error sending cargo resolved event: {}", e);
+                        }
+                    }
+                    Err(err) => {
+                        if let Err(e) = tx_for_cargo
+                            .send(CargoDocumentEvent::Diagnostic(event.uri.clone(), err))
+                            .await
+                        {
+                            error!("error sending diagnostic event: {}", e);
+                        }
                     }
                 }
             }
@@ -98,14 +111,33 @@ impl Appraiser {
         //main loop
         //render task sender
         let render_tx = self.render_tx.clone();
+        let client = self.client.clone();
         tokio::spawn(async move {
-            //state
+            //workspace state
             let mut state = Workspace::new();
+            //diagnostic
+            let mut diagnostic_controller = DiagnosticController::new(client);
 
             while let Some(event) = rx.recv().await {
                 match event {
+                    CargoDocumentEvent::Diagnostic(uri, err) => {
+                        let Some(doc) = state.document(&uri) else {
+                            continue;
+                        };
+                        //we need a crate name to find something in toml
+                        let Some(crate_name) = err.crate_name() else {
+                            continue;
+                        };
+                        let key = doc.find_key_by_crate_name(crate_name);
+                        let Some(diag) = err.diagnostic(&uri, key, None) else {
+                            continue;
+                        };
+                        diagnostic_controller
+                            .add(&uri, "asdf".to_string().as_str(), diag)
+                            .await;
+                    }
                     CargoDocumentEvent::Hovered(uri, pos, tx) => {
-                        let Some(doc) = state.state(&uri) else {
+                        let Some(doc) = state.document(&uri) else {
                             continue;
                         };
                         let Some(node) = doc.precise_match_entry(pos) else {
@@ -120,17 +152,16 @@ impl Appraiser {
                         let _ = tx.send(h);
                     }
                     CargoDocumentEvent::Completion(uri, pos, tx) => {
-                        let Some(doc) = state.state(&uri) else {
+                        let Some(doc) = state.document(&uri) else {
                             continue;
                         };
-                        info!("pos: {:?}", doc.tree.keys);
                         let entry = doc.precise_match_entry(pos);
                         let key = doc.precise_match_key(pos);
                         let completion = completion(key, entry).await;
                         let _ = tx.send(completion);
                     }
                     CargoDocumentEvent::CodeAction(uri, range, tx) => {
-                        let Some(doc) = state.state(&uri) else {
+                        let Some(doc) = state.document(&uri) else {
                             continue;
                         };
                         let Some(node) = doc.precise_match_entry(range.start) else {
@@ -164,7 +195,7 @@ impl Appraiser {
                     }
                     CargoDocumentEvent::Changed(msg) => {
                         let (diff, _) = state.reconsile(&msg.uri, &msg.text);
-                        let doc = state.state(&msg.uri).unwrap();
+                        let doc = state.document(&msg.uri).unwrap();
                         for v in &diff.range_updated {
                             if let Some(node) = doc.entry(v) {
                                 render_tx
@@ -216,6 +247,7 @@ impl Appraiser {
                     }
                     CargoDocumentEvent::ReadyToResolve(ctx) => {
                         if state.check_rev(&ctx.uri, ctx.rev) {
+                            diagnostic_controller.clear(&ctx.uri).await;
                             start_resolve(&ctx.uri, &mut state, &render_tx, &cargo_tx).await;
                         }
                     }
@@ -345,7 +377,7 @@ async fn start_resolve(
 ) {
     //start from here the resolve process
     state.populate_dependencies(uri);
-    let doc = state.state(uri).unwrap();
+    let doc = state.document(uri).unwrap();
 
     //no change to resolve
     if !doc.is_dirty() {

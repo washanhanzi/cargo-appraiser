@@ -10,7 +10,7 @@ use cargo::{
         dependency::DepKind,
         package::SerializedPackage,
         resolver::{CliFeatures, ForceAllTargets, HasDevUnits},
-        Package, PackageId, SourceId, Summary,
+        Package, PackageId, SourceId, Summary, Workspace,
     },
     ops::{
         tree::{EdgeKind, Prefix, Target, TreeOptions},
@@ -18,9 +18,11 @@ use cargo::{
     },
     sources::source::{QueryKind, Source},
     util::{cache_lock::CacheLockMode, OptVersionReq},
+    GlobalContext,
 };
+use tracing::{error, info};
 
-use crate::entity::cargo_dependency_to_toml_key;
+use crate::entity::{cargo_dependency_to_toml_key, CargoError};
 
 use super::appraiser::Ctx;
 
@@ -31,18 +33,32 @@ pub struct CargoResolveOutput {
     pub summaries: HashMap<String, Vec<Summary>>,
 }
 
-pub async fn parse_cargo_output(ctx: &Ctx) -> Option<CargoResolveOutput> {
+#[tracing::instrument(name = "cargo_resolve")]
+pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> {
     let Ok(path) = ctx.uri.to_file_path() else {
-        return None;
+        return Err(CargoError::other(anyhow::anyhow!("uri is not a file")));
     };
     let Ok(gctx) = cargo::util::context::GlobalContext::default() else {
-        return None;
+        return Err(CargoError::other(anyhow::anyhow!("failed to create gctx")));
     };
-    let Ok(workspace) = cargo::core::Workspace::new(path.as_path(), &gctx) else {
-        return None;
+    let workspace = match cargo::core::Workspace::new(path.as_path(), &gctx) {
+        Ok(workspace) => workspace,
+        Err(e) => {
+            //TOML parse error at line 14, column 1
+            //    |
+            // 14 | 1serde = { version = "1", features = ["derive"] }
+            //    | ^^^^^^
+            // invalid character `1` in package name: `1serde`, the name cannot start with a digit
+            error!("failed to create workspace: {}", e);
+            return Err(CargoError::other(anyhow::anyhow!(
+                "failed to create workspace: {}",
+                e
+            )));
+        }
     };
+    //TODO virtual workspace
     let Ok(current) = workspace.current() else {
-        return None;
+        return Err(CargoError::other(anyhow::anyhow!("virtual workspace")));
     };
     let deps = current.dependencies();
 
@@ -71,7 +87,7 @@ pub async fn parse_cargo_output(ctx: &Ctx) -> Option<CargoResolveOutput> {
     let mut target_data = RustcTargetData::new(&workspace, &[CompileKind::Host]).unwrap();
     let specs = opts.packages.to_package_id_specs(&workspace).unwrap();
     // Convert Result to Option
-    let ws_resolve = cargo::ops::resolve_ws_with_opts(
+    let ws_resolve = match cargo::ops::resolve_ws_with_opts(
         &workspace,
         &mut target_data,
         &requested_kinds,
@@ -80,8 +96,49 @@ pub async fn parse_cargo_output(ctx: &Ctx) -> Option<CargoResolveOutput> {
         HasDevUnits::Yes,
         ForceAllTargets::No,
         false,
-    )
-    .ok()?;
+    ) {
+        Ok(ws_resolve) => ws_resolve,
+        Err(e) => {
+            // 1. no matching package named `aaxum-extra` found
+            //
+            // no matching package named `aserde` found
+            // location searched: registry `crates-io`
+            // required by package `hello-rust v0.1.0 (/Users/jingyu/tmp/hello-rust)`
+            //
+            // search keys for matching package name
+            //
+            // 2. version not found
+            //
+            // failed to select a version for the requirement `serde = "^2"`
+            // candidate versions found which didn't match: 1.0.210, 1.0.209, 1.0.208, ...
+            // location searched: crates.io index
+            // required by package `hello-rust v0.1.0 (/Users/jingyu/tmp/hello-rust)`
+            // if you are looking for the prerelease package it needs to be specified explicitly
+            // serde = { version = "1.0.172-alpha.0" }
+            //
+            // 3. feature not found
+            //
+            // failed to select a version for `serde`.
+            // ... required by package `hello-rust v0.1.0 (/Users/jingyu/tmp/hello-rust)`
+            // versions that meet the requirements `^1` (locked to 1.0.210) are: 1.0.210
+            //
+            // the package `hello-rust` depends on `serde`, with features: `de1rive` but `serde` does not have these features.
+            //
+            //
+            // failed to select a version for `serde` which could resolve this conflict
+            //
+            // 4. cyclic
+            //
+            // cyclic package dependency: package `A v0.0.0 (registry `https://example.com/`)` depends on itself. Cycle:
+            // package `A v0.0.0 (registry `https://example.com/`)`
+            //     ... which satisfies dependency `A = \"*\"` of package `C v0.0.0 (registry `https://example.com/`)`
+            //     ... which satisfies dependency `C = \"*\"` of package `A v0.0.0 (registry `https://example.com/`)`\
+            //
+            // send err to diagnostic task
+            let err: CargoError = e.into();
+            return Err(err);
+        }
+    };
 
     let package_map: HashMap<PackageId, &Package> = ws_resolve
         .pkg_set
@@ -104,25 +161,19 @@ pub async fn parse_cargo_output(ctx: &Ctx) -> Option<CargoResolveOutput> {
         }
     }
 
-    Some(CargoResolveOutput {
+    Ok(CargoResolveOutput {
         ctx: ctx.clone(),
         dependencies: res,
-        //TODO maybe reuse gctx
-        summaries: summaries_map(path.as_path()),
+        summaries: summaries_map(&gctx, &workspace),
     })
 }
 
 //TODO the current Vec<Summary> didn't include yanked
-fn summaries_map(path: &Path) -> HashMap<String, Vec<Summary>> {
-    let gctx = cargo::util::context::GlobalContext::default().unwrap();
-    let workspace = cargo::core::Workspace::new(path, &gctx).unwrap();
-
-    //if it's error, it's a virtual workspace
-    let current = workspace.current().unwrap();
-
-    let _guard = gctx
-        .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
-        .unwrap();
+fn summaries_map(gctx: &GlobalContext, workspace: &Workspace) -> HashMap<String, Vec<Summary>> {
+    let Ok(_guard) = gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive) else {
+        error!("failed to acquire package cache lock");
+        return HashMap::new();
+    };
 
     let mut res = HashMap::new();
 
@@ -137,7 +188,7 @@ fn summaries_map(path: &Path) -> HashMap<String, Vec<Summary>> {
 
     // Step 2: Process each source
     for (source_id, package_names) in source_deps {
-        let mut source = source_id.load(&gctx, &HashSet::new()).unwrap();
+        let mut source = source_id.load(gctx, &HashSet::new()).unwrap();
         source.invalidate_cache();
         source.block_until_ready().unwrap();
         let mut summaries = Vec::new();

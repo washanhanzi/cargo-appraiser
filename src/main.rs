@@ -308,7 +308,7 @@ async fn main() {
         let render = DecorationRenderer::new(client.clone(), args.renderer);
         let render_tx = render.init();
 
-        let state = Appraiser::new(render_tx.clone());
+        let state = Appraiser::new(client.clone(), render_tx.clone());
         let tx = state.initialize();
 
         CargoAppraiser { client, tx, render }

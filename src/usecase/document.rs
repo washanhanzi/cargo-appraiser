@@ -134,6 +134,16 @@ impl Document {
     pub fn entry(&self, id: &str) -> Option<&TomlEntry> {
         self.tree.entries.get(id)
     }
+
+    pub fn find_key_by_crate_name(&self, crate_name: &str) -> Option<&TomlKey> {
+        self.tree.keys.values().find(|v| v.text == crate_name)
+    }
+
+    pub fn find_dep_by_crate_name(&self, crate_name: &str) -> Option<&Dependency> {
+        self.dependencies
+            .values()
+            .find(|v| v.package_name() == crate_name)
+    }
 }
 
 mod tests {

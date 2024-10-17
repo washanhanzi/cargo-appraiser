@@ -19,12 +19,14 @@ impl Workspace {
         }
     }
 
-    pub fn state(&self, uri: &Url) -> Option<&Document> {
+    pub fn document(&self, uri: &Url) -> Option<&Document> {
         self.documents.get(uri)
     }
 
     pub fn check_rev(&self, uri: &Url, rev: usize) -> bool {
-        self.state(uri).map(|doc| doc.rev == rev).unwrap_or(false)
+        self.document(uri)
+            .map(|doc| doc.rev == rev)
+            .unwrap_or(false)
     }
 
     pub fn state_mut(&mut self, uri: &Url) -> Option<&mut Document> {
