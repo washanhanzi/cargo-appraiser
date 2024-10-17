@@ -5,8 +5,6 @@ use tower_lsp::{
     Client,
 };
 
-use crate::entity::{CargoError, Dependency, TomlKey};
-
 pub struct DiagnosticController {
     client: Client,
     pub diagnostics: HashMap<Url, HashMap<String, Diagnostic>>,

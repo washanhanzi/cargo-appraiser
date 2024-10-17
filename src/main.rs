@@ -273,6 +273,10 @@ impl LanguageServer for CargoAppraiser {
             }
         }
     }
+
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        info!("did change configuration: {}", params.settings);
+    }
 }
 
 #[derive(Parser, Debug)]

@@ -36,9 +36,8 @@ impl EntryKind {
                 | EntryKind::Dependency(_, DependencyEntryKind::TableDependency)
         )
     }
-    pub fn row_id(&self) -> &str {
+    pub fn entry_id(&self) -> &str {
         match self {
-            //TODO not ok
             EntryKind::Dependency(id, _) => id,
             EntryKind::Value(id) => id,
             _ => "",
@@ -64,4 +63,11 @@ pub enum DependencyEntryKind {
     TableDependencyDefaultFeatures,
     TableDependencyOptional,
     TableDependencyUnknownBool,
+}
+
+pub fn strip_quote(s: String) -> String {
+    if s.starts_with('"') && s.ends_with('"') {
+        return s[1..s.len() - 1].to_string();
+    }
+    s
 }

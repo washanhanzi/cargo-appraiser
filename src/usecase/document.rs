@@ -58,10 +58,36 @@ impl Document {
         self.reverse_tree = new.reverse_tree;
         self.rev += 1;
         //merge dependencies
-        for v in diff.created.iter().chain(&diff.value_updated) {
+        for v in &diff.created {
             self.dirty_nodes.insert(v.to_string(), self.rev);
             self.dependencies
                 .insert(v.to_string(), new.dependencies.get(v).unwrap().clone());
+        }
+        for v in &diff.value_updated {
+            self.dirty_nodes.insert(v.to_string(), self.rev);
+            let new_dep = new.dependencies.get(v).unwrap().clone();
+            self.dependencies
+                .entry(v.to_string())
+                .and_modify(|dep| {
+                    dep.version = new_dep.version;
+                    dep.features = new_dep.features;
+                    dep.registry = new_dep.registry;
+                    dep.git = new_dep.git;
+                    dep.branch = new_dep.branch;
+                    dep.tag = new_dep.tag;
+                    dep.path = new_dep.path;
+                    dep.rev = new_dep.rev;
+                    dep.package = new_dep.package;
+                    dep.workspace = new_dep.workspace;
+                    dep.platform = new_dep.platform;
+                    dep.unresolved = None;
+                    dep.resolved = None;
+                    dep.latest_summary = None;
+                    dep.latest_matched_summary = None;
+                    //dep.matched_summary not reset
+                    //dep.summaries not reset
+                })
+                .or_insert(new.dependencies.get(v).unwrap().clone());
         }
         for v in &diff.range_updated {
             let dep = new.dependencies.remove(v).unwrap();
@@ -89,12 +115,12 @@ impl Document {
     pub fn populate_dependencies(&mut self) {
         if let Ok(path) = self.uri.to_file_path() {
             //get dependencies
-            let gctx = cargo::util::context::GlobalContext::default().unwrap();
-            //TODO ERROR parse manifest
+            let Ok(gctx) = cargo::util::context::GlobalContext::default() else {
+                return;
+            };
             let Ok(workspace) = cargo::core::Workspace::new(path.as_path(), &gctx) else {
                 return;
             };
-            //TODO if it's error, it's a virtual workspace
             let Ok(current) = workspace.current() else {
                 return;
             };
@@ -107,6 +133,12 @@ impl Document {
             for dep in self.dependencies.values_mut() {
                 let key = dep.toml_key();
                 if let Some(u) = unresolved.remove(&key) {
+                    //if dep has matched_summary and the new unresolved doesn't match it
+                    if let Some(summary) = dep.matched_summary.as_ref() {
+                        if !u.matches(summary) && !u.matches_prerelease(summary) {
+                            dep.matched_summary = None;
+                        }
+                    }
                     //update value to dep.unresolved
                     dep.unresolved = Some(u.clone());
                 }
@@ -128,6 +160,9 @@ impl Document {
     }
 
     pub fn dependency(&self, id: &str) -> Option<&Dependency> {
+        if id.is_empty() {
+            return None;
+        }
         self.dependencies.get(id)
     }
 

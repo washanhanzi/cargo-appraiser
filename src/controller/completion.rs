@@ -1,14 +1,14 @@
 use serde::Deserialize;
-use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse};
-use tracing::info;
-
-use crate::entity::{
-    DependencyEntryKind, DependencyKeyKind, EntryKind, KeyKind, TomlEntry, TomlKey,
+use tower_lsp::lsp_types::{
+    CompletionItem, CompletionItemKind, CompletionResponse, InsertReplaceEdit, TextEdit,
 };
 
+use crate::entity::{Dependency, DependencyEntryKind, EntryKind, TomlEntry, TomlKey};
+
 pub async fn completion(
-    key: Option<TomlKey>,
-    node: Option<TomlEntry>,
+    key: Option<&TomlKey>,
+    node: Option<&TomlEntry>,
+    dep: Option<&Dependency>,
 ) -> Option<CompletionResponse> {
     if let Some(key) = key {
         //crate name completion
@@ -16,11 +16,63 @@ pub async fn completion(
             return crate_name_completion(&crate_name).await;
         }
     }
+    let dep = dep?;
+    let summaries = dep.summaries.as_ref()?;
+    //TODO dep is never resolved, manually create a dependency
+    if summaries.is_empty() {
+        return None;
+    }
+
     if let Some(node) = node {
         match &node.kind {
-            // EntryKind::Invalid(InvalideKey::Dependency(InvalidDependencyKey::CrateName)) => {
-            //     crate_name_completion(&node)
-            // }
+            EntryKind::Dependency(
+                _,
+                DependencyEntryKind::SimpleDependency | DependencyEntryKind::TableDependencyVersion,
+            ) => {
+                // Order summaries by version
+                let mut summaries = summaries.clone();
+                // Sort summaries in descending order by version
+                summaries.sort_by(|a, b| b.version().cmp(a.version()));
+
+                // Create a vector of CompletionItems for each version
+                let versions: Vec<_> = summaries
+                    .iter()
+                    .enumerate()
+                    .map(|(index, s)| {
+                        let version = s.version().to_string();
+                        CompletionItem {
+                            label: version.to_string(),
+                            kind: Some(CompletionItemKind::CONSTANT),
+                            detail: Some(version.to_string()),
+                            documentation: None,
+                            sort_text: Some(format!("{:04}", index)),
+                            insert_text: Some(version.to_string()),
+                            filter_text: Some(node.text.to_string()),
+                            ..Default::default()
+                        }
+                    })
+                    .collect();
+                return Some(CompletionResponse::Array(versions));
+            }
+            EntryKind::Dependency(_, DependencyEntryKind::TableDependencyFeature) => {
+                let summary = dep.matched_summary.as_ref()?;
+                let versions: Vec<_> = summary
+                    .features()
+                    .keys()
+                    .enumerate()
+                    .map(|(index, s)| CompletionItem {
+                        label: s.to_string(),
+                        kind: Some(CompletionItemKind::CONSTANT),
+                        detail: Some(s.to_string()),
+                        documentation: None,
+                        sort_text: Some(format!("{:04}", index)),
+                        insert_text: Some(s.to_string()),
+                        filter_text: Some(node.text.to_string()),
+                        ..Default::default()
+                    })
+                    .collect();
+                return Some(CompletionResponse::Array(versions));
+            }
             _ => return None,
         }
     }

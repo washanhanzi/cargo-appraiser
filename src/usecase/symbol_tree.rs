@@ -11,8 +11,8 @@ use taplo::{
 use tower_lsp::lsp_types::{Position, Range};
 
 use crate::entity::{
-    CargoTable, Dependency, DependencyEntryKind, DependencyKeyKind, EntryDiff, EntryKind, KeyKind,
-    TomlEntry, TomlKey, Value,
+    strip_quote, CargoTable, Dependency, DependencyEntryKind, DependencyKeyKind, EntryDiff,
+    EntryKind, KeyKind, TomlEntry, TomlKey, Value,
 };
 
 #[derive(Debug, Clone)]
@@ -235,8 +235,8 @@ impl Walker {
                         let new_id = id.to_string() + "." + &i.to_string();
                         let range = self.mapper.range(join_ranges(f.text_ranges())).unwrap();
                         let lsp_range = into_lsp_range(range);
-                        let text = serde_json::to_string(f).unwrap();
                         if let Node::Str(s) = f {
+                            let text = serde_json::to_string(f).unwrap();
                             features.push(Value::new(new_id.to_string(), s.value().to_string()));
                             self.entries_map.insert(
                                 new_id.to_string(),
@@ -251,13 +251,9 @@ impl Walker {
                                     ),
                                 },
                             );
-                        } else {
-                            unreachable!()
                         }
                     }
                     dep.features = Some(features);
-                } else {
-                    unreachable!()
                 }
             }
             //simple dependency or table dependency string key value
@@ -393,7 +389,7 @@ impl Walker {
         let range = self.mapper.range(join_ranges(node.text_ranges())).unwrap();
         let lsp_range = into_lsp_range(range);
 
-        let text = serde_json::to_string(&node).unwrap();
+        let text = serde_json::to_string(&node).unwrap_or_default();
         match node {
             Node::Table(t) => {
                 self.entries_map.insert(
@@ -518,11 +514,4 @@ pub fn diff_dependency_entries(
         value_updated: field_updated,
         deleted,
     }
-}
-
-fn strip_quote(s: String) -> String {
-    if s.starts_with('"') && s.ends_with('"') {
-        return s[1..s.len() - 1].to_string();
-    }
-    s
 }

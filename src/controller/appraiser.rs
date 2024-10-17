@@ -143,7 +143,7 @@ impl Appraiser {
                         let Some(node) = doc.precise_match_entry(pos) else {
                             continue;
                         };
-                        let Some(dep) = doc.dependency(node.kind.row_id()) else {
+                        let Some(dep) = doc.dependency(node.kind.entry_id()) else {
                             continue;
                         };
                         let Some(h) = hover(node, dep) else {
@@ -155,9 +155,13 @@ impl Appraiser {
                         let Some(doc) = state.document(&uri) else {
                             continue;
                         };
-                        let entry = doc.precise_match_entry(pos);
                         let key = doc.precise_match_key(pos);
-                        let completion = completion(key, entry).await;
+                        let entry = doc.precise_match_entry(pos);
+                        let dep = match &entry {
+                            Some(entry) => doc.dependency(entry.kind.entry_id()),
+                            None => None,
+                        };
+                        let completion = completion(key.as_ref(), entry.as_ref(), dep).await;
                         let _ = tx.send(completion);
                     }
                     CargoDocumentEvent::CodeAction(uri, range, tx) => {
@@ -167,7 +171,7 @@ impl Appraiser {
                         let Some(node) = doc.precise_match_entry(range.start) else {
                             continue;
                         };
-                        let Some(dep) = doc.dependency(node.kind.row_id()) else {
+                        let Some(dep) = doc.dependency(node.kind.entry_id()) else {
                             continue;
                         };
                         let Some(action) = code_action(uri, node, dep) else {
