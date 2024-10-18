@@ -2,22 +2,30 @@ use std::collections::HashMap;
 
 use tower_lsp::lsp_types::{Position, Url};
 
-use crate::entity::{cargo_dependency_to_toml_key, Dependency, EntryDiff, TomlEntry, TomlKey};
+use crate::entity::{
+    cargo_dependency_to_toml_key, Dependency, EntryDiff, SymbolTree, TomlEntry, TomlKey,
+    TomlParsingError,
+};
 
-use super::{diff_dependency_entries, symbol_tree::SymbolTree, ReverseSymbolTree, Walker};
+use super::{diff_dependency_entries, ReverseSymbolTree, Walker};
 
 #[derive(Debug, Clone)]
 pub struct Document {
     pub uri: Url,
     pub rev: usize,
-    pub tree: SymbolTree,
+    tree: SymbolTree,
     pub reverse_tree: ReverseSymbolTree,
     //might be empty
     pub dependencies: HashMap<String, Dependency>,
     pub dirty_nodes: HashMap<String, usize>,
+    pub parsing_errors: Vec<TomlParsingError>,
 }
 
 impl Document {
+    pub fn tree(&self) -> &SymbolTree {
+        &self.tree
+    }
+
     pub fn parse(uri: &Url, text: &str) -> Self {
         let p = taplo::parser::parse(text);
         let dom = p.into_dom();
@@ -33,7 +41,7 @@ impl Document {
             walker.walk_root(key.value(), key.value(), entry)
         }
 
-        let (tree, deps) = walker.consume();
+        let (tree, deps, errs) = walker.consume();
         let len = entries.len();
         let reverse_symbols = ReverseSymbolTree::parse(&tree);
         Self {
@@ -43,6 +51,7 @@ impl Document {
             reverse_tree: reverse_symbols,
             dependencies: deps,
             dirty_nodes: HashMap::with_capacity(len),
+            parsing_errors: errs,
         }
     }
 
@@ -60,8 +69,9 @@ impl Document {
         //merge dependencies
         for v in &diff.created {
             self.dirty_nodes.insert(v.to_string(), self.rev);
-            self.dependencies
-                .insert(v.to_string(), new.dependencies.get(v).unwrap().clone());
+            if let Some(dep) = new.dependencies.get(v) {
+                self.dependencies.insert(v.to_string(), dep.clone());
+            }
         }
         for v in &diff.value_updated {
             self.dirty_nodes.insert(v.to_string(), self.rev);
@@ -170,14 +180,19 @@ impl Document {
         self.tree.entries.get(id)
     }
 
-    pub fn find_key_by_crate_name(&self, crate_name: &str) -> Option<&TomlKey> {
-        self.tree.keys.values().find(|v| v.text == crate_name)
+    pub fn find_keys_by_crate_name(&self, crate_name: &str) -> Vec<&TomlKey> {
+        self.tree
+            .keys
+            .values()
+            .filter(|v| v.text == crate_name)
+            .collect()
     }
 
-    pub fn find_dep_by_crate_name(&self, crate_name: &str) -> Option<&Dependency> {
+    pub fn find_deps_by_crate_name(&self, crate_name: &str) -> Vec<&Dependency> {
         self.dependencies
             .values()
-            .find(|v| v.package_name() == crate_name)
+            .filter(|v| v.package_name() == crate_name)
+            .collect()
     }
 }
 

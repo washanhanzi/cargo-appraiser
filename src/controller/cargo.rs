@@ -21,7 +21,7 @@ use cargo::{
 };
 use tracing::{error, info};
 
-use crate::entity::{cargo_dependency_to_toml_key, CargoError};
+use crate::entity::{cargo_dependency_to_toml_key, from_resolve_error, CargoError};
 
 use super::appraiser::Ctx;
 
@@ -43,16 +43,7 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     let workspace = match cargo::core::Workspace::new(path.as_path(), &gctx) {
         Ok(workspace) => workspace,
         Err(e) => {
-            //TOML parse error at line 14, column 1
-            //    |
-            // 14 | 1serde = { version = "1", features = ["derive"] }
-            //    | ^^^^^^
-            // invalid character `1` in package name: `1serde`, the name cannot start with a digit
-            error!("failed to create workspace: {}", e);
-            return Err(CargoError::other(anyhow::anyhow!(
-                "failed to create workspace: {}",
-                e
-            )));
+            return Err(CargoError::unparsed_workspace_error(e));
         }
     };
     //TODO virtual workspace
@@ -98,44 +89,7 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     ) {
         Ok(ws_resolve) => ws_resolve,
         Err(e) => {
-            // 1. no matching package named `aaxum-extra` found
-            //
-            // no matching package named `aserde` found
-            // location searched: registry `crates-io`
-            // required by package `hello-rust v0.1.0 (/Users/jingyu/tmp/hello-rust)`
-            //
-            // search keys for matching package name
-            //
-            // 2. version not found
-            //
-            // failed to select a version for the requirement `serde = "^2"`
-            // candidate versions found which didn't match: 1.0.210, 1.0.209, 1.0.208, ...
-            // location searched: crates.io index
-            // required by package `hello-rust v0.1.0 (/Users/jingyu/tmp/hello-rust)`
-            // if you are looking for the prerelease package it needs to be specified explicitly
-            // serde = { version = "1.0.172-alpha.0" }
-            //
-            // 3. feature not found
-            //
-            // failed to select a version for `serde`.
-            // ... required by package `hello-rust v0.1.0 (/Users/jingyu/tmp/hello-rust)`
-            // versions that meet the requirements `^1` (locked to 1.0.210) are: 1.0.210
-            //
-            // the package `hello-rust` depends on `serde`, with features: `de1rive` but `serde` does not have these features.
-            //
-            //
-            // failed to select a version for `serde` which could resolve this conflict
-            //
-            // 4. cyclic
-            //
-            // cyclic package dependency: package `A v0.0.0 (registry `https://example.com/`)` depends on itself. Cycle:
-            // package `A v0.0.0 (registry `https://example.com/`)`
-            //     ... which satisfies dependency `A = \"*\"` of package `C v0.0.0 (registry `https://example.com/`)`
-            //     ... which satisfies dependency `C = \"*\"` of package `A v0.0.0 (registry `https://example.com/`)`\
-            //
-            // send err to diagnostic task
-            let err: CargoError = e.into();
-            return Err(err);
+            return Err(from_resolve_error(e));
         }
     };
 

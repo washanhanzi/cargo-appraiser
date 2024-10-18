@@ -11,31 +11,34 @@ use taplo::{
 use tower_lsp::lsp_types::{Position, Range};
 
 use crate::entity::{
-    strip_quote, CargoTable, Dependency, DependencyEntryKind, DependencyKeyKind, EntryDiff,
-    EntryKind, KeyKind, TomlEntry, TomlKey, Value,
+    strip_quote, validate_crate_name, CargoTable, Dependency, DependencyEntryKind,
+    DependencyKeyKind, EntryDiff, EntryKind, KeyKind, SymbolTree, TomlEntry, TomlKey,
+    TomlParsingError, Value,
 };
-
-#[derive(Debug, Clone)]
-pub struct SymbolTree {
-    pub entries: HashMap<String, TomlEntry>,
-    pub keys: HashMap<String, TomlKey>,
-}
 
 pub struct Walker {
     keys_map: HashMap<String, TomlKey>,
     entries_map: HashMap<String, TomlEntry>,
     deps: HashMap<String, Dependency>,
     mapper: Mapper,
+    errs: Vec<TomlParsingError>,
 }
 
 impl Walker {
-    pub fn consume(self) -> (SymbolTree, HashMap<String, Dependency>) {
+    pub fn consume(
+        self,
+    ) -> (
+        SymbolTree,
+        HashMap<String, Dependency>,
+        Vec<TomlParsingError>,
+    ) {
         (
             SymbolTree {
                 keys: self.keys_map,
                 entries: self.entries_map,
             },
             self.deps,
+            self.errs,
         )
     }
 
@@ -46,6 +49,7 @@ impl Walker {
             entries_map: HashMap::with_capacity(capacity),
             deps: HashMap::with_capacity(capacity),
             mapper,
+            errs: Vec::with_capacity(capacity),
         }
     }
 
@@ -164,14 +168,22 @@ impl Walker {
             Node::Invalid(_) => {
                 //insert key
                 let key_id = id.to_string() + ".key";
+
+                let v = key.value();
+                let key_range =
+                    into_lsp_range(self.mapper.range(join_ranges(key.text_ranges())).unwrap());
+
+                if let Err(e) = validate_crate_name(v) {
+                    self.errs
+                        .push(TomlParsingError::new(key_id.to_string(), e, key_range));
+                }
+
                 self.keys_map.insert(
                     key_id.to_string(),
                     TomlKey {
                         id: key_id,
-                        range: into_lsp_range(
-                            self.mapper.range(join_ranges(key.text_ranges())).unwrap(),
-                        ),
-                        text: key.value().to_string(),
+                        range: key_range,
+                        text: v.to_string(),
                         table,
                         kind: KeyKind::Dependency(DependencyKeyKind::CrateName),
                     },
@@ -181,14 +193,20 @@ impl Walker {
             Node::Table(t) => {
                 //insert key
                 let key_id = id.to_string() + ".key";
+
+                let v = key.value();
+                let key_range =
+                    into_lsp_range(self.mapper.range(join_ranges(key.text_ranges())).unwrap());
+                if let Err(e) = validate_crate_name(v) {
+                    self.errs
+                        .push(TomlParsingError::new(key_id.to_string(), e, key_range));
+                }
                 self.keys_map.insert(
                     key_id.to_string(),
                     TomlKey {
                         id: key_id,
-                        range: into_lsp_range(
-                            self.mapper.range(join_ranges(key.text_ranges())).unwrap(),
-                        ),
-                        text: key.value().to_string(),
+                        range: key_range,
+                        text: v.to_string(),
                         table,
                         kind: KeyKind::Dependency(DependencyKeyKind::CrateName),
                     },

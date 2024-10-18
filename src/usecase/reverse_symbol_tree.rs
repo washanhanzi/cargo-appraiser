@@ -2,9 +2,7 @@ use std::collections::HashMap;
 
 use tower_lsp::lsp_types::Position;
 
-use crate::entity::{TomlEntry, TomlKey};
-
-use super::symbol_tree::SymbolTree;
+use crate::entity::{SymbolTree, TomlEntry, TomlKey};
 
 #[derive(Debug, Clone)]
 pub struct ReverseSymbolTree {

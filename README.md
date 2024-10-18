@@ -1,6 +1,8 @@
 # cargo-appraiser
 
-WIP
+# Features
+
+A lot
 
 # Config
 
