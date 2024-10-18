@@ -8,7 +8,7 @@ use tower_lsp::{
     lsp_types::{CodeActionResponse, CompletionResponse, Hover, Position, Range, Url},
     Client,
 };
-use tracing::{error, info};
+use tracing::error;
 
 use crate::{
     controller::{code_action::code_action, completion::completion},

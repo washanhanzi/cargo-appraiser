@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionResponse, InsertReplaceEdit, TextEdit,
+    CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit, Position, Range,
+    TextEdit,
 };
 
 use crate::entity::{Dependency, DependencyEntryKind, EntryKind, TomlEntry, TomlKey};
@@ -46,8 +47,19 @@ pub async fn completion(
                             detail: Some(version.to_string()),
                             documentation: None,
                             sort_text: Some(format!("{:04}", index)),
-                            insert_text: Some(version.to_string()),
-                            filter_text: Some(node.text.to_string()),
+                            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                                range: Range::new(
+                                    Position::new(
+                                        node.range.start.line,
+                                        node.range.start.character + 1,
+                                    ),
+                                    Position::new(
+                                        node.range.end.line,
+                                        node.range.end.character - 1,
+                                    ),
+                                ),
+                                new_text: version.to_string(),
+                            })),
                             ..Default::default()
                         }
                     })
@@ -65,9 +77,17 @@ pub async fn completion(
                         kind: Some(CompletionItemKind::CONSTANT),
                         detail: Some(s.to_string()),
                         documentation: None,
-                        sort_text: Some(format!("{:04}", index)),
-                        insert_text: Some(s.to_string()),
-                        filter_text: Some(node.text.to_string()),
+                        // sort_text: Some(format!("{:04}", index)),
+                        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                            range: Range::new(
+                                Position::new(
+                                    node.range.start.line,
+                                    node.range.start.character + 1,
+                                ),
+                                Position::new(node.range.end.line, node.range.end.character - 1),
+                            ),
+                            new_text: s.to_string(),
+                        })),
                         ..Default::default()
                     })
                     .collect();
