@@ -20,7 +20,7 @@ use crate::{
 use super::{
     cargo::{cargo_resolve, CargoResolveOutput},
     debouncer::Debouncer,
-    diagnostic::{self, DiagnosticController},
+    diagnostic::DiagnosticController,
     hover::hover,
 };
 
@@ -61,7 +61,7 @@ pub enum CargoDocumentEvent {
     //hover event, path and position
     Hovered(Url, Position, oneshot::Sender<Hover>),
     Completion(Url, Position, oneshot::Sender<Option<CompletionResponse>>),
-    Diagnostic(Url, CargoError),
+    CargoDiagnostic(Url, CargoError),
 }
 
 pub struct CargoTomlPayload {
@@ -94,7 +94,7 @@ impl Appraiser {
                     }
                     Err(err) => {
                         if let Err(e) = tx_for_cargo
-                            .send(CargoDocumentEvent::Diagnostic(event.uri.clone(), err))
+                            .send(CargoDocumentEvent::CargoDiagnostic(event.uri.clone(), err))
                             .await
                         {
                             error!("error sending diagnostic event: {}", e);
@@ -120,20 +120,22 @@ impl Appraiser {
 
             while let Some(event) = rx.recv().await {
                 match event {
-                    CargoDocumentEvent::Diagnostic(uri, err) => {
-                        let Some(doc) = state.document(&uri) else {
-                            continue;
-                        };
+                    CargoDocumentEvent::CargoDiagnostic(uri, err) => {
                         //we need a crate name to find something in toml
                         let Some(crate_name) = err.crate_name() else {
                             continue;
                         };
-                        let key = doc.find_key_by_crate_name(crate_name);
-                        let Some(diag) = err.diagnostic(&uri, key, None) else {
+
+                        let Some(doc) = state.document(&uri) else {
+                            continue;
+                        };
+                        let keys = doc.find_keys_by_crate_name(crate_name);
+                        let deps = doc.find_deps_by_crate_name(crate_name);
+                        let Some((id, diag)) = err.diagnostic(&keys, &deps, doc.tree()) else {
                             continue;
                         };
                         diagnostic_controller
-                            .add(&uri, "asdf".to_string().as_str(), diag)
+                            .add_cargo_diagnostic(&uri, id.as_str(), diag)
                             .await;
                     }
                     CargoDocumentEvent::Hovered(uri, pos, tx) => {
@@ -198,7 +200,23 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::Changed(msg) => {
-                        let (diff, _) = state.reconsile(&msg.uri, &msg.text);
+                        diagnostic_controller
+                            .clear_parse_diagnostics(&msg.uri)
+                            .await;
+                        let diff = match state.reconsile(&msg.uri, &msg.text) {
+                            Ok((diff, _)) => diff,
+                            Err(err) => {
+                                for e in err {
+                                    let Some((id, diag)) = e.diagnostic() else {
+                                        continue;
+                                    };
+                                    diagnostic_controller
+                                        .add_parse_diagnostic(&msg.uri, &id, diag)
+                                        .await;
+                                }
+                                continue;
+                            }
+                        };
                         let doc = state.document(&msg.uri).unwrap();
                         for v in &diff.range_updated {
                             if let Some(node) = doc.entry(v) {
@@ -242,7 +260,20 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
-                        let (_, rev) = state.reconsile(&msg.uri, &msg.text);
+                        let rev = match state.reconsile(&msg.uri, &msg.text) {
+                            Ok((_, rev)) => rev,
+                            Err(err) => {
+                                for e in err {
+                                    let Some((id, diag)) = e.diagnostic() else {
+                                        continue;
+                                    };
+                                    diagnostic_controller
+                                        .add_parse_diagnostic(&msg.uri, &id, diag)
+                                        .await;
+                                }
+                                continue;
+                            }
+                        };
 
                         if let Err(e) = debouncer.send_interactive(Ctx { uri: msg.uri, rev }).await
                         {
@@ -251,7 +282,6 @@ impl Appraiser {
                     }
                     CargoDocumentEvent::ReadyToResolve(ctx) => {
                         if state.check_rev(&ctx.uri, ctx.rev) {
-                            diagnostic_controller.clear(&ctx.uri).await;
                             start_resolve(&ctx.uri, &mut state, &render_tx, &cargo_tx).await;
                         }
                     }
@@ -260,6 +290,9 @@ impl Appraiser {
                         else {
                             continue;
                         };
+                        diagnostic_controller
+                            .clear_cargo_diagnostics(&output.ctx.uri)
+                            .await;
                         //populate deps
                         for dep in doc.dependencies.values_mut() {
                             let key = dep.toml_key();

@@ -2,7 +2,7 @@ use std::collections::{hash_map::Entry, HashMap};
 
 use tower_lsp::lsp_types::Url;
 
-use crate::entity::EntryDiff;
+use crate::entity::{EntryDiff, TomlParsingError};
 
 use super::document::Document;
 
@@ -56,15 +56,22 @@ impl Workspace {
         }
     }
 
-    pub fn reconsile(&mut self, uri: &Url, text: &str) -> (EntryDiff, usize) {
+    pub fn reconsile(
+        &mut self,
+        uri: &Url,
+        text: &str,
+    ) -> Result<(EntryDiff, usize), Vec<TomlParsingError>> {
         let mut new_doc = Document::parse(uri, text);
+        if !new_doc.parsing_errors.is_empty() {
+            return Err(new_doc.parsing_errors);
+        }
         self.cur_uri = Some(uri.clone());
         match self.documents.entry(uri.clone()) {
             Entry::Occupied(mut entry) => {
                 let diff = Document::diff(Some(entry.get()), &new_doc);
                 entry.get_mut().reconsile(new_doc, &diff);
                 entry.get_mut().populate_dependencies();
-                (diff, entry.get().rev)
+                Ok((diff, entry.get().rev))
             }
             Entry::Vacant(entry) => {
                 let diff = Document::diff(None, &new_doc);
@@ -72,7 +79,7 @@ impl Workspace {
                 new_doc.populate_dependencies();
                 let rev = new_doc.rev;
                 entry.insert(new_doc);
-                (diff, rev)
+                Ok((diff, rev))
             }
         }
     }

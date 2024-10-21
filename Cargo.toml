@@ -26,6 +26,8 @@ futures = "0.3.31"
 
 openssl = { version = '0.10', optional = true }
 reqwest = { version = "0.12.8", features = ["json"] }
+thiserror = "1.0.64"
+unicode-xid = "0.2.6"
 
 [features]
 default = []

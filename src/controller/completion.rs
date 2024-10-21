@@ -71,8 +71,7 @@ pub async fn completion(
                 let versions: Vec<_> = summary
                     .features()
                     .keys()
-                    .enumerate()
-                    .map(|(index, s)| CompletionItem {
+                    .map(|s| CompletionItem {
                         label: s.to_string(),
                         kind: Some(CompletionItemKind::CONSTANT),
                         detail: Some(s.to_string()),
