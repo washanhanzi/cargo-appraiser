@@ -1,9 +1,3 @@
-use tower_lsp::lsp_types::{
-    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, Range, Url,
-};
-
-use super::{Dependency, SymbolTree, TomlKey};
-
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -42,78 +36,6 @@ impl CargoError {
             CargoErrorKind::CyclicDependency => None,
             CargoErrorKind::UnParsedWorkspaceError => None,
             CargoErrorKind::Other => None,
-        }
-    }
-}
-
-impl CargoError {
-    pub fn diagnostic(
-        self,
-        keys: &[&TomlKey],
-        deps: &[&Dependency],
-        tree: &SymbolTree,
-    ) -> Option<Vec<(String, Diagnostic)>> {
-        match &self.kind {
-            CargoErrorKind::NoMatchingPackage(_) => {
-                //TODO multiple keys
-                //it's same for all package names
-                let key = keys.first()?;
-                Some(vec![(
-                    key.id.to_string(),
-                    Diagnostic {
-                        range: key.range,
-                        severity: Some(DiagnosticSeverity::ERROR),
-                        code: None,
-                        code_description: None,
-                        source: Some("cargo".to_string()),
-                        message: self.to_string(),
-                        related_information: None,
-                        tags: None,
-                        data: None,
-                    },
-                )])
-            }
-            CargoErrorKind::VersionNotFound(_, _) => {
-                //TODO multiple deps
-                //check dep req and summaries?
-                Some(
-                    deps.iter()
-                        .filter(|d| d.matched_summary.is_none())
-                        .filter_map(|d| {
-                            let req = d.unresolved.as_ref()?.version_req().to_string();
-                            let error_msg = self.to_string();
-
-                            // Check if the requirement in the error message matches the dependency's requirement
-                            if error_msg.contains(&format!("`{} = \"{}\"", d.name, req)) {
-                                let version = d.version.as_ref()?.id.as_str();
-                                let range = tree.entries.get(version)?.range;
-                                Some((
-                                    version.to_string(),
-                                    Diagnostic {
-                                        range,
-                                        severity: Some(DiagnosticSeverity::ERROR),
-                                        code: None,
-                                        code_description: None,
-                                        source: Some("cargo".to_string()),
-                                        message: error_msg,
-                                        related_information: None,
-                                        tags: None,
-                                        data: None,
-                                    },
-                                ))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                )
-            }
-            CargoErrorKind::FailedToSelectVersion(_) => {
-                //TODO multiple deps
-                //check features
-                None
-            }
-            _ => None,
         }
     }
 }

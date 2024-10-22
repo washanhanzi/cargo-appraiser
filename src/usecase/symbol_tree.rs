@@ -12,8 +12,8 @@ use tower_lsp::lsp_types::{Position, Range};
 
 use crate::entity::{
     strip_quote, validate_crate_name, validate_feature_name, validate_profile_name, CargoTable,
-    Dependency, DependencyEntryKind, DependencyKeyKind, EntryDiff, EntryKind, KeyKind, Manifest,
-    SymbolTree, TomlEntry, TomlKey, TomlParsingError, Value,
+    Dependency, DependencyEntryKind, DependencyKeyKind, DependencyTable, EntryDiff, EntryKind,
+    KeyKind, Manifest, SymbolTree, TomlEntry, TomlKey, TomlParsingError, Value,
 };
 
 pub struct Walker {
@@ -87,20 +87,19 @@ impl Walker {
                             //insert dep
                             let mut dep = Dependency {
                                 id: new_id.clone(),
+                                name: key.value().to_string(),
+                                table: dep_table,
+                                range: into_lsp_range(
+                                    self.mapper.range(join_ranges(entry.text_ranges())).unwrap(),
+                                ),
                                 ..Default::default()
                             };
-                            dep.name = key.value().to_string();
-                            dep.range = into_lsp_range(
-                                self.mapper.range(join_ranges(entry.text_ranges())).unwrap(),
-                            );
-                            dep.table = dep_table;
                             self.enter_dependency(
                                 &new_id,
                                 key,
                                 key.value(),
                                 parsed_table,
                                 entry,
-                                None,
                                 &mut dep,
                             );
                             self.deps.insert(new_id, dep);
@@ -109,18 +108,52 @@ impl Walker {
                     CargoTable::Target => {
                         let entries = t.entries().read();
                         for (key, entry) in entries.iter() {
-                            let new_id = id.to_string() + "." + key.value();
-                            let mut dep = Dependency::default();
-                            self.enter_dependency(
-                                &new_id,
-                                key,
-                                key.value(),
-                                parsed_table,
-                                entry,
-                                None,
-                                &mut dep,
-                            );
-                            self.deps.insert(new_id, dep);
+                            let platform = key.value();
+                            if let Node::Table(platform_table) = entry {
+                                let entries = platform_table.entries().read();
+                                for (key, entry) in entries.iter() {
+                                    let parsed_table = CargoTable::from_str(key.value()).unwrap();
+                                    let CargoTable::Dependencies(dep_table) = parsed_table else {
+                                        continue;
+                                    };
+                                    if let Node::Table(table) = entry {
+                                        let entries = table.entries().read();
+                                        for (dep_name, entry) in entries.iter() {
+                                            let name = dep_name.value();
+                                            let new_id = id.to_string()
+                                                + "."
+                                                + platform
+                                                + "."
+                                                + key.value()
+                                                + "."
+                                                + name;
+
+                                            //insert dep
+                                            let mut dep = Dependency {
+                                                id: new_id.to_string(),
+                                                name: name.to_string(),
+                                                table: dep_table,
+                                                range: into_lsp_range(
+                                                    self.mapper
+                                                        .range(join_ranges(entry.text_ranges()))
+                                                        .unwrap(),
+                                                ),
+                                                platform: Some(platform.to_string()),
+                                                ..Default::default()
+                                            };
+                                            self.enter_dependency(
+                                                &new_id,
+                                                dep_name,
+                                                name,
+                                                parsed_table,
+                                                entry,
+                                                &mut dep,
+                                            );
+                                            self.deps.insert(new_id, dep);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     _ => self.enter_generic(id, name, parsed_table, node),
@@ -137,48 +170,8 @@ impl Walker {
         name: &str,
         table: CargoTable,
         node: &Node,
-        platform: Option<&str>,
         dep: &mut Dependency,
     ) {
-        //target->platform
-        if table == CargoTable::Target && platform.is_none() {
-            //set platform
-            dep.platform = Some(Value::new(id.to_string(), name.to_string()));
-            if let Node::Table(t) = node {
-                let entries = t.entries().read();
-                for (key, entry) in entries.iter() {
-                    let new_id = id.to_string() + "." + key.value();
-                    self.enter_dependency(&new_id, key, key.value(), table, entry, Some(name), dep);
-                }
-            }
-            return;
-        }
-        //target->platform->dependency
-        if table == CargoTable::Target && platform.is_some() {
-            let parsed_table = CargoTable::from_str(name).unwrap();
-            if let Node::Table(t) = node {
-                let entries = t.entries().read();
-                for (key, entry) in entries.iter() {
-                    let new_id = id.to_string() + "." + key.value();
-                    dep.id = new_id.to_string();
-                    dep.name = key.value().to_string();
-                    let range = self.mapper.range(join_ranges(node.text_ranges())).unwrap();
-                    let lsp_range = into_lsp_range(range);
-                    dep.range = lsp_range;
-                    self.enter_dependency(
-                        &new_id,
-                        key,
-                        key.value(),
-                        parsed_table,
-                        entry,
-                        platform,
-                        dep,
-                    );
-                }
-            }
-            return;
-        }
-
         let range = self.mapper.range(join_ranges(node.text_ranges())).unwrap();
         let lsp_range = into_lsp_range(range);
         let text = serde_json::to_string(&node).unwrap_or_default();
@@ -247,7 +240,7 @@ impl Walker {
                 let entries = t.entries().read();
                 for (key, entry) in entries.iter() {
                     let new_id = id.to_string() + "." + key.value();
-                    self.enter_dependency(&new_id, key, key.value(), table, entry, platform, dep);
+                    self.enter_dependency(&new_id, key, key.value(), table, entry, dep);
                 }
             }
             //feature array
@@ -534,15 +527,6 @@ pub fn diff_dependency_entries(
         .difference(&new_keys)
         .map(|&s| s.to_string())
         .collect();
-    let range_updated: Vec<String> = old_keys
-        .intersection(&new_keys)
-        .filter(|&&key| {
-            let old_node = &old_map[key];
-            let new_node = &new_map[key];
-            old_node.range != new_node.range
-        })
-        .map(|&s| s.to_string())
-        .collect();
     let field_updated: Vec<String> = old_keys
         .intersection(&new_keys)
         .filter(|&&key| {
@@ -552,7 +536,15 @@ pub fn diff_dependency_entries(
         })
         .map(|&s| s.to_string())
         .collect();
-
+    let range_updated: Vec<String> = old_keys
+        .intersection(&new_keys)
+        .filter(|&&key| {
+            let old_node = &old_map[key];
+            let new_node = &new_map[key];
+            old_node.range != new_node.range
+        })
+        .map(|&s| s.to_string())
+        .collect();
     EntryDiff {
         created,
         range_updated,

@@ -19,7 +19,7 @@ pub struct Dependency {
     pub rev: Option<Value<String>>,
     pub package: Option<Value<String>>,
     pub workspace: Option<Value<bool>>,
-    pub platform: Option<Value<String>>,
+    pub platform: Option<String>,
     pub unresolved: Option<cargo::core::Dependency>,
     pub resolved: Option<cargo::core::package::SerializedPackage>,
     pub summaries: Option<Vec<Summary>>,
@@ -40,10 +40,7 @@ impl Dependency {
     }
 
     pub fn toml_key(&self) -> String {
-        let platform = match &self.platform {
-            Some(p) => &p.value,
-            None => "",
-        };
+        let platform = self.platform.as_deref().unwrap_or_default();
         format!("{}:{}:{}", self.table, self.name, platform)
     }
 

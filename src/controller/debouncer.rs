@@ -3,6 +3,7 @@ use std::{pin::Pin, time::Duration};
 use tokio::sync::mpsc::{self, error::SendError, Sender};
 use tokio::time::{sleep, Sleep};
 use tower_lsp::lsp_types::Url;
+use tracing::error;
 
 // Change Timer
 pub struct Debouncer {
@@ -107,7 +108,7 @@ impl Debouncer {
                                 rev,
                             };
                             if let Err(e) = tx.send(CargoDocumentEvent::ReadyToResolve(ctx)).await {
-                                eprintln!("Failed to send Ctx: {}", e);
+                                error!("failed to send Ctx from debouncer: {}", e);
                             }
                         }
                         // Reset the delay

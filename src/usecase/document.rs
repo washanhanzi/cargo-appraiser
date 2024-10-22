@@ -75,21 +75,21 @@ impl Document {
         }
         for v in &diff.value_updated {
             self.dirty_nodes.insert(v.to_string(), self.rev);
-            if let Some(new_dep) = new.dependencies.get(v).cloned() {
+            if let Some(new_dep) = new.dependencies.remove(v) {
                 self.dependencies
                     .entry(v.to_string())
                     .and_modify(|dep| {
-                        dep.version = new_dep.version;
-                        dep.features = new_dep.features;
-                        dep.registry = new_dep.registry;
-                        dep.git = new_dep.git;
-                        dep.branch = new_dep.branch;
-                        dep.tag = new_dep.tag;
-                        dep.path = new_dep.path;
-                        dep.rev = new_dep.rev;
-                        dep.package = new_dep.package;
-                        dep.workspace = new_dep.workspace;
-                        dep.platform = new_dep.platform;
+                        dep.version = new_dep.version.clone();
+                        dep.features = new_dep.features.clone();
+                        dep.registry = new_dep.registry.clone();
+                        dep.git = new_dep.git.clone();
+                        dep.branch = new_dep.branch.clone();
+                        dep.tag = new_dep.tag.clone();
+                        dep.path = new_dep.path.clone();
+                        dep.rev = new_dep.rev.clone();
+                        dep.package = new_dep.package.clone();
+                        dep.workspace = new_dep.workspace.clone();
+                        dep.platform = new_dep.platform.clone();
                         dep.unresolved = None;
                         dep.resolved = None;
                         dep.latest_summary = None;
@@ -97,7 +97,7 @@ impl Document {
                         //dep.matched_summary not reset
                         //dep.summaries not reset
                     })
-                    .or_insert(new.dependencies.get(v).unwrap().clone());
+                    .or_insert(new_dep);
             }
         }
         for v in &diff.range_updated {

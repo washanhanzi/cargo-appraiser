@@ -19,9 +19,13 @@ use cargo::{
     util::{cache_lock::CacheLockMode, OptVersionReq},
     GlobalContext,
 };
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity};
 use tracing::{error, info};
 
-use crate::entity::{cargo_dependency_to_toml_key, from_resolve_error, CargoError};
+use crate::entity::{
+    cargo_dependency_to_toml_key, from_resolve_error, CargoError, CargoErrorKind, Dependency,
+    SymbolTree, TomlKey,
+};
 
 use super::appraiser::Ctx;
 
@@ -171,4 +175,140 @@ fn summaries_map(gctx: &GlobalContext, workspace: &Workspace) -> HashMap<String,
         }
     }
     res
+}
+
+pub fn resolve_package_with_default_source(
+    package: &str,
+    version: Option<&str>,
+) -> Option<Vec<Summary>> {
+    let gctx = cargo::util::context::GlobalContext::default().ok()?;
+    let source_id = cargo::core::SourceId::crates_io(&gctx).unwrap();
+    let dep = cargo::core::Dependency::parse(package, version, source_id).ok()?;
+    let mut source = source_id.load(&gctx, &HashSet::new()).unwrap();
+    let Ok(_guard) = gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive) else {
+        error!("failed to acquire package cache lock");
+        return None;
+    };
+    let summary = source.query_vec(&dep, QueryKind::Normalized);
+    source.block_until_ready().unwrap();
+    match summary {
+        Poll::Ready(summaries) => {
+            let summaries = summaries.unwrap();
+            Some(summaries.iter().map(|s| s.as_summary().clone()).collect())
+        }
+        Poll::Pending => None,
+    }
+}
+
+impl CargoError {
+    pub fn diagnostic(
+        self,
+        keys: &[&TomlKey],
+        deps: &[&Dependency],
+        tree: &SymbolTree,
+    ) -> Option<Vec<(String, Diagnostic)>> {
+        match &self.kind {
+            CargoErrorKind::NoMatchingPackage(_) => Some(
+                keys.iter()
+                    .map(|key| {
+                        (
+                            key.id.to_string(),
+                            Diagnostic {
+                                range: key.range,
+                                severity: Some(DiagnosticSeverity::ERROR),
+                                code: None,
+                                code_description: None,
+                                source: Some("cargo".to_string()),
+                                message: self.to_string(),
+                                related_information: None,
+                                tags: None,
+                                data: None,
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            CargoErrorKind::VersionNotFound(_, _) => {
+                Some(
+                    deps.iter()
+                        .filter_map(|d| {
+                            let req = d.unresolved.as_ref()?.version_req().to_string();
+                            let error_msg = self.to_string();
+
+                            // Check if the requirement in the error message matches the dependency's requirement
+                            if error_msg.contains(&format!("`{} = \"{}\"", d.name, req)) {
+                                let version = d.version.as_ref()?.id.as_str();
+                                let range = tree.entries.get(version)?.range;
+                                Some((
+                                    version.to_string(),
+                                    Diagnostic {
+                                        range,
+                                        severity: Some(DiagnosticSeverity::ERROR),
+                                        code: None,
+                                        code_description: None,
+                                        source: Some("cargo".to_string()),
+                                        message: error_msg,
+                                        related_information: None,
+                                        tags: None,
+                                        data: None,
+                                    },
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                )
+            }
+            CargoErrorKind::FailedToSelectVersion(_) => {
+                //TODO multiple deps
+                //check features
+                let mut diags = Vec::with_capacity(deps.len());
+                for d in deps {
+                    let Some(unresolved) = d.unresolved.as_ref() else {
+                        continue;
+                    };
+                    let Some(features) = &d.features else {
+                        continue;
+                    };
+                    let mut feature_map = HashMap::with_capacity(features.len());
+                    for f in features {
+                        feature_map.insert(f.value.to_string(), f.id.to_string());
+                    }
+                    let version = unresolved.version_req().to_string();
+                    let summaries =
+                        resolve_package_with_default_source(d.package_name(), Some(&version))
+                            .unwrap();
+                    for summary in &summaries {
+                        if !feature_map.is_empty() {
+                            for f in summary.features().keys() {
+                                feature_map.remove(f.to_string().as_str());
+                            }
+                        }
+                    }
+                    for (k, v) in feature_map {
+                        diags.push((
+                            v.to_string(),
+                            Diagnostic {
+                                range: tree.entries.get(v.as_str())?.range,
+                                severity: Some(DiagnosticSeverity::ERROR),
+                                code: None,
+                                code_description: None,
+                                source: Some("cargo".to_string()),
+                                message: format!("unknown feature `{}`", k),
+                                related_information: None,
+                                tags: None,
+                                data: None,
+                            },
+                        ));
+                    }
+                }
+                if !diags.is_empty() {
+                    return Some(diags);
+                }
+                None
+            }
+            _ => None,
+        }
+    }
 }

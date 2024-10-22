@@ -199,7 +199,7 @@ impl Appraiser {
                             })
                             .await
                         {
-                            eprintln!("debounder send interactive error: {}", e);
+                            error!("debounder send interactive error: {}", e);
                         }
                     }
                     CargoDocumentEvent::Changed(msg) => {
@@ -259,7 +259,7 @@ impl Appraiser {
                             })
                             .await
                         {
-                            eprintln!("debounder send interactive error: {}", e);
+                            error!("debounder send interactive error: {}", e);
                         }
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
@@ -280,7 +280,7 @@ impl Appraiser {
 
                         if let Err(e) = debouncer.send_interactive(Ctx { uri: msg.uri, rev }).await
                         {
-                            eprintln!("debounder send interactive error: {}", e);
+                            error!("debounder send interactive error: {}", e);
                         }
                     }
                     CargoDocumentEvent::ReadyToResolve(ctx) => {
@@ -397,7 +397,7 @@ impl Appraiser {
                                 })
                                 .await
                             {
-                                eprintln!("debounder send background error: {}", e);
+                                error!("debounder send background error: {}", e);
                             }
                         }
                     }
@@ -445,6 +445,6 @@ async fn start_resolve(
         })
         .await
     {
-        eprintln!("cargo resolve tx error: {}", e);
+        error!("cargo resolve tx error: {}", e);
     }
 }
