@@ -121,6 +121,7 @@ impl Appraiser {
             while let Some(event) = rx.recv().await {
                 match event {
                     CargoDocumentEvent::CargoDiagnostic(uri, err) => {
+                        diagnostic_controller.clear_cargo_diagnostics(&uri).await;
                         //we need a crate name to find something in toml
                         let Some(crate_name) = err.crate_name() else {
                             continue;
@@ -131,12 +132,14 @@ impl Appraiser {
                         };
                         let keys = doc.find_keys_by_crate_name(crate_name);
                         let deps = doc.find_deps_by_crate_name(crate_name);
-                        let Some((id, diag)) = err.diagnostic(&keys, &deps, doc.tree()) else {
+                        let Some(digs) = err.diagnostic(&keys, &deps, doc.tree()) else {
                             continue;
                         };
-                        diagnostic_controller
-                            .add_cargo_diagnostic(&uri, id.as_str(), diag)
-                            .await;
+                        for (id, diag) in digs {
+                            diagnostic_controller
+                                .add_cargo_diagnostic(&uri, id.as_str(), diag)
+                                .await;
+                        }
                     }
                     CargoDocumentEvent::Hovered(uri, pos, tx) => {
                         let Some(doc) = state.document(&uri) else {

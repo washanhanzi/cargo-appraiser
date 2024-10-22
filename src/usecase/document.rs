@@ -75,33 +75,37 @@ impl Document {
         }
         for v in &diff.value_updated {
             self.dirty_nodes.insert(v.to_string(), self.rev);
-            let new_dep = new.dependencies.get(v).unwrap().clone();
-            self.dependencies
-                .entry(v.to_string())
-                .and_modify(|dep| {
-                    dep.version = new_dep.version;
-                    dep.features = new_dep.features;
-                    dep.registry = new_dep.registry;
-                    dep.git = new_dep.git;
-                    dep.branch = new_dep.branch;
-                    dep.tag = new_dep.tag;
-                    dep.path = new_dep.path;
-                    dep.rev = new_dep.rev;
-                    dep.package = new_dep.package;
-                    dep.workspace = new_dep.workspace;
-                    dep.platform = new_dep.platform;
-                    dep.unresolved = None;
-                    dep.resolved = None;
-                    dep.latest_summary = None;
-                    dep.latest_matched_summary = None;
-                    //dep.matched_summary not reset
-                    //dep.summaries not reset
-                })
-                .or_insert(new.dependencies.get(v).unwrap().clone());
+            if let Some(new_dep) = new.dependencies.get(v).cloned() {
+                self.dependencies
+                    .entry(v.to_string())
+                    .and_modify(|dep| {
+                        dep.version = new_dep.version;
+                        dep.features = new_dep.features;
+                        dep.registry = new_dep.registry;
+                        dep.git = new_dep.git;
+                        dep.branch = new_dep.branch;
+                        dep.tag = new_dep.tag;
+                        dep.path = new_dep.path;
+                        dep.rev = new_dep.rev;
+                        dep.package = new_dep.package;
+                        dep.workspace = new_dep.workspace;
+                        dep.platform = new_dep.platform;
+                        dep.unresolved = None;
+                        dep.resolved = None;
+                        dep.latest_summary = None;
+                        dep.latest_matched_summary = None;
+                        //dep.matched_summary not reset
+                        //dep.summaries not reset
+                    })
+                    .or_insert(new.dependencies.get(v).unwrap().clone());
+            }
         }
         for v in &diff.range_updated {
-            let dep = new.dependencies.remove(v).unwrap();
-            self.dependencies.get_mut(v).unwrap().merge_range(dep);
+            if let Some(dep) = new.dependencies.remove(v) {
+                if let Some(old_dep) = self.dependencies.get_mut(v) {
+                    old_dep.merge_range(dep);
+                }
+            }
         }
         for v in &diff.deleted {
             self.dirty_nodes.remove(v);
