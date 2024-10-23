@@ -6,7 +6,7 @@ use tower_lsp::lsp_types::{
 
 use crate::{
     decoration::{version_decoration, VersionDecoration},
-    entity::{EntryKind, TomlEntry, Dependency, DependencyEntryKind},
+    entity::{Dependency, DependencyEntryKind, EntryKind, TomlEntry},
 };
 
 pub fn code_action(uri: Url, node: TomlEntry, dep: &Dependency) -> Option<CodeActionResponse> {
@@ -33,6 +33,8 @@ pub fn code_action_dependency(
             }
             let latest = dep.latest_summary.as_ref().map(|s| s.version());
             let latest_matched = dep.latest_matched_summary.as_ref().map(|s| s.version());
+            //TODO check user input is precise or not?
+            // dep.unresolved.unwrap().version_req();
             //TODO refactor
             match version_deco {
                 VersionDecoration::Latest => return None,
@@ -43,7 +45,7 @@ pub fn code_action_dependency(
                         let latest_matched = format!("\"{}\"", v);
                         actions.push(
                             CodeAction {
-                                title: v.to_string(),
+                                title: v.major.to_string(),
                                 kind: Some(CodeActionKind::QUICKFIX),
                                 diagnostics: None,
                                 edit: Some(WorkspaceEdit {
@@ -66,12 +68,12 @@ pub fn code_action_dependency(
                         let latest = format!("\"{}\"", v);
                         actions.push(
                             CodeAction {
-                                title: v.to_string(),
+                                title: v.major.to_string(),
                                 kind: Some(CodeActionKind::QUICKFIX),
                                 diagnostics: None,
                                 edit: Some(WorkspaceEdit {
                                     changes: Some(HashMap::from([(
-                                        uri,
+                                        uri.clone(),
                                         vec![TextEdit {
                                             new_text: latest,
                                             range: node.range,
@@ -96,7 +98,7 @@ pub fn code_action_dependency(
                                 diagnostics: None,
                                 edit: Some(WorkspaceEdit {
                                     changes: Some(HashMap::from([(
-                                        uri,
+                                        uri.clone(),
                                         vec![TextEdit {
                                             new_text: latest_matched,
                                             range: node.range,

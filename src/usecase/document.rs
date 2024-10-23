@@ -94,6 +94,7 @@ impl Document {
                         dep.resolved = None;
                         dep.latest_summary = None;
                         dep.latest_matched_summary = None;
+                        dep.range = new_dep.range;
                         //dep.matched_summary not reset
                         //dep.summaries not reset
                     })
