@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use cargo::util::OptVersionReq;
 use tower_lsp::lsp_types::{
-    CodeAction, CodeActionKind, CodeActionResponse, Range, TextEdit, Url, WorkspaceEdit,
+    CodeAction, CodeActionKind, CodeActionResponse, Range, TextEdit, Uri, WorkspaceEdit,
 };
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
     entity::{Dependency, DependencyEntryKind, EntryKind, TomlEntry},
 };
 
-pub fn code_action(uri: Url, node: TomlEntry, dep: &Dependency) -> Option<CodeActionResponse> {
+pub fn code_action(uri: Uri, node: TomlEntry, dep: &Dependency) -> Option<CodeActionResponse> {
     if let EntryKind::Dependency(id, key) = &node.kind {
         code_action_dependency(uri, id, key, &node, dep)
     } else {
@@ -19,7 +19,7 @@ pub fn code_action(uri: Url, node: TomlEntry, dep: &Dependency) -> Option<CodeAc
 }
 
 pub fn code_action_dependency(
-    uri: Url,
+    uri: Uri,
     id: &str,
     key: &DependencyEntryKind,
     node: &TomlEntry,
@@ -155,7 +155,7 @@ pub fn code_action_dependency(
     }
 }
 
-fn make_code_action(uri: Url, v: impl Display, kind: CodeActionKind, range: Range) -> CodeAction {
+fn make_code_action(uri: Uri, v: impl Display, kind: CodeActionKind, range: Range) -> CodeAction {
     CodeAction {
         title: v.to_string(),
         kind: Some(kind),

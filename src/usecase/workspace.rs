@@ -1,14 +1,14 @@
 use std::collections::{hash_map::Entry, HashMap};
 
-use tower_lsp::lsp_types::Url;
+use tower_lsp::lsp_types::Uri;
 
 use crate::entity::{EntryDiff, TomlParsingError};
 
 use super::document::Document;
 
 pub struct Workspace {
-    pub cur_uri: Option<Url>,
-    pub documents: HashMap<Url, Document>,
+    pub cur_uri: Option<Uri>,
+    pub documents: HashMap<Uri, Document>,
 }
 
 impl Workspace {
@@ -19,27 +19,27 @@ impl Workspace {
         }
     }
 
-    pub fn document(&self, uri: &Url) -> Option<&Document> {
+    pub fn document(&self, uri: &Uri) -> Option<&Document> {
         self.documents.get(uri)
     }
 
-    pub fn check_rev(&self, uri: &Url, rev: usize) -> bool {
+    pub fn check_rev(&self, uri: &Uri, rev: usize) -> bool {
         self.document(uri)
             .map(|doc| doc.rev == rev)
             .unwrap_or(false)
     }
 
-    pub fn state_mut(&mut self, uri: &Url) -> Option<&mut Document> {
+    pub fn state_mut(&mut self, uri: &Uri) -> Option<&mut Document> {
         self.documents.get_mut(uri)
     }
 
-    pub fn state_mut_with_rev(&mut self, uri: &Url, rev: usize) -> Option<&mut Document> {
+    pub fn state_mut_with_rev(&mut self, uri: &Uri, rev: usize) -> Option<&mut Document> {
         self.documents
             .get_mut(uri)
             .and_then(|doc| if doc.rev != rev { None } else { Some(doc) })
     }
 
-    pub fn del(&mut self, uri: &Url) {
+    pub fn del(&mut self, uri: &Uri) {
         self.documents.remove(uri);
     }
 
@@ -58,7 +58,7 @@ impl Workspace {
 
     pub fn reconsile(
         &mut self,
-        uri: &Url,
+        uri: &Uri,
         text: &str,
     ) -> Result<(EntryDiff, usize), Vec<TomlParsingError>> {
         let mut new_doc = Document::parse(uri, text);
@@ -84,7 +84,7 @@ impl Workspace {
         }
     }
 
-    pub fn populate_dependencies(&mut self, uri: &Url) {
+    pub fn populate_dependencies(&mut self, uri: &Uri) {
         if let Some(doc) = self.state_mut(uri) {
             doc.populate_dependencies();
         }

@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    path::Path,
     task::Poll,
 };
 
@@ -32,19 +33,17 @@ use super::appraiser::Ctx;
 pub struct CargoResolveOutput {
     pub ctx: Ctx,
     //the hashmap key is toml_id, which is<table>:<package name>
-    pub dependencies: HashMap<String, SerializedPackage>,
+    pub dependencies: HashMap<String, Package>,
     pub summaries: HashMap<String, Vec<Summary>>,
 }
 
-#[tracing::instrument(name = "cargo_resolve")]
+#[tracing::instrument(name = "cargo_resolve", level = "trace")]
 pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> {
-    let Ok(path) = ctx.uri.to_file_path() else {
-        return Err(CargoError::other(anyhow::anyhow!("uri is not a file")));
-    };
+    let path = Path::new(ctx.uri.path().as_str());
     let Ok(gctx) = cargo::util::context::GlobalContext::default() else {
         return Err(CargoError::other(anyhow::anyhow!("failed to create gctx")));
     };
-    let workspace = match cargo::core::Workspace::new(path.as_path(), &gctx) {
+    let workspace = match cargo::core::Workspace::new(path, &gctx) {
         Ok(workspace) => workspace,
         Err(e) => {
             return Err(CargoError::unparsed_workspace_error(e));
@@ -77,8 +76,10 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         no_proc_macro: false,
     };
 
-    let requested_kinds = CompileKind::from_requested_targets(workspace.gctx(), &[]).unwrap();
-    let mut target_data = RustcTargetData::new(&workspace, &[CompileKind::Host]).unwrap();
+    let requested_kinds = CompileKind::from_requested_targets(workspace.gctx(), &[])
+        .map_err(|_| CargoError::other(anyhow::anyhow!("failed to get requested kinds")))?;
+    let mut target_data = RustcTargetData::new(&workspace, &[CompileKind::Host])
+        .map_err(|_| CargoError::other(anyhow::anyhow!("failed to create target data")))?;
     let specs = opts.packages.to_package_id_specs(&workspace).unwrap();
     // Convert Result to Option
     let ws_resolve = match cargo::ops::resolve_ws_with_opts(
@@ -110,10 +111,11 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
             let toml_key = cargo_dependency_to_toml_key(dep);
             res.insert(
                 toml_key,
-                pkg.serialized(
-                    workspace.gctx().cli_unstable(),
-                    workspace.unstable_features(),
-                ),
+                (*pkg).clone(),
+                // pkg.serialized(
+                //     workspace.gctx().cli_unstable(),
+                //     workspace.unstable_features(),
+                // ),
             );
         }
     }
