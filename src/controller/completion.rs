@@ -4,18 +4,12 @@ use tower_lsp::lsp_types::{
     TextEdit,
 };
 
-use crate::entity::{Dependency, DependencyEntryKind, EntryKind, TomlEntry, TomlKey};
+use crate::entity::{Dependency, DependencyEntryKind, EntryKind, NodeKind, TomlNode};
 
-pub async fn completion(
-    key: Option<&TomlKey>,
-    node: Option<&TomlEntry>,
-    dep: Option<&Dependency>,
-) -> Option<CompletionResponse> {
-    if let Some(key) = key {
+pub async fn completion(node: &TomlNode, dep: Option<&Dependency>) -> Option<CompletionResponse> {
+    if let Some(name) = node.crate_name() {
         //crate name completion
-        if let Some(crate_name) = key.crate_name() {
-            return crate_name_completion(&crate_name).await;
-        }
+        return crate_name_completion(&name).await;
     }
     let dep = dep?;
     let summaries = dep.summaries.as_ref()?;
@@ -24,59 +18,28 @@ pub async fn completion(
         return None;
     }
 
-    if let Some(node) = node {
-        match &node.kind {
-            EntryKind::Dependency(
-                _,
-                DependencyEntryKind::SimpleDependency | DependencyEntryKind::TableDependencyVersion,
-            ) => {
-                // Order summaries by version
-                let mut summaries = summaries.clone();
-                // Sort summaries in descending order by version
-                summaries.sort_by(|a, b| b.version().cmp(a.version()));
+    match &node.kind {
+        NodeKind::Entry(EntryKind::Dependency(
+            _,
+            DependencyEntryKind::SimpleDependency | DependencyEntryKind::TableDependencyVersion,
+        )) => {
+            // Order summaries by version
+            let mut summaries = summaries.clone();
+            // Sort summaries in descending order by version
+            summaries.sort_by(|a, b| b.version().cmp(a.version()));
 
-                // Create a vector of CompletionItems for each version
-                let versions: Vec<_> = summaries
-                    .iter()
-                    .enumerate()
-                    .map(|(index, s)| {
-                        let version = s.version().to_string();
-                        CompletionItem {
-                            label: version.to_string(),
-                            kind: Some(CompletionItemKind::CONSTANT),
-                            detail: Some(version.to_string()),
-                            documentation: None,
-                            sort_text: Some(format!("{:04}", index)),
-                            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                                range: Range::new(
-                                    Position::new(
-                                        node.range.start.line,
-                                        node.range.start.character + 1,
-                                    ),
-                                    Position::new(
-                                        node.range.end.line,
-                                        node.range.end.character - 1,
-                                    ),
-                                ),
-                                new_text: version.to_string(),
-                            })),
-                            ..Default::default()
-                        }
-                    })
-                    .collect();
-                return Some(CompletionResponse::Array(versions));
-            }
-            EntryKind::Dependency(_, DependencyEntryKind::TableDependencyFeature) => {
-                let summary = dep.matched_summary.as_ref()?;
-                let versions: Vec<_> = summary
-                    .features()
-                    .keys()
-                    .map(|s| CompletionItem {
-                        label: s.to_string(),
+            // Create a vector of CompletionItems for each version
+            let versions: Vec<_> = summaries
+                .iter()
+                .enumerate()
+                .map(|(index, s)| {
+                    let version = s.version().to_string();
+                    CompletionItem {
+                        label: version.to_string(),
                         kind: Some(CompletionItemKind::CONSTANT),
-                        detail: Some(s.to_string()),
+                        detail: Some(version.to_string()),
                         documentation: None,
-                        // sort_text: Some(format!("{:04}", index)),
+                        sort_text: Some(format!("{:04}", index)),
                         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                             range: Range::new(
                                 Position::new(
@@ -85,15 +48,38 @@ pub async fn completion(
                                 ),
                                 Position::new(node.range.end.line, node.range.end.character - 1),
                             ),
-                            new_text: s.to_string(),
+                            new_text: version.to_string(),
                         })),
                         ..Default::default()
-                    })
-                    .collect();
-                return Some(CompletionResponse::Array(versions));
-            }
-            _ => return None,
+                    }
+                })
+                .collect();
+            return Some(CompletionResponse::Array(versions));
         }
+        NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyFeature)) => {
+            let summary = dep.matched_summary.as_ref()?;
+            let versions: Vec<_> = summary
+                .features()
+                .keys()
+                .map(|s| CompletionItem {
+                    label: s.to_string(),
+                    kind: Some(CompletionItemKind::CONSTANT),
+                    detail: Some(s.to_string()),
+                    documentation: None,
+                    // sort_text: Some(format!("{:04}", index)),
+                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                        range: Range::new(
+                            Position::new(node.range.start.line, node.range.start.character + 1),
+                            Position::new(node.range.end.line, node.range.end.character - 1),
+                        ),
+                        new_text: s.to_string(),
+                    })),
+                    ..Default::default()
+                })
+                .collect();
+            return Some(CompletionResponse::Array(versions));
+        }
+        _ => return None,
     }
     None
 }

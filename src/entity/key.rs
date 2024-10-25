@@ -13,7 +13,15 @@ pub struct TomlKey {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyKind {
-    Dependency(DependencyKeyKind),
+    Dependency(String, DependencyKeyKind),
+}
+
+impl KeyKind {
+    pub fn row_id(&self) -> Option<String> {
+        match self {
+            KeyKind::Dependency(id, _) => Some(id.to_string()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,13 +29,4 @@ pub enum DependencyKeyKind {
     CrateName,
     Version,
     Features,
-}
-
-impl TomlKey {
-    pub fn crate_name(&self) -> Option<String> {
-        match self.kind {
-            KeyKind::Dependency(DependencyKeyKind::CrateName) => Some(self.text.clone()),
-            _ => None,
-        }
-    }
 }

@@ -106,46 +106,60 @@ pub fn decoration_payload(dep: &Dependency) -> DecorationPayload {
     }
 }
 
-pub fn formatted_string(dep: &Dependency, formatter: &DecorationFormatter) -> String {
+pub fn formatted_string(dep: &Dependency, formatter: &DecorationFormatter) -> Option<String> {
     let version = version_decoration(dep);
     let payload = decoration_payload(dep);
     match version {
-        VersionDecoration::Latest => formatter
-            .latest
-            .replace("{{installed}}", &payload.installed)
-            .replace("{{latest_matched}}", &payload.latest_matched)
-            .replace("{{latest}}", &payload.latest),
-        VersionDecoration::Local => formatter
-            .local
-            .replace("{{installed}}", &payload.installed)
-            .replace("{{latest_matched}}", &payload.latest_matched)
-            .replace("{{latest}}", &payload.latest),
-        VersionDecoration::NotInstalled => formatter
-            .not_installed
-            .replace("{{installed}}", &payload.installed)
-            .replace("{{latest_matched}}", &payload.latest_matched)
-            .replace("{{latest}}", &payload.latest),
-        VersionDecoration::MixedUpgradeable => formatter
-            .mixed_upgradeable
-            .replace("{{installed}}", &payload.installed)
-            .replace("{{latest_matched}}", &payload.latest_matched)
-            .replace("{{latest}}", &payload.latest),
-        VersionDecoration::CompatibleLatest => formatter
-            .compatible_latest
-            .replace("{{installed}}", &payload.installed)
-            .replace("{{latest_matched}}", &payload.latest_matched)
-            .replace("{{latest}}", &payload.latest),
-        VersionDecoration::NoncompatibleLatest => formatter
-            .noncompatible_latest
-            .replace("{{installed}}", &payload.installed)
-            .replace("{{latest_matched}}", &payload.latest_matched)
-            .replace("{{latest}}", &payload.latest),
-        VersionDecoration::Yanked => formatter
-            .yanked
-            .replace("{{installed}}", &payload.installed)
-            .replace("{{latest_matched}}", &payload.latest_matched)
-            .replace("{{latest}}", &payload.latest),
-        _ => "".to_string(),
+        VersionDecoration::Latest => Some(
+            formatter
+                .latest
+                .replace("{{installed}}", &payload.installed)
+                .replace("{{latest_matched}}", &payload.latest_matched)
+                .replace("{{latest}}", &payload.latest),
+        ),
+        VersionDecoration::Local => Some(
+            formatter
+                .local
+                .replace("{{installed}}", &payload.installed)
+                .replace("{{latest_matched}}", &payload.latest_matched)
+                .replace("{{latest}}", &payload.latest),
+        ),
+        VersionDecoration::NotInstalled => Some(
+            formatter
+                .not_installed
+                .replace("{{installed}}", &payload.installed)
+                .replace("{{latest_matched}}", &payload.latest_matched)
+                .replace("{{latest}}", &payload.latest),
+        ),
+        VersionDecoration::MixedUpgradeable => Some(
+            formatter
+                .mixed_upgradeable
+                .replace("{{installed}}", &payload.installed)
+                .replace("{{latest_matched}}", &payload.latest_matched)
+                .replace("{{latest}}", &payload.latest),
+        ),
+        VersionDecoration::CompatibleLatest => Some(
+            formatter
+                .compatible_latest
+                .replace("{{installed}}", &payload.installed)
+                .replace("{{latest_matched}}", &payload.latest_matched)
+                .replace("{{latest}}", &payload.latest),
+        ),
+        VersionDecoration::NoncompatibleLatest => Some(
+            formatter
+                .noncompatible_latest
+                .replace("{{installed}}", &payload.installed)
+                .replace("{{latest_matched}}", &payload.latest_matched)
+                .replace("{{latest}}", &payload.latest),
+        ),
+        VersionDecoration::Yanked => Some(
+            formatter
+                .yanked
+                .replace("{{installed}}", &payload.installed)
+                .replace("{{latest_matched}}", &payload.latest_matched)
+                .replace("{{latest}}", &payload.latest),
+        ),
+        _ => None,
     }
 }
 

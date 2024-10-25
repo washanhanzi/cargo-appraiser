@@ -2,24 +2,15 @@ use std::collections::HashMap;
 
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkedString};
 
-use crate::entity::{Dependency, DependencyEntryKind, EntryKind, TomlEntry};
+use crate::entity::{
+    Dependency, DependencyEntryKind, DependencyKeyKind, EntryKind, KeyKind, NodeKind, TomlNode,
+};
 
-pub fn hover(node: TomlEntry, dep: &Dependency) -> Option<Hover> {
-    if let EntryKind::Dependency(id, key) = &node.kind {
-        hover_dependency(id, key, &node, dep)
-    } else {
-        None
-    }
-}
-
-fn hover_dependency(
-    id: &str,
-    key: &DependencyEntryKind,
-    node: &TomlEntry,
-    dep: &Dependency,
-) -> Option<Hover> {
-    match key {
-        DependencyEntryKind::TableDependencyVersion | DependencyEntryKind::SimpleDependency => {
+pub fn hover(node: &TomlNode, dep: &Dependency) -> Option<Hover> {
+    match node.kind {
+        NodeKind::Key(KeyKind::Dependency(_, DependencyKeyKind::Version))
+        | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyVersion))
+        | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::SimpleDependency)) => {
             let summaries = dep.summaries.as_ref()?;
             let mut versions = summaries
                 .iter()
@@ -39,8 +30,8 @@ fn hover_dependency(
                 range: Some(node.range),
             })
         }
-        DependencyEntryKind::TableDependencyFeatures
-        | DependencyEntryKind::TableDependencyFeature => {
+        NodeKind::Key(KeyKind::Dependency(_, DependencyKeyKind::Features))
+        | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyFeature)) => {
             let resolved = dep.resolved.as_ref()?;
 
             let features: HashMap<_, Vec<_>> = resolved

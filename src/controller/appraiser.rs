@@ -13,7 +13,7 @@ use tracing::error;
 use crate::{
     controller::{code_action::code_action, completion::completion},
     decoration::DecorationEvent,
-    entity::CargoError,
+    entity::{row_id, CargoError},
     usecase::Workspace,
 };
 
@@ -145,13 +145,16 @@ impl Appraiser {
                         let Some(doc) = state.document(&uri) else {
                             continue;
                         };
-                        let Some(node) = doc.precise_match_entry(pos) else {
+                        let Some(node) = doc.precise_match(pos) else {
                             continue;
                         };
-                        let Some(dep) = doc.dependency(node.kind.entry_id()) else {
+                        let Some(id) = node.row_id() else {
                             continue;
                         };
-                        let Some(h) = hover(node, dep) else {
+                        let Some(dep) = doc.dependency(&id) else {
+                            continue;
+                        };
+                        let Some(h) = hover(&node, dep) else {
                             continue;
                         };
                         let _ = tx.send(h);
@@ -160,13 +163,14 @@ impl Appraiser {
                         let Some(doc) = state.document(&uri) else {
                             continue;
                         };
-                        let key = doc.precise_match_key(pos);
-                        let entry = doc.precise_match_entry(pos);
-                        let dep = match &entry {
-                            Some(entry) => doc.dependency(entry.kind.entry_id()),
-                            None => None,
+                        let Some(node) = doc.precise_match(pos) else {
+                            continue;
                         };
-                        let completion = completion(key.as_ref(), entry.as_ref(), dep).await;
+                        let Some(id) = node.row_id() else {
+                            continue;
+                        };
+                        let dep = doc.dependency(&id);
+                        let completion = completion(&node, dep).await;
                         let _ = tx.send(completion);
                     }
                     CargoDocumentEvent::CodeAction(uri, range, tx) => {
@@ -176,7 +180,10 @@ impl Appraiser {
                         let Some(node) = doc.precise_match_entry(range.start) else {
                             continue;
                         };
-                        let Some(dep) = doc.dependency(node.kind.entry_id()) else {
+                        let Some(id) = node.row_id() else {
+                            continue;
+                        };
+                        let Some(dep) = doc.dependency(&id) else {
                             continue;
                         };
                         let Some(action) = code_action(uri, node, dep) else {

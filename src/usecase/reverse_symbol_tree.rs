@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use tower_lsp::lsp_types::Position;
 
-use crate::entity::{SymbolTree, TomlEntry, TomlKey};
+use crate::entity::{SymbolTree, TomlEntry, TomlKey, TomlNode};
 
 #[derive(Debug, Clone)]
 pub struct ReverseSymbolTree {
@@ -25,7 +25,7 @@ impl ReverseSymbolTree {
         }
     }
 
-    fn parse_entries(entries: &HashMap<String, TomlEntry>) -> HashMap<u32, Vec<String>> {
+    fn parse_entries(entries: &HashMap<String, TomlNode>) -> HashMap<u32, Vec<String>> {
         let mut m: HashMap<u32, Vec<String>> = HashMap::new();
         for (id, node) in entries {
             for line in node.range.start.line..=node.range.end.line {
@@ -35,7 +35,7 @@ impl ReverseSymbolTree {
         m
     }
 
-    fn parse_keys(keys: &HashMap<String, TomlKey>) -> HashMap<u32, Vec<String>> {
+    fn parse_keys(keys: &HashMap<String, TomlNode>) -> HashMap<u32, Vec<String>> {
         let mut m: HashMap<u32, Vec<String>> = HashMap::new();
         for (id, node) in keys {
             for line in node.range.start.line..=node.range.end.line {
@@ -50,10 +50,10 @@ impl ReverseSymbolTree {
     pub fn precise_match_entry(
         &self,
         pos: Position,
-        entries: &HashMap<String, TomlEntry>,
-    ) -> Option<TomlEntry> {
+        entries: &HashMap<String, TomlNode>,
+    ) -> Option<TomlNode> {
         let ids = self.entries.get(&pos.line)?;
-        let mut best_match: Option<TomlEntry> = None;
+        let mut best_match: Option<TomlNode> = None;
         let mut best_width: u32 = u32::MAX;
 
         for id in ids {
@@ -77,10 +77,10 @@ impl ReverseSymbolTree {
     pub fn precise_match_key(
         &self,
         pos: Position,
-        keys: &HashMap<String, TomlKey>,
-    ) -> Option<TomlKey> {
+        keys: &HashMap<String, TomlNode>,
+    ) -> Option<TomlNode> {
         let ids = self.keys.get(&pos.line)?;
-        let mut best_match: Option<TomlKey> = None;
+        let mut best_match: Option<TomlNode> = None;
         let mut best_width: u32 = u32::MAX;
 
         for id in ids {

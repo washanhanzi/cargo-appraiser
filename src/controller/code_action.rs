@@ -7,11 +7,11 @@ use tower_lsp::lsp_types::{
 
 use crate::{
     decoration::{version_decoration, VersionDecoration},
-    entity::{Dependency, DependencyEntryKind, EntryKind, TomlEntry},
+    entity::{Dependency, DependencyEntryKind, EntryKind, NodeKind, TomlNode},
 };
 
-pub fn code_action(uri: Uri, node: TomlEntry, dep: &Dependency) -> Option<CodeActionResponse> {
-    if let EntryKind::Dependency(id, key) = &node.kind {
+pub fn code_action(uri: Uri, node: TomlNode, dep: &Dependency) -> Option<CodeActionResponse> {
+    if let NodeKind::Entry(EntryKind::Dependency(id, key)) = &node.kind {
         code_action_dependency(uri, id, key, &node, dep)
     } else {
         None
@@ -22,7 +22,7 @@ pub fn code_action_dependency(
     uri: Uri,
     id: &str,
     key: &DependencyEntryKind,
-    node: &TomlEntry,
+    node: &TomlNode,
     dep: &Dependency,
 ) -> Option<CodeActionResponse> {
     match key {

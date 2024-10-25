@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::Path};
 use tower_lsp::lsp_types::{Position, Uri};
 
 use crate::entity::{
-    cargo_dependency_to_toml_key, Dependency, EntryDiff, SymbolTree, TomlEntry, TomlKey,
+    cargo_dependency_to_toml_key, Dependency, EntryDiff, SymbolTree, TomlEntry, TomlKey, TomlNode,
     TomlParsingError,
 };
 
@@ -164,12 +164,19 @@ impl Document {
         !self.dirty_nodes.is_empty()
     }
 
-    pub fn precise_match_entry(&self, pos: Position) -> Option<TomlEntry> {
+    pub fn precise_match(&self, pos: Position) -> Option<TomlNode> {
+        match self.precise_match_key(pos) {
+            Some(node) => Some(node),
+            None => self.precise_match_entry(pos),
+        }
+    }
+
+    pub fn precise_match_entry(&self, pos: Position) -> Option<TomlNode> {
         self.reverse_tree
             .precise_match_entry(pos, &self.tree.entries)
     }
 
-    pub fn precise_match_key(&self, pos: Position) -> Option<TomlKey> {
+    pub fn precise_match_key(&self, pos: Position) -> Option<TomlNode> {
         self.reverse_tree.precise_match_key(pos, &self.tree.keys)
     }
 
@@ -180,11 +187,11 @@ impl Document {
         self.dependencies.get(id)
     }
 
-    pub fn entry(&self, id: &str) -> Option<&TomlEntry> {
+    pub fn entry(&self, id: &str) -> Option<&TomlNode> {
         self.tree.entries.get(id)
     }
 
-    pub fn find_keys_by_crate_name(&self, crate_name: &str) -> Vec<&TomlKey> {
+    pub fn find_keys_by_crate_name(&self, crate_name: &str) -> Vec<&TomlNode> {
         self.tree
             .keys
             .values()
@@ -207,7 +214,8 @@ mod tests {
 
     use crate::{
         entity::{
-            CargoTable, DependencyEntryKind, DependencyKeyKind, DependencyTable, EntryKind, KeyKind,
+            CargoTable, DependencyEntryKind, DependencyKeyKind, DependencyTable, EntryKind,
+            KeyKind, NodeKind,
         },
         usecase::document::Document,
     };
@@ -229,7 +237,13 @@ mod tests {
                 v.table,
                 CargoTable::Dependencies(DependencyTable::Dependencies)
             );
-            assert_eq!(v.kind, KeyKind::Dependency(DependencyKeyKind::CrateName));
+            assert_eq!(
+                v.kind,
+                NodeKind::Key(KeyKind::Dependency(
+                    "dependencies.a".to_string(),
+                    DependencyKeyKind::CrateName
+                ))
+            );
         }
         for (_, v) in doc.tree.entries.iter() {
             assert_eq!(
@@ -238,10 +252,10 @@ mod tests {
             );
             assert_eq!(
                 v.kind,
-                EntryKind::Dependency(
+                NodeKind::Entry(EntryKind::Dependency(
                     "dependencies.a".to_string(),
                     DependencyEntryKind::SimpleDependency
-                )
+                ))
             );
         }
     }

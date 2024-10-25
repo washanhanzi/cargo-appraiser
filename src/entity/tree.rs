@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use super::{TomlEntry, TomlKey};
+use super::TomlNode;
 
 #[derive(Debug, Clone)]
 pub struct SymbolTree {
-    pub entries: HashMap<String, TomlEntry>,
-    pub keys: HashMap<String, TomlKey>,
+    pub entries: HashMap<String, TomlNode>,
+    pub keys: HashMap<String, TomlNode>,
 }

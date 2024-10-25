@@ -25,7 +25,7 @@ use tracing::{error, info};
 
 use crate::entity::{
     cargo_dependency_to_toml_key, from_resolve_error, CargoError, CargoErrorKind, Dependency,
-    SymbolTree, TomlKey,
+    SymbolTree, TomlKey, TomlNode,
 };
 
 use super::appraiser::Ctx;
@@ -201,7 +201,7 @@ pub fn resolve_package_with_default_source(
 impl CargoError {
     pub fn diagnostic(
         self,
-        keys: &[&TomlKey],
+        keys: &[&TomlNode],
         deps: &[&Dependency],
         tree: &SymbolTree,
     ) -> Option<Vec<(String, Diagnostic)>> {

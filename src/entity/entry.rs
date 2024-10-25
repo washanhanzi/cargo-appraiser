@@ -21,6 +21,8 @@ pub struct TomlEntry {
     pub kind: EntryKind,
 }
 
+impl TomlEntry {}
+
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub enum EntryKind {
     Table(CargoTable),
@@ -29,18 +31,11 @@ pub enum EntryKind {
 }
 
 impl EntryKind {
-    pub fn is_dependency(&self) -> bool {
-        matches!(
-            self,
-            EntryKind::Dependency(_, DependencyEntryKind::SimpleDependency)
-                | EntryKind::Dependency(_, DependencyEntryKind::TableDependency)
-        )
-    }
-    pub fn entry_id(&self) -> &str {
+    pub fn row_id(&self) -> Option<String> {
         match self {
-            EntryKind::Dependency(id, _) => id,
-            EntryKind::Value(id) => id,
-            _ => "",
+            EntryKind::Dependency(id, _) => Some(id.to_string()),
+            EntryKind::Value(id) => Some(id.to_string()),
+            _ => None,
         }
     }
 }
