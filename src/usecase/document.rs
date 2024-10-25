@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
-use tower_lsp::lsp_types::{Position, Url};
+use tower_lsp::lsp_types::{Position, Uri};
 
 use crate::entity::{
     cargo_dependency_to_toml_key, Dependency, EntryDiff, SymbolTree, TomlEntry, TomlKey,
@@ -11,7 +11,7 @@ use super::{diff_dependency_entries, ReverseSymbolTree, Walker};
 
 #[derive(Debug, Clone)]
 pub struct Document {
-    pub uri: Url,
+    pub uri: Uri,
     pub rev: usize,
     tree: SymbolTree,
     pub reverse_tree: ReverseSymbolTree,
@@ -26,7 +26,7 @@ impl Document {
         &self.tree
     }
 
-    pub fn parse(uri: &Url, text: &str) -> Self {
+    pub fn parse(uri: &Uri, text: &str) -> Self {
         let p = taplo::parser::parse(text);
         let dom = p.into_dom();
         let table = dom.as_table().unwrap();
@@ -128,35 +128,34 @@ impl Document {
 
     //TODO return error
     pub fn populate_dependencies(&mut self) {
-        if let Ok(path) = self.uri.to_file_path() {
-            //get dependencies
-            let Ok(gctx) = cargo::util::context::GlobalContext::default() else {
-                return;
-            };
-            let Ok(workspace) = cargo::core::Workspace::new(path.as_path(), &gctx) else {
-                return;
-            };
-            let Ok(current) = workspace.current() else {
-                return;
-            };
-            let mut unresolved = HashMap::with_capacity(current.dependencies().len());
-            for dep in current.dependencies() {
-                let key = cargo_dependency_to_toml_key(dep);
-                unresolved.insert(key, dep);
-            }
+        let path = Path::new(self.uri.path().as_str());
+        //get dependencies
+        let Ok(gctx) = cargo::util::context::GlobalContext::default() else {
+            return;
+        };
+        let Ok(workspace) = cargo::core::Workspace::new(path, &gctx) else {
+            return;
+        };
+        let Ok(current) = workspace.current() else {
+            return;
+        };
+        let mut unresolved = HashMap::with_capacity(current.dependencies().len());
+        for dep in current.dependencies() {
+            let key = cargo_dependency_to_toml_key(dep);
+            unresolved.insert(key, dep);
+        }
 
-            for dep in self.dependencies.values_mut() {
-                let key = dep.toml_key();
-                if let Some(u) = unresolved.remove(&key) {
-                    //if dep has matched_summary and the new unresolved doesn't match it
-                    if let Some(summary) = dep.matched_summary.as_ref() {
-                        if !u.matches(summary) && !u.matches_prerelease(summary) {
-                            dep.matched_summary = None;
-                        }
+        for dep in self.dependencies.values_mut() {
+            let key = dep.toml_key();
+            if let Some(u) = unresolved.remove(&key) {
+                //if dep has matched_summary and the new unresolved doesn't match it
+                if let Some(summary) = dep.matched_summary.as_ref() {
+                    if !u.matches(summary) && !u.matches_prerelease(summary) {
+                        dep.matched_summary = None;
                     }
-                    //update value to dep.unresolved
-                    dep.unresolved = Some(u.clone());
                 }
+                //update value to dep.unresolved
+                dep.unresolved = Some(u.clone());
             }
         }
     }
@@ -202,7 +201,9 @@ impl Document {
 }
 
 mod tests {
-    use tower_lsp::lsp_types::Url;
+    use std::str::FromStr;
+
+    use tower_lsp::lsp_types::Uri;
 
     use crate::{
         entity::{
@@ -214,7 +215,7 @@ mod tests {
     #[test]
     fn test_parse() {
         let doc = Document::parse(
-            &Url::parse("file:///C:/Users/test.toml").unwrap(),
+            &Uri::from_str("file:///C:/Users/test.toml").unwrap(),
             r#"
             [dependencies]
             a = "0.1.0"

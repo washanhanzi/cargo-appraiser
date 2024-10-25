@@ -9,21 +9,24 @@ pub struct CargoError {
 
 impl std::fmt::Display for CargoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.kind)
+        match self.kind {
+            CargoErrorKind::WorkspaceError => write!(f, "{}", self.source),
+            _ => write!(f, "{}", self.kind),
+        }
     }
 }
 
 impl CargoError {
-    pub fn other(e: anyhow::Error) -> Self {
+    pub fn resolve_error(e: anyhow::Error) -> Self {
         CargoError {
-            kind: CargoErrorKind::Other,
+            kind: CargoErrorKind::ResolveError,
             source: e,
         }
     }
 
-    pub fn unparsed_workspace_error(e: anyhow::Error) -> Self {
+    pub fn workspace_error(e: anyhow::Error) -> Self {
         CargoError {
-            kind: CargoErrorKind::UnParsedWorkspaceError,
+            kind: CargoErrorKind::WorkspaceError,
             source: e,
         }
     }
@@ -34,8 +37,8 @@ impl CargoError {
             CargoErrorKind::VersionNotFound(name, _) => Some(name),
             CargoErrorKind::FailedToSelectVersion(name) => Some(name),
             CargoErrorKind::CyclicDependency => None,
-            CargoErrorKind::UnParsedWorkspaceError => None,
-            CargoErrorKind::Other => None,
+            CargoErrorKind::WorkspaceError => None,
+            CargoErrorKind::ResolveError => None,
         }
     }
 }
@@ -51,9 +54,9 @@ pub enum CargoErrorKind {
     #[error("cyclic dependency detected")]
     CyclicDependency,
     #[error("unparsed workspace error")]
-    UnParsedWorkspaceError,
-    #[error("unparsed error")]
-    Other,
+    WorkspaceError,
+    #[error("unparsed resolve error")]
+    ResolveError,
 }
 
 pub fn from_resolve_error(e: anyhow::Error) -> CargoError {
@@ -65,7 +68,7 @@ pub fn from_resolve_error(e: anyhow::Error) -> CargoError {
     if error_message.starts_with("no matching package named") {
         let Some(package_name) = error_message.split('`').nth(1) else {
             return CargoError {
-                kind: CargoErrorKind::Other,
+                kind: CargoErrorKind::ResolveError,
                 source: e,
             };
         };
@@ -84,13 +87,13 @@ pub fn from_resolve_error(e: anyhow::Error) -> CargoError {
     if error_message.starts_with("failed to select a version for the requirement") {
         let Some(package_with_version) = error_message.split('`').nth(1) else {
             return CargoError {
-                kind: CargoErrorKind::Other,
+                kind: CargoErrorKind::ResolveError,
                 source: e,
             };
         };
         let Some(package_name) = package_with_version.split_whitespace().next() else {
             return CargoError {
-                kind: CargoErrorKind::Other,
+                kind: CargoErrorKind::ResolveError,
                 source: e,
             };
         };
@@ -111,7 +114,7 @@ pub fn from_resolve_error(e: anyhow::Error) -> CargoError {
     if error_message.starts_with("failed to select a version for") {
         let Some(package_name) = error_message.split('`').nth(1) else {
             return CargoError {
-                kind: CargoErrorKind::Other,
+                kind: CargoErrorKind::ResolveError,
                 source: e,
             };
         };
@@ -133,7 +136,7 @@ pub fn from_resolve_error(e: anyhow::Error) -> CargoError {
     }
 
     CargoError {
-        kind: CargoErrorKind::Other,
+        kind: CargoErrorKind::ResolveError,
         source: e,
     }
 }

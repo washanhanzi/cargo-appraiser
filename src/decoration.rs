@@ -2,7 +2,7 @@ use cargo::core::SourceKind;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 use tower_lsp::{
-    lsp_types::{InlayHint, Range, Url},
+    lsp_types::{InlayHint, Range, Uri},
     Client,
 };
 
@@ -25,7 +25,7 @@ pub trait VSCodeDecorationRenderer: Send + Sync + std::fmt::Debug {
 pub trait InlayHintDecorationRenderer: Send + Sync + std::fmt::Debug {
     fn init(&self) -> Sender<DecorationEvent>;
     //only work for inlayHint renderer
-    fn list(&self, uri: &Url) -> Vec<InlayHint>;
+    fn list(&self, uri: &Uri) -> Vec<InlayHint>;
 }
 
 #[derive(Debug)]
@@ -56,10 +56,10 @@ impl DecorationRenderer {
 #[derive(Clone)]
 pub enum DecorationEvent {
     Reset,
-    DependencyRangeUpdate(Url, String, Range),
-    DependencyRemove(Url, String),
-    DependencyWaiting(Url, String, Range),
-    Dependency(Url, String, Range, Dependency),
+    DependencyRangeUpdate(Uri, String, Range),
+    DependencyRemove(Uri, String),
+    DependencyWaiting(Uri, String, Range),
+    Dependency(Uri, String, Range, Dependency),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -88,7 +88,7 @@ pub struct DecorationPayload {
 
 pub fn decoration_payload(dep: &Dependency) -> DecorationPayload {
     let installed = match dep.resolved.as_ref() {
-        Some(resolved) => resolved.version.to_string(),
+        Some(resolved) => resolved.version().to_string(),
         None => "".to_string(),
     };
     let latest_matched = match dep.latest_matched_summary.as_ref() {

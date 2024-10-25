@@ -2,7 +2,7 @@ use super::{appraiser::Ctx, CargoDocumentEvent};
 use std::{pin::Pin, time::Duration};
 use tokio::sync::mpsc::{self, error::SendError, Sender};
 use tokio::time::{sleep, Sleep};
-use tower_lsp::lsp_types::Url;
+use tower_lsp::lsp_types::Uri;
 use tracing::error;
 
 // Change Timer
@@ -57,10 +57,10 @@ impl Debouncer {
         let background_timeout = self.background_timeout;
 
         tokio::spawn(async move {
-            let mut uri: Option<Url> = None;
+            let mut uri: Option<Uri> = None;
             let mut rev = 0;
             let mut delay: Option<Pin<Box<Sleep>>> = None;
-            let mut backoff_uri: Option<Url> = None;
+            let mut backoff_uri: Option<Uri> = None;
             let mut backoff_factor: u32 = 0;
 
             loop {

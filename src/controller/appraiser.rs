@@ -5,7 +5,7 @@ use tokio::sync::{
     oneshot,
 };
 use tower_lsp::{
-    lsp_types::{CodeActionResponse, CompletionResponse, Hover, Position, Range, Url},
+    lsp_types::{CodeActionResponse, CompletionResponse, Hover, Position, Range, Uri},
     Client,
 };
 use tracing::error;
@@ -26,7 +26,7 @@ use super::{
 
 #[derive(Debug, Clone)]
 pub struct Ctx {
-    pub uri: Url,
+    pub uri: Uri,
     pub rev: usize,
 }
 
@@ -49,7 +49,7 @@ pub enum CargoDocumentEvent {
     Changed(CargoTomlPayload),
     ReadyToResolve(Ctx),
     //reset document state
-    Closed(Url),
+    Closed(Uri),
     //result from cargo command
     //consolidate state and send render event
     CargoResolved(CargoResolveOutput),
@@ -57,15 +57,15 @@ pub enum CargoDocumentEvent {
     //CargoLockCreated,
     CargoLockChanged,
     //code action, path and range
-    CodeAction(Url, Range, oneshot::Sender<CodeActionResponse>),
+    CodeAction(Uri, Range, oneshot::Sender<CodeActionResponse>),
     //hover event, path and position
-    Hovered(Url, Position, oneshot::Sender<Hover>),
-    Completion(Url, Position, oneshot::Sender<Option<CompletionResponse>>),
-    CargoDiagnostic(Url, CargoError),
+    Hovered(Uri, Position, oneshot::Sender<Hover>),
+    Completion(Uri, Position, oneshot::Sender<Option<CompletionResponse>>),
+    CargoDiagnostic(Uri, CargoError),
 }
 
 pub struct CargoTomlPayload {
-    pub uri: Url,
+    pub uri: Uri,
     pub text: String,
 }
 
@@ -314,7 +314,7 @@ impl Appraiser {
                                 let summaries = output.summaries.get(package_name).unwrap();
                                 dep.summaries = Some(summaries.clone());
 
-                                let installed = dep.resolved.as_ref().unwrap().version.clone();
+                                let installed = dep.resolved.as_ref().unwrap().version().clone();
                                 let req_version = dep.unresolved.as_ref().unwrap().version_req();
 
                                 let mut latest: Option<&Version> = None;
@@ -410,7 +410,7 @@ impl Appraiser {
 }
 
 async fn start_resolve(
-    uri: &Url,
+    uri: &Uri,
     state: &mut Workspace,
     render_tx: &Sender<DecorationEvent>,
     cargo_tx: &Sender<Ctx>,

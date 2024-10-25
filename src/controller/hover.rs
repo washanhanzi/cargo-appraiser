@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkedString};
 
 use crate::entity::{Dependency, DependencyEntryKind, EntryKind, TomlEntry};
@@ -37,9 +39,17 @@ fn hover_dependency(
                 range: Some(node.range),
             })
         }
-        DependencyEntryKind::TableDependencyFeatures | DependencyEntryKind::TableDependencyFeature => {
+        DependencyEntryKind::TableDependencyFeatures
+        | DependencyEntryKind::TableDependencyFeature => {
             let resolved = dep.resolved.as_ref()?;
-            let features = resolved.features.clone();
+
+            let features: HashMap<_, Vec<_>> = resolved
+                .manifest()
+                .summary()
+                .features()
+                .iter()
+                .map(|(k, v)| (*k, v.iter().map(|fv| fv.to_string()).collect()))
+                .collect();
             let feature_list = features
                 .keys()
                 .map(|key| format!("- {}", key))

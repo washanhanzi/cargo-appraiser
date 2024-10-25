@@ -1,4 +1,5 @@
 pub mod appraiser;
+mod audit;
 mod cargo;
 mod code_action;
 mod completion;

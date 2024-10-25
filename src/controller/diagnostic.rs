@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use tower_lsp::{
-    lsp_types::{Diagnostic, Url},
+    lsp_types::{Diagnostic, Uri},
     Client,
 };
 use tracing::Instrument;
@@ -11,9 +11,9 @@ use tracing::Instrument;
 //cargo errors can be only cleared on success cargo resolve
 pub struct DiagnosticController {
     client: Client,
-    pub cargo_diagnostics: HashMap<Url, HashMap<String, Diagnostic>>,
-    pub parse_diagnostics: HashMap<Url, HashMap<String, Diagnostic>>,
-    rev: HashMap<Url, i32>,
+    pub cargo_diagnostics: HashMap<Uri, HashMap<String, Diagnostic>>,
+    pub parse_diagnostics: HashMap<Uri, HashMap<String, Diagnostic>>,
+    rev: HashMap<Uri, i32>,
 }
 
 impl DiagnosticController {
@@ -26,7 +26,7 @@ impl DiagnosticController {
         }
     }
 
-    pub async fn add_cargo_diagnostic(&mut self, uri: &Url, id: &str, diag: Diagnostic) {
+    pub async fn add_cargo_diagnostic(&mut self, uri: &Uri, id: &str, diag: Diagnostic) {
         self.cargo_diagnostics
             .entry(uri.clone())
             .or_default()
@@ -53,7 +53,7 @@ impl DiagnosticController {
         }
     }
 
-    pub async fn add_parse_diagnostic(&mut self, uri: &Url, id: &str, diag: Diagnostic) {
+    pub async fn add_parse_diagnostic(&mut self, uri: &Uri, id: &str, diag: Diagnostic) {
         self.parse_diagnostics
             .entry(uri.clone())
             .or_default()
@@ -77,7 +77,7 @@ impl DiagnosticController {
         }
     }
 
-    pub async fn clear_cargo_diagnostics(&mut self, uri: &Url) {
+    pub async fn clear_cargo_diagnostics(&mut self, uri: &Uri) {
         self.cargo_diagnostics.remove(uri);
         self.rev.remove(uri);
         if self.parse_diagnostics.is_empty() {
@@ -93,7 +93,7 @@ impl DiagnosticController {
         }
     }
 
-    pub async fn clear_parse_diagnostics(&mut self, uri: &Url) {
+    pub async fn clear_parse_diagnostics(&mut self, uri: &Uri) {
         self.parse_diagnostics.remove(uri);
         if self.cargo_diagnostics.is_empty() {
             self.client

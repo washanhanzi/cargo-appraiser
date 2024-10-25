@@ -21,7 +21,7 @@ pub struct Dependency {
     pub workspace: Option<Value<bool>>,
     pub platform: Option<String>,
     pub unresolved: Option<cargo::core::Dependency>,
-    pub resolved: Option<cargo::core::package::SerializedPackage>,
+    pub resolved: Option<cargo::core::package::Package>,
     pub summaries: Option<Vec<Summary>>,
     //the exact matched summary(the installed version)
     pub matched_summary: Option<Summary>,

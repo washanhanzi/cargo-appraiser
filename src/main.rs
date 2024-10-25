@@ -112,7 +112,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri;
-        if !uri.path().ends_with("Cargo.toml") {
+        if !uri.path().as_str().ends_with("Cargo.toml") {
             return;
         };
         if let Err(e) = self
@@ -144,7 +144,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        if !uri.path().ends_with("Cargo.toml") {
+        if !uri.path().as_str().ends_with("Cargo.toml") {
             return;
         };
         if let Err(e) = self.tx.send(CargoDocumentEvent::Closed(uri)).await {
@@ -154,7 +154,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = params.text_document.uri;
-        if !uri.path().ends_with("Cargo.toml") {
+        if !uri.path().as_str().ends_with("Cargo.toml") {
             return;
         };
 
@@ -171,7 +171,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
-        if !uri.path().ends_with("Cargo.toml") {
+        if !uri.path().as_str().ends_with("Cargo.toml") {
             return Ok(None);
         };
 
@@ -189,7 +189,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
-        if !uri.path().ends_with("Cargo.toml") {
+        if !uri.path().as_str().ends_with("Cargo.toml") {
             return Ok(None);
         };
         let (tx, rx) = oneshot::channel();
@@ -215,7 +215,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = params.text_document.uri;
-        if !uri.path().ends_with("Cargo.toml") {
+        if !uri.path().as_str().ends_with("Cargo.toml") {
             return Ok(None);
         };
         let (tx, rx) = oneshot::channel();
@@ -237,7 +237,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
-        if !uri.path().ends_with("Cargo.toml") {
+        if !uri.path().as_str().ends_with("Cargo.toml") {
             return Ok(None);
         };
         //create a once channel with payload Hover
@@ -265,7 +265,7 @@ impl LanguageServer for CargoAppraiser {
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         //check params.changes's item, if it end with "Cargo.lock"
         for change in params.changes {
-            if change.uri.path().ends_with("Cargo.lock") {
+            if change.uri.path().as_str().ends_with("Cargo.lock") {
                 //send refresh event
                 if let Err(e) = self.tx.send(CargoDocumentEvent::CargoLockChanged).await {
                     error!("error sending cargo lock changed event: {}", e);

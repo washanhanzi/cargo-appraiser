@@ -1,7 +1,7 @@
 // copied from /cargo/crates/cargo-util-schemas/src/restricted_names.rs
 
 use thiserror::Error;
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Range, Url};
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Range};
 
 #[derive(Debug, Error, Clone)]
 pub struct TomlParsingError {
