@@ -299,77 +299,80 @@ impl Appraiser {
                         //populate deps
                         for dep in doc.dependencies.values_mut() {
                             let key = dep.toml_key();
-                            if !output.dependencies.is_empty()
-                                && output.dependencies.contains_key(&key)
-                                && doc.dirty_nodes.contains_key(&dep.id)
-                            {
+
+                            if doc.dirty_nodes.contains_key(&dep.id) {
                                 // Take resolved out of the output.dependencies hashmap
-                                let resolved = output.dependencies.remove(&key).unwrap();
-                                dep.resolved = Some(resolved);
+                                let maybe_resolved = output.dependencies.remove(&key);
+                                dep.resolved = maybe_resolved;
 
                                 let package_name = dep.package_name();
-                                if !output.summaries.contains_key(package_name) {
+                                let Some(summaries) = output.summaries.remove(package_name) else {
                                     continue;
-                                }
-                                let summaries = output.summaries.get(package_name).unwrap();
+                                };
                                 dep.summaries = Some(summaries.clone());
 
-                                let installed = dep.resolved.as_ref().unwrap().version().clone();
-                                let req_version = dep.unresolved.as_ref().unwrap().version_req();
+                                if let Some(resolved) = dep.resolved.as_ref() {
+                                    let installed = resolved.version().clone();
+                                    let req_version =
+                                        dep.unresolved.as_ref().unwrap().version_req();
 
-                                let mut latest: Option<&Version> = None;
-                                let mut latest_matched: Option<&Version> = None;
-                                for summary in summaries {
-                                    if &installed == summary.version() {
-                                        dep.matched_summary = Some(summary.clone());
+                                    let mut latest: Option<&Version> = None;
+                                    let mut latest_matched: Option<&Version> = None;
+                                    for summary in &summaries {
+                                        if &installed == summary.version() {
+                                            dep.matched_summary = Some(summary.clone());
+                                        }
+                                        match latest {
+                                            Some(cur)
+                                                if summary.version() > cur
+                                                    && summary.version().is_prerelease()
+                                                        == installed.is_prerelease() =>
+                                            {
+                                                latest = Some(summary.version());
+                                                dep.latest_summary = Some(summary.clone());
+                                            }
+                                            None if summary.version().is_prerelease()
+                                                == installed.is_prerelease() =>
+                                            {
+                                                latest = Some(summary.version());
+                                                dep.latest_summary = Some(summary.clone());
+                                            }
+                                            _ => {}
+                                        }
+                                        match (latest_matched.as_ref(), installed.is_prerelease()) {
+                                            (Some(cur), true)
+                                                if req_version
+                                                    .matches_prerelease(summary.version())
+                                                    && summary.version() > cur =>
+                                            {
+                                                latest_matched = Some(summary.version());
+                                                dep.latest_matched_summary = Some(summary.clone());
+                                            }
+                                            (Some(cur), false)
+                                                if req_version.matches(summary.version())
+                                                    && summary.version() > cur =>
+                                            {
+                                                latest_matched = Some(summary.version());
+                                                dep.latest_matched_summary = Some(summary.clone());
+                                            }
+                                            (None, true)
+                                                if req_version
+                                                    .matches_prerelease(summary.version()) =>
+                                            {
+                                                latest_matched = Some(summary.version());
+                                                dep.latest_matched_summary = Some(summary.clone());
+                                            }
+                                            (None, false)
+                                                if req_version.matches(summary.version()) =>
+                                            {
+                                                latest_matched = Some(summary.version());
+                                                dep.latest_matched_summary = Some(summary.clone());
+                                            }
+                                            _ => {}
+                                        }
                                     }
-                                    match latest {
-                                        Some(cur)
-                                            if summary.version() > cur
-                                                && summary.version().is_prerelease()
-                                                    == installed.is_prerelease() =>
-                                        {
-                                            latest = Some(summary.version());
-                                            dep.latest_summary = Some(summary.clone());
-                                        }
-                                        None if summary.version().is_prerelease()
-                                            == installed.is_prerelease() =>
-                                        {
-                                            latest = Some(summary.version());
-                                            dep.latest_summary = Some(summary.clone());
-                                        }
-                                        _ => {}
-                                    }
-                                    match (latest_matched, installed.is_prerelease()) {
-                                        (Some(cur), true)
-                                            if req_version
-                                                .matches_prerelease(summary.version())
-                                                && summary.version() > cur =>
-                                        {
-                                            latest_matched = Some(summary.version());
-                                            dep.latest_matched_summary = Some(summary.clone());
-                                        }
-                                        (Some(cur), false)
-                                            if req_version.matches(summary.version())
-                                                && summary.version() > cur =>
-                                        {
-                                            latest_matched = Some(summary.version());
-                                            dep.latest_matched_summary = Some(summary.clone());
-                                        }
-                                        (None, true)
-                                            if req_version
-                                                .matches_prerelease(summary.version()) =>
-                                        {
-                                            latest_matched = Some(summary.version());
-                                            dep.latest_matched_summary = Some(summary.clone());
-                                        }
-                                        (None, false) if req_version.matches(summary.version()) => {
-                                            latest_matched = Some(summary.version());
-                                            dep.latest_matched_summary = Some(summary.clone());
-                                        }
-                                        _ => {}
-                                    }
-                                }
+                                };
+
                                 //send to render
                                 if let Some(rev) = doc.dirty_nodes.get(&dep.id) {
                                     if *rev > output.ctx.rev {
