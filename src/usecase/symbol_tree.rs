@@ -123,7 +123,7 @@ impl Walker {
                                             //insert dep
                                             let mut dep = Dependency {
                                                 id: new_id.to_string(),
-                                                name: name.to_string(),
+                                                name: dep_name.to_string(),
                                                 table: dep_table,
                                                 range: into_lsp_range(
                                                     self.mapper
