@@ -33,6 +33,8 @@ cargo = { package = "my-cargo", git = "https://github.com/washanhanzi/cargo.git"
 tower-lsp = { git = "https://github.com/washanhanzi/tower-lsp", features = [
     "proposed",
 ] }
+cargo-lock = { version = "10.0.0", features = ["dependency-tree"] }
+petgraph = "0.6.5"
 
 [features]
 default = []

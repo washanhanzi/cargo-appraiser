@@ -404,6 +404,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "cargo-audit",
+ "cargo-lock",
  "clap",
  "futures",
  "lsp-async-stub",
@@ -411,6 +412,7 @@ dependencies = [
  "once_cell",
  "openssl",
  "parking_lot",
+ "petgraph",
  "reqwest",
  "rustsec",
  "semver",
