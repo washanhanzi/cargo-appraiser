@@ -4,13 +4,19 @@ use tower_lsp::lsp_types::{Hover, HoverContents, MarkedString};
 
 use crate::entity::{
     Dependency, DependencyEntryKind, DependencyKeyKind, EntryKind, KeyKind, NodeKind, TomlNode,
+    WorkspaceKeyKind,
 };
 
-pub fn hover(node: &TomlNode, dep: &Dependency) -> Option<Hover> {
+pub fn hover(
+    node: &TomlNode,
+    dep: Option<&Dependency>,
+    members: Option<&[cargo::core::package::Package]>,
+) -> Option<Hover> {
     match node.kind {
         NodeKind::Key(KeyKind::Dependency(_, DependencyKeyKind::Version))
         | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyVersion))
         | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::SimpleDependency)) => {
+            let dep = dep?;
             let summaries = dep.summaries.as_ref()?;
             let mut versions = summaries
                 .iter()
@@ -32,6 +38,7 @@ pub fn hover(node: &TomlNode, dep: &Dependency) -> Option<Hover> {
         }
         NodeKind::Key(KeyKind::Dependency(_, DependencyKeyKind::Features))
         | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyFeature)) => {
+            let dep = dep?;
             let resolved = dep.resolved.as_ref()?;
 
             let features: HashMap<_, Vec<_>> = resolved
@@ -49,6 +56,18 @@ pub fn hover(node: &TomlNode, dep: &Dependency) -> Option<Hover> {
 
             Some(Hover {
                 contents: HoverContents::Scalar(MarkedString::String(feature_list)),
+                range: Some(node.range),
+            })
+        }
+        NodeKind::Key(KeyKind::Workspace(WorkspaceKeyKind::Members)) => {
+            let members = members?;
+            let member_list = members
+                .iter()
+                .map(|m| format!("- [{}]({})", m.name(), m.manifest_path().display()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::String(member_list)),
                 range: Some(node.range),
             })
         }

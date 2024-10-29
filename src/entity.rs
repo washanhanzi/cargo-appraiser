@@ -10,6 +10,7 @@ mod table;
 mod toml_error;
 mod tree;
 mod value;
+mod workspace;
 
 pub use cargo_error::*;
 pub use dependency::*;

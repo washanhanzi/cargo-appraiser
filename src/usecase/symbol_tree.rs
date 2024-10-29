@@ -12,8 +12,8 @@ use tower_lsp::lsp_types::{Position, Range};
 
 use crate::entity::{
     strip_quote, validate_crate_name, validate_feature_name, validate_profile_name, CargoTable,
-    Dependency, DependencyEntryKind, DependencyKeyKind, DependencyTable, EntryDiff, EntryKind,
-    KeyKind, Manifest, SymbolTree, TomlEntry, TomlKey, TomlNode, TomlParsingError, Value,
+    Dependency, DependencyEntryKind, DependencyKeyKind, EntryDiff, EntryKind, KeyKind, Manifest,
+    SymbolTree, TomlNode, TomlParsingError, Value, WorkspaceEntryKind, WorkspaceKeyKind,
 };
 
 pub struct Walker {
@@ -30,6 +30,7 @@ impl Walker {
         self,
     ) -> (
         SymbolTree,
+        Manifest,
         HashMap<String, Dependency>,
         Vec<TomlParsingError>,
     ) {
@@ -38,6 +39,7 @@ impl Walker {
                 keys: self.keys_map,
                 entries: self.entries_map,
             },
+            self.manifest,
             self.deps,
             self.errs,
         )
@@ -61,6 +63,26 @@ impl Walker {
                 let parsed_table = CargoTable::from_str(name).unwrap();
                 match parsed_table {
                     CargoTable::Package => {}
+                    CargoTable::Workspace => {
+                        let entries = t.entries().read();
+                        for (key, entry) in entries.iter() {
+                            if key.value() == "members" {
+                                let id = id.to_string() + ".members";
+                                let (_, _) = self.insert_key(
+                                    &id,
+                                    parsed_table,
+                                    key,
+                                    KeyKind::Workspace(WorkspaceKeyKind::Members),
+                                );
+                                self.insert_entry(
+                                    &id,
+                                    entry,
+                                    parsed_table,
+                                    EntryKind::Workspace(WorkspaceEntryKind::Members),
+                                );
+                            }
+                        }
+                    }
                     CargoTable::Profile => {
                         let entries = t.entries().read();
                         //profile table should contain only 1 child node
@@ -182,6 +204,16 @@ impl Walker {
         (key_id.to_string(), key_range)
     }
 
+    fn insert_entry(&mut self, id: &str, node: &Node, table: CargoTable, kind: EntryKind) {
+        let range = self.mapper.range(join_ranges(node.text_ranges())).unwrap();
+        let lsp_range = into_lsp_range(range);
+        let text = serde_json::to_string(&node).unwrap_or_default();
+        self.entries_map.insert(
+            id.to_string(),
+            TomlNode::new_entry(id.to_string(), lsp_range, text, table, kind),
+        );
+    }
+
     fn enter_dependency(
         &mut self,
         id: &str,
@@ -190,10 +222,6 @@ impl Walker {
         node: &Node,
         dep: &mut Dependency,
     ) {
-        let range = self.mapper.range(join_ranges(node.text_ranges())).unwrap();
-        let lsp_range = into_lsp_range(range);
-        let text = serde_json::to_string(&node).unwrap_or_default();
-
         match node {
             //invalid node
             Node::Invalid(_) => {
@@ -211,37 +239,22 @@ impl Walker {
             //inline table dependency
             Node::Table(t) => {
                 //insert key
-                let key_id = id.to_string() + ".key";
+                let (key_id, key_range) = self.insert_key(
+                    id,
+                    table,
+                    key,
+                    KeyKind::Dependency(dep.id.to_string(), DependencyKeyKind::CrateName),
+                );
 
-                let v = key.value();
-                let key_range =
-                    into_lsp_range(self.mapper.range(join_ranges(key.text_ranges())).unwrap());
-                if let Err(e) = validate_crate_name(v) {
+                if let Err(e) = validate_crate_name(key.value()) {
                     self.errs
                         .push(TomlParsingError::new(key_id.to_string(), e, key_range));
                 }
-                self.keys_map.insert(
-                    key_id.to_string(),
-                    TomlNode::new_key(
-                        key_id,
-                        key_range,
-                        v.to_string(),
-                        table,
-                        KeyKind::Dependency(dep.id.to_string(), DependencyKeyKind::CrateName),
-                    ),
-                );
-                self.entries_map.insert(
-                    id.to_string(),
-                    TomlNode::new_entry(
-                        id.to_string(),
-                        lsp_range,
-                        text,
-                        table,
-                        EntryKind::Dependency(
-                            dep.id.to_string(),
-                            DependencyEntryKind::TableDependency,
-                        ),
-                    ),
+                self.insert_entry(
+                    id,
+                    node,
+                    table,
+                    EntryKind::Dependency(dep.id.to_string(), DependencyEntryKind::TableDependency),
                 );
                 let entries = t.entries().read();
                 for (key, entry) in entries.iter() {
@@ -259,17 +272,13 @@ impl Walker {
                         KeyKind::Dependency(dep.id.to_string(), DependencyKeyKind::Features),
                     );
                     //feature array
-                    self.entries_map.insert(
-                        id.to_string(),
-                        TomlNode::new_entry(
-                            id.to_string(),
-                            lsp_range,
-                            text,
-                            table,
-                            EntryKind::Dependency(
-                                dep.id.to_string(),
-                                DependencyEntryKind::TableDependencyFeatures,
-                            ),
+                    self.insert_entry(
+                        id,
+                        node,
+                        table,
+                        EntryKind::Dependency(
+                            dep.id.to_string(),
+                            DependencyEntryKind::TableDependencyFeatures,
                         ),
                     );
                     let items = arr.items().read();
@@ -308,7 +317,7 @@ impl Walker {
             }
             //simple dependency or table dependency string key value
             Node::Str(s) => {
-                let key = match key.value() {
+                let entry_kind = match key.value() {
                     "version" => {
                         let (key_id, _) = self.insert_key(
                             id,
@@ -373,21 +382,11 @@ impl Walker {
                     }
                     _ => {
                         //insert key
-                        let key_id = id.to_string() + ".key";
-                        self.keys_map.insert(
-                            key_id.to_string(),
-                            TomlNode::new_key(
-                                key_id,
-                                into_lsp_range(
-                                    self.mapper.range(join_ranges(key.text_ranges())).unwrap(),
-                                ),
-                                key.value().to_string(),
-                                table,
-                                KeyKind::Dependency(
-                                    dep.id.to_string(),
-                                    DependencyKeyKind::CrateName,
-                                ),
-                            ),
+                        self.insert_key(
+                            id,
+                            table,
+                            key,
+                            KeyKind::Dependency(dep.id.to_string(), DependencyKeyKind::CrateName),
                         );
                         dep.version = Some(Value::new(id.to_string(), s.value().to_string()));
                         EntryKind::Dependency(
@@ -396,13 +395,10 @@ impl Walker {
                         )
                     }
                 };
-                self.entries_map.insert(
-                    id.to_string(),
-                    TomlNode::new_entry(id.to_string(), lsp_range, strip_quote(text), table, key),
-                );
+                self.insert_entry(id, node, table, entry_kind);
             }
             Node::Bool(b) => {
-                let key = match key.value() {
+                let entry_kind = match key.value() {
                     "workspace" => {
                         dep.workspace = Some(Value::new(id.to_string(), b.value()));
                         EntryKind::Dependency(
@@ -423,10 +419,7 @@ impl Walker {
                         DependencyEntryKind::TableDependencyUnknownBool,
                     ),
                 };
-                self.entries_map.insert(
-                    id.to_string(),
-                    TomlNode::new_entry(id.to_string(), lsp_range, strip_quote(text), table, key),
-                );
+                self.insert_entry(id, node, table, entry_kind);
             }
             _ => {}
         }

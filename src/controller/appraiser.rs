@@ -13,7 +13,7 @@ use tracing::error;
 use crate::{
     controller::{code_action::code_action, completion::completion},
     decoration::DecorationEvent,
-    entity::{row_id, CargoError},
+    entity::CargoError,
     usecase::Workspace,
 };
 
@@ -148,13 +148,11 @@ impl Appraiser {
                         let Some(node) = doc.precise_match(pos) else {
                             continue;
                         };
-                        let Some(id) = node.row_id() else {
-                            continue;
+                        let dep = match node.row_id() {
+                            Some(id) => doc.dependency(&id),
+                            None => None,
                         };
-                        let Some(dep) = doc.dependency(&id) else {
-                            continue;
-                        };
-                        let Some(h) = hover(&node, dep) else {
+                        let Some(h) = hover(&node, dep, doc.members.as_deref()) else {
                             continue;
                         };
                         let _ = tx.send(h);

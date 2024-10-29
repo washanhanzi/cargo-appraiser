@@ -1,7 +1,7 @@
 use super::Value;
 
 //Package is a semantic representation of cargo.toml's package table
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub struct Package {
     name: Option<Value<String>>,
     version: Option<Value<String>>,

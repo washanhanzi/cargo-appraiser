@@ -25,6 +25,7 @@ impl TomlEntry {}
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub enum EntryKind {
+    Workspace(WorkspaceEntryKind),
     Table(CargoTable),
     Dependency(String, DependencyEntryKind),
     Value(String),
@@ -58,6 +59,11 @@ pub enum DependencyEntryKind {
     TableDependencyDefaultFeatures,
     TableDependencyOptional,
     TableDependencyUnknownBool,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub enum WorkspaceEntryKind {
+    Members,
 }
 
 pub fn strip_quote(s: String) -> String {

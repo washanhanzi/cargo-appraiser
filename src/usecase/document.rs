@@ -1,9 +1,12 @@
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use tower_lsp::lsp_types::{Position, Uri};
 
 use crate::entity::{
-    cargo_dependency_to_toml_key, Dependency, EntryDiff, SymbolTree, TomlEntry, TomlKey, TomlNode,
+    cargo_dependency_to_toml_key, Dependency, EntryDiff, Manifest, SymbolTree, TomlNode,
     TomlParsingError,
 };
 
@@ -19,6 +22,9 @@ pub struct Document {
     pub dependencies: HashMap<String, Dependency>,
     pub dirty_nodes: HashMap<String, usize>,
     pub parsing_errors: Vec<TomlParsingError>,
+    pub manifest: Manifest,
+    pub members: Option<Vec<cargo::core::package::Package>>,
+    pub root_manifest: Option<PathBuf>,
 }
 
 impl Document {
@@ -41,17 +47,20 @@ impl Document {
             walker.walk_root(key.value(), key.value(), entry)
         }
 
-        let (tree, deps, errs) = walker.consume();
+        let (tree, manifest, deps, errs) = walker.consume();
         let len = entries.len();
         let reverse_symbols = ReverseSymbolTree::parse(&tree);
         Self {
             uri: uri.clone(),
             rev: 0,
             tree,
+            manifest,
             reverse_tree: reverse_symbols,
             dependencies: deps,
             dirty_nodes: HashMap::with_capacity(len),
             parsing_errors: errs,
+            members: None,
+            root_manifest: None,
         }
     }
 
@@ -136,7 +145,10 @@ impl Document {
         let Ok(workspace) = cargo::core::Workspace::new(path, &gctx) else {
             return;
         };
+        self.root_manifest = Some(workspace.root().to_path_buf());
         let Ok(current) = workspace.current() else {
+            //virtual workspaces
+            self.members = Some(workspace.members().cloned().collect());
             return;
         };
         let mut unresolved = HashMap::with_capacity(current.dependencies().len());

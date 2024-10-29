@@ -8,7 +8,6 @@ use cargo::{
     core::{
         compiler::{CompileKind, RustcTargetData},
         dependency::DepKind,
-        package::SerializedPackage,
         resolver::{CliFeatures, ForceAllTargets, HasDevUnits},
         Package, PackageId, SourceId, Summary, Workspace,
     },
@@ -25,7 +24,7 @@ use tracing::{error, info};
 
 use crate::entity::{
     cargo_dependency_to_toml_key, from_resolve_error, CargoError, CargoErrorKind, Dependency,
-    SymbolTree, TomlKey, TomlNode,
+    SymbolTree, TomlNode,
 };
 
 use super::appraiser::Ctx;
@@ -43,7 +42,6 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     let gctx = cargo::util::context::GlobalContext::default().map_err(CargoError::resolve_error)?;
     let workspace =
         cargo::core::Workspace::new(path, &gctx).map_err(CargoError::workspace_error)?;
-    //TODO virtual workspace
     let Ok(current) = workspace.current() else {
         return Err(CargoError::workspace_error(anyhow::anyhow!(
             "virtual workspace"

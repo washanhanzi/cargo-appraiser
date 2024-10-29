@@ -2,7 +2,10 @@
 
 # Features
 
-A lot
+- Workspace
+  - hover on members will show the list of members
+- Dependencies
+  - hover on version will show the dependency versions
 
 # Config
 
