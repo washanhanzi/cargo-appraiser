@@ -18,6 +18,7 @@ use crate::{
 };
 
 use super::{
+    audit::AuditReports,
     cargo::{cargo_resolve, CargoResolveOutput},
     debouncer::Debouncer,
     diagnostic::DiagnosticController,
@@ -62,6 +63,7 @@ pub enum CargoDocumentEvent {
     Hovered(Uri, Position, oneshot::Sender<Hover>),
     Completion(Uri, Position, oneshot::Sender<Option<CompletionResponse>>),
     CargoDiagnostic(Uri, CargoError),
+    Audited(AuditReports),
 }
 
 pub struct CargoTomlPayload {
