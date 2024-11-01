@@ -1,7 +1,8 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     pin::Pin,
+    str::FromStr,
     time::Duration,
 };
 
@@ -44,7 +45,7 @@ impl AuditController {
     pub fn spawn(&mut self) {
         //create a mpsc channel
         let (internal_tx, mut internal_rx) = mpsc::channel(32);
-        let mut received_uri: Option<Uri> = None;
+        let mut received_uris: HashSet<Uri> = HashSet::new();
         self.sender = Some(internal_tx);
         let tx = self.tx.clone();
         let mut timer: Option<Pin<Box<Sleep>>> = None;
@@ -53,8 +54,15 @@ impl AuditController {
             loop {
                 tokio::select! {
                     Some(uri) = internal_rx.recv() => {
-                        received_uri = Some(uri);
-                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(5))));
+                        if uri.path().as_str().ends_with(".lock") {
+                            received_uris.insert(
+                                Uri::from_str(&uri.path().as_str().replace(".lock", ".toml").to_string())
+                                    .unwrap(),
+                            );
+                        } else {
+                            received_uris.insert(uri);
+                        }
+                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(7))));
                     }
                     () = async {
                         if let Some(ref mut t) = timer {
@@ -63,8 +71,8 @@ impl AuditController {
                             futures::future::pending::<()>().await
                         }
                     }, if timer.is_some() => {
-                        if let Some(uri) = &received_uri {
-                            let reports = audit_workspace(uri, &vec![]).unwrap();
+                        for uri in received_uris.iter() {
+                            let reports = audit_workspace(uri).unwrap();
                             if let Err(e) = tx.send(CargoDocumentEvent::Audited(reports)).await {
                                 error!("failed to send Audited event: {}", e);
                             }
@@ -76,16 +84,19 @@ impl AuditController {
     }
 }
 
-pub fn audit_workspace(
-    toml_uri: &Uri,
-    members: &[&cargo::core::package::Package],
-) -> Result<AuditReports, anyhow::Error> {
+pub fn audit_workspace(uri: &Uri) -> Result<AuditReports, anyhow::Error> {
+    let gctx = cargo::util::context::GlobalContext::default()?;
+    let path = Path::new(uri.path().as_str());
+    let workspace = cargo::core::Workspace::new(path, &gctx)?;
+
+    let root_path = workspace.root_manifest();
+    let lock = workspace.lock_root().display().to_string() + "/Cargo.lock";
+
     let mut config = cargo_audit::config::AuditConfig::default();
     config.database.stale = false;
     config.output.format = cargo_audit::config::OutputFormat::Json;
     let mut app = cargo_audit::auditor::Auditor::new(&config);
-    let lock_file_path_str = toml_uri.path().as_str().replace(".toml", ".lock");
-    let lock_file_path = Path::new(&lock_file_path_str);
+    let lock_file_path = Path::new(&lock);
     let report = app.audit_lockfile(lock_file_path)?;
 
     let lockfile = Lockfile::load(lock_file_path)?;
@@ -93,7 +104,7 @@ pub fn audit_workspace(
     let graph = tree.graph();
 
     let mut members_map = HashMap::new();
-    for m in members {
+    for m in workspace.members() {
         members_map.insert((m.name().to_string(), m.version().to_string()), m);
     }
 
@@ -167,7 +178,7 @@ pub fn audit_workspace(
                 let dep_package = graph[path[1]].clone();
 
                 reports
-                    .entry(member.root().to_path_buf())
+                    .entry(member.root().to_path_buf().join("Cargo.toml"))
                     .or_default()
                     .entry((
                         dep_package.name.to_string(),
@@ -193,28 +204,20 @@ mod tests {
     use super::*;
     #[test]
     fn test_audit_lockfile() {
-        let path = Path::new("/Users/jingyu/Github/tauri/Cargo.toml");
-        //get dependencies
-        let gctx = cargo::util::context::GlobalContext::default().unwrap();
-        let workspace = cargo::core::Workspace::new(path, &gctx).unwrap();
-        let mut audit = AuditController::new(mpsc::channel(32).0);
-        let m: Vec<&cargo::core::package::Package> = workspace.members().collect();
-        audit_workspace(
-            &Uri::from_str("/Users/jingyu/Github/tauri/Cargo.toml").unwrap(),
-            &m,
-        )
-        .unwrap();
+        let audit =
+            audit_workspace(&Uri::from_str("/Users/jingyu/Github/tauri/Cargo.toml").unwrap())
+                .unwrap();
 
-        // for (root, results) in &audit.reports {
-        //     for (dep_key, rs) in results {
-        //         println!(
-        //             "warning: {} -> {} -> {}: {}",
-        //             root.display(),
-        //             dep_key.0,
-        //             dep_key.1,
-        //             rs[0].tree.join(" -> ")
-        //         );
-        //     }
-        // }
+        for (root, results) in &audit {
+            for (dep_key, rs) in results {
+                println!(
+                    "warning: {} -> {} -> {}: {}",
+                    root.display(),
+                    dep_key.0,
+                    dep_key.1,
+                    rs[0].tree.join(" -> ")
+                );
+            }
+        }
     }
 }
