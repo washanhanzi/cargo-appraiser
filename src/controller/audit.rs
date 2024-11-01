@@ -45,7 +45,6 @@ impl AuditController {
     pub fn spawn(&mut self) {
         //create a mpsc channel
         let (internal_tx, mut internal_rx) = mpsc::channel(32);
-        #[allow(clippy::mutable_key_type)]
         let mut received_uris: HashSet<Uri> = HashSet::new();
         self.sender = Some(internal_tx);
         let tx = self.tx.clone();
