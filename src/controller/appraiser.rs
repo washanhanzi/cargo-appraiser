@@ -18,7 +18,7 @@ use crate::{
 };
 
 use super::{
-    audit::AuditReports,
+    audit::{AuditController, AuditReports},
     cargo::{cargo_resolve, CargoResolveOutput},
     debouncer::Debouncer,
     diagnostic::DiagnosticController,
@@ -110,6 +110,10 @@ impl Appraiser {
         let mut debouncer = Debouncer::new(tx.clone(), 300, 3000);
         debouncer.spawn();
 
+        //audit task
+        let mut audit_controller = AuditController::new(tx.clone());
+        audit_controller.spawn();
+
         //main loop
         //render task sender
         let render_tx = self.render_tx.clone();
@@ -122,6 +126,7 @@ impl Appraiser {
 
             while let Some(event) = rx.recv().await {
                 match event {
+                    CargoDocumentEvent::Audited(reports) => for (uri, report) in reports {},
                     CargoDocumentEvent::CargoDiagnostic(uri, err) => {
                         diagnostic_controller.clear_cargo_diagnostics(&uri).await;
                         //we need a crate name to find something in toml
@@ -270,6 +275,9 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
+                        if let Err(e) = audit_controller.send(&msg.uri).await {
+                            error!("audit controller send error: {}", e);
+                        };
                         let rev = match state.reconsile(&msg.uri, &msg.text) {
                             Ok((_, rev)) => rev,
                             Err(err) => {

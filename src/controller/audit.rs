@@ -38,8 +38,8 @@ impl AuditController {
         Self { tx, sender: None }
     }
 
-    pub async fn send(&self, uri: Uri) -> Result<(), SendError<Uri>> {
-        self.sender.as_ref().unwrap().send(uri).await
+    pub async fn send(&self, uri: &Uri) -> Result<(), SendError<Uri>> {
+        self.sender.as_ref().unwrap().send(uri.clone()).await
     }
 
     pub fn spawn(&mut self) {
@@ -62,7 +62,7 @@ impl AuditController {
                         } else {
                             received_uris.insert(uri);
                         }
-                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(7))));
+                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(10))));
                     }
                     () = async {
                         if let Some(ref mut t) = timer {
@@ -72,7 +72,13 @@ impl AuditController {
                         }
                     }, if timer.is_some() => {
                         for uri in received_uris.iter() {
-                            let reports = audit_workspace(uri).unwrap();
+                            let reports = match audit_workspace(uri) {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    error!("Failed to audit workspace {}: {}", uri.path(), e);
+                                    continue;
+                                }
+                            };
                             if let Err(e) = tx.send(CargoDocumentEvent::Audited(reports)).await {
                                 error!("failed to send Audited event: {}", e);
                             }
@@ -89,7 +95,6 @@ pub fn audit_workspace(uri: &Uri) -> Result<AuditReports, anyhow::Error> {
     let path = Path::new(uri.path().as_str());
     let workspace = cargo::core::Workspace::new(path, &gctx)?;
 
-    let root_path = workspace.root_manifest();
     let lock = workspace.lock_root().display().to_string() + "/Cargo.lock";
 
     let mut config = cargo_audit::config::AuditConfig::default();
