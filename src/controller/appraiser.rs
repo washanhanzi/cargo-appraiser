@@ -396,8 +396,6 @@ impl Appraiser {
                                         error!("read file error: {}", e);
                                     }
                                 }
-                            } else {
-                                continue;
                             }
                         }
 
