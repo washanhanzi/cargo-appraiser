@@ -66,20 +66,53 @@ impl Walker {
                     CargoTable::Workspace => {
                         let entries = t.entries().read();
                         for (key, entry) in entries.iter() {
-                            if key.value() == "members" {
-                                let id = id.to_string() + ".members";
-                                let (_, _) = self.insert_key(
-                                    &id,
-                                    parsed_table,
-                                    key,
-                                    KeyKind::Workspace(WorkspaceKeyKind::Members),
-                                );
-                                self.insert_entry(
-                                    &id,
-                                    entry,
-                                    parsed_table,
-                                    EntryKind::Workspace(WorkspaceEntryKind::Members),
-                                );
+                            let id = id.to_string() + "." + key.value();
+                            match key.value() {
+                                "members" => {
+                                    let (_, _) = self.insert_key(
+                                        &id,
+                                        parsed_table,
+                                        key,
+                                        KeyKind::Workspace(WorkspaceKeyKind::Members),
+                                    );
+                                    self.insert_entry(
+                                        &id,
+                                        entry,
+                                        parsed_table,
+                                        EntryKind::Workspace(WorkspaceEntryKind::Members),
+                                    );
+                                }
+                                "dependencies" => {
+                                    let Node::Table(table) = entry else {
+                                        continue;
+                                    };
+                                    let entries = table.entries().read();
+                                    for (key, entry) in entries.iter() {
+                                        let new_id = id.to_string() + "." + key.value();
+
+                                        //insert dep
+                                        let mut dep = Dependency {
+                                            id: new_id.clone(),
+                                            name: key.value().to_string(),
+                                            table: crate::entity::DependencyTable::WorkspaceDependencies,
+                                            range: into_lsp_range(
+                                                self.mapper
+                                                    .range(join_ranges(entry.text_ranges()))
+                                                    .unwrap(),
+                                            ),
+                                            ..Default::default()
+                                        };
+                                        self.enter_dependency(
+                                            &new_id,
+                                            key,
+                                            parsed_table,
+                                            entry,
+                                            &mut dep,
+                                        );
+                                        self.deps.insert(new_id, dep);
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }

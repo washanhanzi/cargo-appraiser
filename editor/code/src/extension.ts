@@ -45,7 +45,7 @@ export async function activate(context: ExtensionContext) {
             // Notify the server about file changes to '.clientrc files contained in the workspace
             fileEvents: workspace.createFileSystemWatcher('**/Cargo.lock')
         },
-        outputChannel: traceOutputChannel
+        outputChannel: traceOutputChannel,
     }
 
     // Create the language client and start the client.
@@ -55,6 +55,14 @@ export async function activate(context: ExtensionContext) {
         serverOptions,
         clientOptions
     )
+
+    client.onRequest("textDocument/readFile", async (params, next) => {
+        const uri = Uri.parse(params.uri)
+        const document = await workspace.openTextDocument(uri)
+        return {
+            content: document.getText()
+        }
+    })
 
     // Start the client. This will also launch the server
     client.start()

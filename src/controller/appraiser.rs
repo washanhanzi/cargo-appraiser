@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use cargo::util::VersionExt;
 use semver::Version;
 use tokio::sync::{
@@ -5,23 +7,28 @@ use tokio::sync::{
     oneshot,
 };
 use tower_lsp::{
-    lsp_types::{CodeActionResponse, CompletionResponse, Hover, Position, Range, Uri},
+    lsp_types::{CodeActionResponse, CompletionResponse, Diagnostic, Hover, Position, Range, Uri},
     Client,
 };
-use tracing::error;
+use tracing::{error, info};
 
 use crate::{
-    controller::{code_action::code_action, completion::completion},
+    controller::{
+        audit::into_diagnostic_text, code_action::code_action, completion::completion,
+        read_file::ReadFileParam,
+    },
     decoration::DecorationEvent,
-    entity::CargoError,
+    entity::{into_file_uri, CargoError, Dependency},
     usecase::Workspace,
 };
 
 use super::{
+    audit::{into_diagnostic_severity, AuditController, AuditReports, AuditResult},
     cargo::{cargo_resolve, CargoResolveOutput},
     debouncer::Debouncer,
     diagnostic::DiagnosticController,
     hover::hover,
+    read_file::ReadFile,
 };
 
 #[derive(Debug, Clone)]
@@ -39,8 +46,6 @@ pub struct Appraiser {
     render_tx: Sender<DecorationEvent>,
 }
 
-//TODO audit: cargo.toml and cargo.lock always stay together, if we get the full dep tree from cargo tree
-//and then we can use cargo audit to show diagnostic for a dep
 pub enum CargoDocumentEvent {
     //cargo.toml save event
     //start to parse the document, update the state, and send event for cargo_tree task
@@ -62,6 +67,7 @@ pub enum CargoDocumentEvent {
     Hovered(Uri, Position, oneshot::Sender<Hover>),
     Completion(Uri, Position, oneshot::Sender<Option<CompletionResponse>>),
     CargoDiagnostic(Uri, CargoError),
+    Audited(AuditReports),
 }
 
 pub struct CargoTomlPayload {
@@ -76,6 +82,7 @@ impl Appraiser {
     pub fn initialize(&self) -> Sender<CargoDocumentEvent> {
         //create mpsc channel
         let (tx, mut rx) = mpsc::channel::<CargoDocumentEvent>(64);
+        let inner_tx = tx.clone();
 
         //cargo tree task
         //cargo tree channel
@@ -108,6 +115,10 @@ impl Appraiser {
         let mut debouncer = Debouncer::new(tx.clone(), 300, 3000);
         debouncer.spawn();
 
+        //audit task
+        let mut audit_controller = AuditController::new(tx.clone());
+        audit_controller.spawn();
+
         //main loop
         //render task sender
         let render_tx = self.render_tx.clone();
@@ -116,10 +127,84 @@ impl Appraiser {
             //workspace state
             let mut state = Workspace::new();
             //diagnostic
-            let mut diagnostic_controller = DiagnosticController::new(client);
+            let diag_client = client.clone();
+            let mut diagnostic_controller = DiagnosticController::new(diag_client);
 
             while let Some(event) = rx.recv().await {
                 match event {
+                    CargoDocumentEvent::Audited(reports) => {
+                        //a hashset to record which is already audited
+                        let mut audited: HashMap<(Uri, String), (Dependency, Vec<AuditResult>)> =
+                            HashMap::new();
+                        for (path, report) in &reports.members {
+                            let cargo_path_uri = into_file_uri(path.join("Cargo.toml").as_path());
+                            //go to state.document(uri) and then state.document(root_manifest)
+                            let doc = match state.document(&cargo_path_uri) {
+                                Some(doc) => doc,
+                                None => match state.document(&reports.root) {
+                                    Some(doc) => doc,
+                                    None => continue,
+                                },
+                            };
+                            //loop dependencies and write the audited with root_manifest
+                            for dep in doc.dependencies.values() {
+                                //if it has resolved dependency, we can compare the version
+                                //if it doesn't(for virtual workspace), we can just compare the version compatibility
+                                //first find matching dependency name in resports
+                                let Some(reports_map) = report.get(dep.package_name()) else {
+                                    continue;
+                                };
+                                //then find matching dependency version in reports_map
+                                match dep.resolved.as_ref() {
+                                    Some(resolved) => {
+                                        //then find matching dependency version in rs
+                                        let Some(rr) = reports_map
+                                            .get(resolved.version().to_string().as_str())
+                                        else {
+                                            continue;
+                                        };
+                                        audited.insert(
+                                            (cargo_path_uri.clone(), dep.id.to_string()),
+                                            (dep.clone(), rr.clone()),
+                                        );
+                                    }
+                                    None => {
+                                        for (v, rr) in reports_map {
+                                            if dep
+                                                .unresolved
+                                                .as_ref()
+                                                .unwrap()
+                                                .version_req()
+                                                .matches(&Version::parse(v).unwrap())
+                                            {
+                                                audited.insert(
+                                                    (cargo_path_uri.clone(), dep.id.to_string()),
+                                                    (dep.clone(), rr.clone()),
+                                                );
+                                            }
+                                        }
+                                    }
+                                };
+                            }
+                            //send to diagnostic
+                            for ((uri, _), (dep, rr)) in &audited {
+                                let diag = Diagnostic {
+                                    range: dep.range,
+                                    severity: Some(into_diagnostic_severity(rr)),
+                                    code: None,
+                                    code_description: None,
+                                    source: Some("cargo-appraiser".to_string()),
+                                    message: into_diagnostic_text(rr),
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                };
+                                diagnostic_controller
+                                    .add_audit_diagnostic(uri, &dep.id, diag)
+                                    .await;
+                            }
+                        }
+                    }
                     CargoDocumentEvent::CargoDiagnostic(uri, err) => {
                         diagnostic_controller.clear_cargo_diagnostics(&uri).await;
                         //we need a crate name to find something in toml
@@ -189,9 +274,7 @@ impl Appraiser {
                         };
                         let _ = tx.send(action);
                     }
-                    CargoDocumentEvent::Closed(uri) => {
-                        state.del(&uri);
-                    }
+                    CargoDocumentEvent::Closed(uri) => {}
                     CargoDocumentEvent::CargoLockChanged => {
                         //clear state except the "current" uri
                         let Some(doc) = state.clear_except_current() else {
@@ -211,8 +294,10 @@ impl Appraiser {
                         diagnostic_controller
                             .clear_parse_diagnostics(&msg.uri)
                             .await;
+                        //when Cargo.toml changed, clear audit diagnostics
+                        diagnostic_controller.clear_audit_diagnostics().await;
                         let diff = match state.reconsile(&msg.uri, &msg.text) {
-                            Ok((diff, _)) => diff,
+                            Ok((_, diff)) => diff,
                             Err(err) => {
                                 for e in err {
                                     let Some((id, diag)) = e.diagnostic() else {
@@ -268,8 +353,17 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
-                        let rev = match state.reconsile(&msg.uri, &msg.text) {
-                            Ok((_, rev)) => rev,
+                        if let Err(e) = audit_controller.send(&msg.uri).await {
+                            error!("audit controller send error: {}", e);
+                        };
+                        let doc = match state.reconsile(&msg.uri, &msg.text) {
+                            Ok((doc, diff)) => {
+                                if diff.is_empty() {
+                                    continue;
+                                } else {
+                                    doc
+                                }
+                            }
                             Err(err) => {
                                 for e in err {
                                     let Some((id, diag)) = e.diagnostic() else {
@@ -283,7 +377,36 @@ impl Appraiser {
                             }
                         };
 
-                        if let Err(e) = debouncer.send_interactive(Ctx { uri: msg.uri, rev }).await
+                        if let Some(uri) = doc.root_manifest.as_ref() {
+                            if uri != &msg.uri {
+                                let param = ReadFileParam { uri: uri.clone() };
+                                match client.send_request::<ReadFile>(param).await {
+                                    Ok(content) => {
+                                        if let Err(e) = inner_tx
+                                            .send(CargoDocumentEvent::Opened(CargoTomlPayload {
+                                                uri: uri.clone(),
+                                                text: content.content,
+                                            }))
+                                            .await
+                                        {
+                                            error!("send root manifest error: {}", e);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("read file error: {}", e);
+                                    }
+                                }
+                            } else {
+                                continue;
+                            }
+                        }
+
+                        if let Err(e) = debouncer
+                            .send_interactive(Ctx {
+                                uri: msg.uri,
+                                rev: doc.rev,
+                            })
+                            .await
                         {
                             error!("debounder send interactive error: {}", e);
                         }
@@ -294,7 +417,8 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::CargoResolved(mut output) => {
-                        let Some(doc) = state.state_mut_with_rev(&output.ctx.uri, output.ctx.rev)
+                        let Some(doc) =
+                            state.document_mut_with_rev(&output.ctx.uri, output.ctx.rev)
                         else {
                             continue;
                         };
@@ -423,9 +547,10 @@ async fn start_resolve(
     render_tx: &Sender<DecorationEvent>,
     cargo_tx: &Sender<Ctx>,
 ) {
-    //start from here the resolve process
-    state.populate_dependencies(uri);
-    let doc = state.document(uri).unwrap();
+    let Some(doc) = state.document_mut(uri) else {
+        return;
+    };
+    doc.populate_dependencies();
 
     //no change to resolve
     if !doc.is_dirty() {

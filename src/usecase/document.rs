@@ -1,13 +1,10 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::Path};
 
 use tower_lsp::lsp_types::{Position, Uri};
 
 use crate::entity::{
-    cargo_dependency_to_toml_key, Dependency, EntryDiff, Manifest, SymbolTree, TomlNode,
-    TomlParsingError,
+    cargo_dependency_to_toml_key, into_file_uri, Dependency, EntryDiff, Manifest, SymbolTree,
+    TomlNode, TomlParsingError,
 };
 
 use super::{diff_dependency_entries, ReverseSymbolTree, Walker};
@@ -24,7 +21,7 @@ pub struct Document {
     pub parsing_errors: Vec<TomlParsingError>,
     pub manifest: Manifest,
     pub members: Option<Vec<cargo::core::package::Package>>,
-    pub root_manifest: Option<PathBuf>,
+    pub root_manifest: Option<Uri>,
 }
 
 impl Document {
@@ -59,8 +56,8 @@ impl Document {
             dependencies: deps,
             dirty_nodes: HashMap::with_capacity(len),
             parsing_errors: errs,
-            members: None,
             root_manifest: None,
+            members: None,
         }
     }
 
@@ -135,7 +132,6 @@ impl Document {
         }
     }
 
-    //TODO return error
     pub fn populate_dependencies(&mut self) {
         let path = Path::new(self.uri.path().as_str());
         //get dependencies
@@ -145,7 +141,7 @@ impl Document {
         let Ok(workspace) = cargo::core::Workspace::new(path, &gctx) else {
             return;
         };
-        self.root_manifest = Some(workspace.root().to_path_buf());
+        self.root_manifest = Some(into_file_uri(&workspace.root().join("Cargo.toml")));
         let Ok(current) = workspace.current() else {
             //virtual workspaces
             self.members = Some(workspace.members().cloned().collect());

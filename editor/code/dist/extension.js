@@ -18489,6 +18489,13 @@ async function activate(context) {
     serverOptions,
     clientOptions
   );
+  client.onRequest("textDocument/readFile", async (params, next) => {
+    const uri = import_vscode.Uri.parse(params.uri);
+    const document = await import_vscode.workspace.openTextDocument(uri);
+    return {
+      content: document.getText()
+    };
+  });
   client.start();
 }
 function deactivate() {

@@ -10,6 +10,15 @@ pub struct EntryDiff {
     pub deleted: Vec<String>,
 }
 
+impl EntryDiff {
+    pub fn is_empty(&self) -> bool {
+        self.created.is_empty()
+            && self.range_updated.is_empty()
+            && self.value_updated.is_empty()
+            && self.deleted.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TomlEntry {
     pub id: String,

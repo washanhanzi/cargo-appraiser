@@ -1,6 +1,7 @@
 use std::collections::{hash_map::Entry, HashMap};
 
 use tower_lsp::lsp_types::Uri;
+use tracing::info;
 
 use crate::entity::{EntryDiff, TomlParsingError};
 
@@ -29,11 +30,11 @@ impl Workspace {
             .unwrap_or(false)
     }
 
-    pub fn state_mut(&mut self, uri: &Uri) -> Option<&mut Document> {
+    pub fn document_mut(&mut self, uri: &Uri) -> Option<&mut Document> {
         self.documents.get_mut(uri)
     }
 
-    pub fn state_mut_with_rev(&mut self, uri: &Uri, rev: usize) -> Option<&mut Document> {
+    pub fn document_mut_with_rev(&mut self, uri: &Uri, rev: usize) -> Option<&mut Document> {
         self.documents
             .get_mut(uri)
             .and_then(|doc| if doc.rev != rev { None } else { Some(doc) })
@@ -46,7 +47,7 @@ impl Workspace {
     pub fn clear_except_current(&mut self) -> Option<&Document> {
         let uri = self.cur_uri.as_ref()?.clone();
         self.documents.retain(|_, doc| doc.uri == uri);
-        let doc = self.state_mut(&uri);
+        let doc = self.document_mut(&uri);
         match doc {
             Some(doc) => {
                 doc.rev += 1;
@@ -60,7 +61,7 @@ impl Workspace {
         &mut self,
         uri: &Uri,
         text: &str,
-    ) -> Result<(EntryDiff, usize), Vec<TomlParsingError>> {
+    ) -> Result<(&Document, EntryDiff), Vec<TomlParsingError>> {
         let mut new_doc = Document::parse(uri, text);
         if !new_doc.parsing_errors.is_empty() {
             return Err(new_doc.parsing_errors);
@@ -69,23 +70,25 @@ impl Workspace {
         match self.documents.entry(uri.clone()) {
             Entry::Occupied(mut entry) => {
                 let diff = Document::diff(Some(entry.get()), &new_doc);
-                entry.get_mut().reconsile(new_doc, &diff);
-                entry.get_mut().populate_dependencies();
-                Ok((diff, entry.get().rev))
+                let doc = entry.into_mut();
+                if !diff.is_empty() {
+                    doc.reconsile(new_doc, &diff);
+                    doc.populate_dependencies();
+                }
+                Ok((doc, diff))
             }
             Entry::Vacant(entry) => {
                 let diff = Document::diff(None, &new_doc);
                 new_doc.self_reconsile(&diff);
                 new_doc.populate_dependencies();
-                let rev = new_doc.rev;
-                entry.insert(new_doc);
-                Ok((diff, rev))
+                let doc = entry.insert(new_doc);
+                Ok((doc, diff))
             }
         }
     }
 
     pub fn populate_dependencies(&mut self, uri: &Uri) {
-        if let Some(doc) = self.state_mut(uri) {
+        if let Some(doc) = self.document_mut(uri) {
             doc.populate_dependencies();
         }
     }
