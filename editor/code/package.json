@@ -2,7 +2,7 @@
   "name": "cargo-appraiser",
   "displayName": "cargo-appraiser",
   "description": "LSP for Cargo.toml",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "icon": "image/icon.webp",
   "publisher": "washan",
   "license": "SEE LICENSE IN LICENSE",
@@ -63,7 +63,7 @@
   "devDependencies": {
     "@types/node": "~20.16.11",
     "@types/semver": "^7.5.8",
-    "@types/vscode": "^1.94.0",
+    "@types/vscode": "^1.90.0",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "@vscode/test-cli": "^0.0.9",
