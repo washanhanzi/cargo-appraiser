@@ -9,6 +9,7 @@
   - hover on git dependency will show the git reference and commit
   - hover on `features` will show available features, hover on a feature name
     will show its values
+  - code action for dependency version
 
 # Config
 

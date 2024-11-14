@@ -48,8 +48,10 @@ pub fn hover(
                 .iter()
                 .map(|(k, v)| (*k, v.iter().map(|fv| fv.to_string()).collect()))
                 .collect();
-            let feature_list = features
-                .keys()
+            let mut feature_list = features.keys().collect::<Vec<_>>();
+            feature_list.sort();
+            let feature_list = feature_list
+                .iter()
                 .map(|key| format!("- {}", key))
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -72,8 +74,11 @@ pub fn hover(
             let mut s = String::new();
             for (_, v) in feature {
                 for fv in v {
-                    s.push_str(&format!("  - {}\n", fv));
+                    s.push_str(&format!("- {}\n", fv));
                 }
+            }
+            if s.is_empty() {
+                return None;
             }
             Some(Hover {
                 contents: HoverContents::Scalar(MarkedString::String(s)),
