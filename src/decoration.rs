@@ -5,8 +5,9 @@ use tower_lsp::{
     lsp_types::{InlayHint, Range, Uri},
     Client,
 };
+use tracing::info;
 
-use crate::entity::Dependency;
+use crate::entity::{commit_str_short, git_ref_str, Dependency};
 
 pub mod inlay_hint;
 
@@ -84,11 +85,25 @@ pub struct DecorationPayload {
     installed: String,
     latest_matched: String,
     latest: String,
+    //(ref,commit)
+    git: Option<(String, String)>,
 }
 
 pub fn decoration_payload(dep: &Dependency) -> DecorationPayload {
+    let mut git = None;
     let installed = match dep.resolved.as_ref() {
-        Some(resolved) => resolved.version().to_string(),
+        Some(resolved) => {
+            if resolved.package_id().source_id().is_git() {
+                git = Some((
+                    git_ref_str(&resolved.package_id().source_id()).unwrap_or_default(),
+                    commit_str_short(&resolved.package_id().source_id())
+                        .map_or(String::new(), |c| c.to_string()),
+                ));
+                String::new()
+            } else {
+                resolved.version().to_string()
+            }
+        }
         None => "".to_string(),
     };
     let latest_matched = match dep.latest_matched_summary.as_ref() {
@@ -103,12 +118,21 @@ pub fn decoration_payload(dep: &Dependency) -> DecorationPayload {
         installed,
         latest_matched,
         latest,
+        git,
     }
 }
 
 pub fn formatted_string(dep: &Dependency, formatter: &DecorationFormatter) -> Option<String> {
     let version = version_decoration(dep);
     let payload = decoration_payload(dep);
+    if let Some((r, commit)) = payload.git {
+        return Some(
+            formatter
+                .git
+                .replace("{{ref}}", &r)
+                .replace("{{commit}}", &commit),
+        );
+    }
     match version {
         VersionDecoration::Latest => Some(
             formatter
@@ -211,6 +235,7 @@ pub fn version_decoration(dep: &Dependency) -> VersionDecoration {
 /// - installed: the installed version
 /// - latest_matched: the latest compatible version
 /// - latest: the latest version, the latest version may or may not be compatilbe with the version requirement
+/// - git: if the dependency source is git
 ///
 /// the formatter has 7 fields:
 /// latest: the dependency has the latest version installed
@@ -221,6 +246,7 @@ pub fn version_decoration(dep: &Dependency) -> VersionDecoration {
 /// compatible_latest: the installed version can update to latest version
 /// noncompatible_latest: the installed version can't upate to latest version
 /// yanked: the installed version is yanked
+/// git: support {{ref}}, {{commit}}
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DecorationFormatter {
@@ -240,6 +266,8 @@ pub struct DecorationFormatter {
     pub noncompatible_latest: String,
     #[serde(default = "default_yanked")]
     pub yanked: String,
+    #[serde(default = "default_git")]
+    pub git: String,
 }
 
 impl Default for DecorationFormatter {
@@ -253,6 +281,7 @@ impl Default for DecorationFormatter {
             waiting: default_waiting(),
             mixed_upgradeable: default_mixed_upgradeable(),
             yanked: default_yanked(),
+            git: default_git(),
         }
     }
 }
@@ -287,4 +316,8 @@ fn default_local() -> String {
 
 fn default_yanked() -> String {
     "❌ yanked {{installed}}, {{latest_matched}}".to_string()
+}
+
+fn default_git() -> String {
+    "🐙 {{commit}}".to_string()
 }

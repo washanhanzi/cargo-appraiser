@@ -6,7 +6,7 @@ use tokio::sync::{mpsc::Sender, oneshot};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 mod config;
 mod controller;

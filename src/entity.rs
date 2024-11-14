@@ -19,6 +19,7 @@ pub use entry::*;
 pub use key::*;
 pub use manifest::*;
 pub use node::*;
+pub use package::*;
 pub use table::*;
 pub use toml_error::*;
 pub use tree::*;
