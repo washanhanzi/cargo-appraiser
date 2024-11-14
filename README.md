@@ -5,7 +5,10 @@
 - Workspace
   - hover on members will show the list of members
 - Dependencies
-  - hover on version will show the dependency versions
+  - hover on version will show the available versions
+  - hover on git dependency will show the git reference and commit
+  - hover on `features` will show available features, hover on a feature name
+    will show its values
 
 # Config
 
@@ -30,6 +33,7 @@
     // compatible_latest: the installed version can update to latest version
     // noncompatible_latest: the installed version can't upate to latest version
     // yanked: the installed version is yanked
+    // git: the dependency is a git dependency
     "decorationFormatter": {
       "latest": "✅ {{installed}}",
       "local": "Local",
@@ -38,7 +42,8 @@
       "mixed_upgradeable": "🚀🔒 {{installed}} -> {{latest_matched}},  {{latest}}",
       "compatible_latest": "🚀 {{installed}} -> {{latest}}",
       "noncompatible_latest": "🔒 {{installed}}, {{latest}}",
-      "yanked": "❌ yanked {{installed}}, {{latest_matched}}"
+      "yanked": "❌ yanked {{installed}}, {{latest_matched}}",
+      "git": "🐙 {{commit}}"
     }
   }
 }

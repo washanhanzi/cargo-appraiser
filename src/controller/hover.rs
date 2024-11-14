@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkedString};
+use tracing::info;
 
 use crate::entity::{
     commit_str, git_ref_str, Dependency, DependencyEntryKind, DependencyKeyKind, EntryKind,
@@ -36,8 +37,7 @@ pub fn hover(
                 range: Some(node.range),
             })
         }
-        NodeKind::Key(KeyKind::Dependency(_, DependencyKeyKind::Features))
-        | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyFeature)) => {
+        NodeKind::Key(KeyKind::Dependency(_, DependencyKeyKind::Features)) => {
             let dep = dep?;
             let resolved = dep.resolved.as_ref()?;
 
@@ -56,6 +56,27 @@ pub fn hover(
 
             Some(Hover {
                 contents: HoverContents::Scalar(MarkedString::String(feature_list)),
+                range: Some(node.range),
+            })
+        }
+        NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyFeature)) => {
+            let dep = dep?;
+            let resolved = dep.resolved.as_ref()?;
+            let feature = resolved
+                .manifest()
+                .summary()
+                .features()
+                .iter()
+                .filter(|(f, _)| f.to_string() == node.text)
+                .collect::<Vec<_>>();
+            let mut s = String::new();
+            for (_, v) in feature {
+                for fv in v {
+                    s.push_str(&format!("  - {}\n", fv));
+                }
+            }
+            Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::String(s)),
                 range: Some(node.range),
             })
         }
@@ -83,6 +104,9 @@ pub fn hover(
             }
             if let Some(commit) = commit {
                 s.push_str(&format!("- {}\n", commit));
+            }
+            if s.is_empty() {
+                return None;
             }
             Some(Hover {
                 contents: HoverContents::Scalar(MarkedString::String(s)),

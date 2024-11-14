@@ -34,6 +34,7 @@ impl LanguageServer for CargoAppraiser {
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
+                definition_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
@@ -108,6 +109,15 @@ impl LanguageServer for CargoAppraiser {
                 related_documents: None,
             },
         ))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let _ = params;
+        info!("Got a textDocument/definition request, but it is not implemented");
+        Ok(None)
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
