@@ -38,6 +38,7 @@ pub struct CargoResolveOutput {
 
 #[tracing::instrument(name = "cargo_resolve", level = "trace")]
 pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> {
+    info!("start resolve {}", ctx.rev);
     let path = Path::new(ctx.uri.path().as_str());
     let gctx = cargo::util::context::GlobalContext::default().map_err(CargoError::resolve_error)?;
     let workspace =
@@ -113,7 +114,7 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
             );
         }
     }
-
+    info!("finished resolve inside {}", ctx.rev);
     Ok(CargoResolveOutput {
         ctx: ctx.clone(),
         dependencies: res,

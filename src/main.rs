@@ -1,6 +1,6 @@
 use clap::{arg, command, Parser};
 use config::{initialize_config, Config};
-use controller::{Appraiser, CargoDocumentEvent, CargoTomlPayload};
+use controller::{Appraiser, CargoDocumentEvent, CargoTomlPayload, ClientCapability};
 use decoration::{DecorationRenderer, Renderer};
 use tokio::sync::{mpsc::Sender, oneshot};
 use tower_lsp::jsonrpc::Result;
@@ -288,6 +288,9 @@ struct Args {
     ///stdio transport. now only work with stdio transport
     #[arg(short, long, default_value = "true")]
     stdio: bool,
+    ///list of supported client capabilities (e.g., "readFile")
+    #[arg(short = 'c', long, value_delimiter = ',', default_value = "")]
+    client_capabilities: Vec<ClientCapability>,
 }
 
 #[tokio::main]
@@ -312,7 +315,7 @@ async fn main() {
         let render = DecorationRenderer::new(client.clone(), args.renderer);
         let render_tx = render.init();
 
-        let state = Appraiser::new(client.clone(), render_tx.clone());
+        let state = Appraiser::new(client.clone(), render_tx.clone(), &args.client_capabilities);
         let tx = state.initialize();
 
         CargoAppraiser { client, tx, render }

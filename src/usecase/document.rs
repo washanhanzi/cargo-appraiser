@@ -25,6 +25,10 @@ pub struct Document {
 }
 
 impl Document {
+    pub fn is_virtual(&self) -> bool {
+        self.members.is_some()
+    }
+
     pub fn tree(&self) -> &SymbolTree {
         &self.tree
     }

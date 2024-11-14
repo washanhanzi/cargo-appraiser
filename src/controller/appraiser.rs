@@ -24,6 +24,7 @@ use crate::{
 
 use super::{
     audit::{into_diagnostic_severity, AuditController, AuditReports, AuditResult},
+    capabilities::{ClientCapabilities, ClientCapability},
     cargo::{cargo_resolve, CargoResolveOutput},
     debouncer::Debouncer,
     diagnostic::DiagnosticController,
@@ -44,6 +45,7 @@ pub struct Ctx {
 pub struct Appraiser {
     client: Client,
     render_tx: Sender<DecorationEvent>,
+    client_capabilities: ClientCapabilities,
 }
 
 pub enum CargoDocumentEvent {
@@ -76,8 +78,17 @@ pub struct CargoTomlPayload {
 }
 
 impl Appraiser {
-    pub fn new(client: Client, render_tx: Sender<DecorationEvent>) -> Self {
-        Self { client, render_tx }
+    pub fn new(
+        client: Client,
+        render_tx: Sender<DecorationEvent>,
+        client_capabilities: &[ClientCapability],
+    ) -> Self {
+        let client_capabilities = ClientCapabilities::new(client_capabilities);
+        Self {
+            client,
+            render_tx,
+            client_capabilities,
+        }
     }
     pub fn initialize(&self) -> Sender<CargoDocumentEvent> {
         //create mpsc channel
@@ -123,6 +134,7 @@ impl Appraiser {
         //render task sender
         let render_tx = self.render_tx.clone();
         let client = self.client.clone();
+        let client_capabilities = self.client_capabilities.clone();
         tokio::spawn(async move {
             //workspace state
             let mut state = Workspace::new();
@@ -379,21 +391,38 @@ impl Appraiser {
 
                         if let Some(uri) = doc.root_manifest.as_ref() {
                             if uri != &msg.uri {
-                                let param = ReadFileParam { uri: uri.clone() };
-                                match client.send_request::<ReadFile>(param).await {
-                                    Ok(content) => {
-                                        if let Err(e) = inner_tx
-                                            .send(CargoDocumentEvent::Opened(CargoTomlPayload {
-                                                uri: uri.clone(),
-                                                text: content.content,
-                                            }))
-                                            .await
-                                        {
-                                            error!("send root manifest error: {}", e);
+                                if client_capabilities.can_read_file() {
+                                    let param = ReadFileParam { uri: uri.clone() };
+                                    match client.send_request::<ReadFile>(param).await {
+                                        Ok(content) => {
+                                            if let Err(e) = inner_tx
+                                                .send(CargoDocumentEvent::Opened(
+                                                    CargoTomlPayload {
+                                                        uri: uri.clone(),
+                                                        text: content.content,
+                                                    },
+                                                ))
+                                                .await
+                                            {
+                                                error!("inner tx send error: {}", e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("read file error: {}", e);
                                         }
                                     }
-                                    Err(e) => {
-                                        error!("read file error: {}", e);
+                                } else {
+                                    //read file with os
+                                    let content =
+                                        std::fs::read_to_string(uri.path().as_str()).unwrap();
+                                    if let Err(e) = inner_tx
+                                        .send(CargoDocumentEvent::Opened(CargoTomlPayload {
+                                            uri: uri.clone(),
+                                            text: content,
+                                        }))
+                                        .await
+                                    {
+                                        error!("inner tx send error: {}", e);
                                     }
                                 }
                             }
@@ -550,7 +579,12 @@ async fn start_resolve(
     };
     doc.populate_dependencies();
 
-    //no change to resolve
+    //virtual workspace doesn't need to resolve
+    if doc.is_virtual() {
+        return;
+    }
+
+    //no change to document
     if !doc.is_dirty() {
         return;
     }

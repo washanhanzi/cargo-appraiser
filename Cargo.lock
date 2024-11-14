@@ -427,6 +427,7 @@ dependencies = [
  "taplo",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tower-lsp",
  "tracing",
  "tracing-subscriber",
@@ -4656,6 +4657,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "pin-project-lite",
+ "slab",
  "tokio",
 ]
 

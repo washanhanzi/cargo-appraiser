@@ -39,6 +39,7 @@ cargo-lock = { git = "https://github.com/washanhanzi/rustsec", branch = "main", 
     "dependency-tree",
 ] }
 petgraph = "0.6.5"
+tokio-util = { version = "0.7.12", features = ["time"] }
 
 [features]
 default = []

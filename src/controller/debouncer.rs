@@ -1,7 +1,13 @@
 use super::{appraiser::Ctx, CargoDocumentEvent};
-use std::{pin::Pin, time::Duration};
+use futures::{Stream, StreamExt};
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
 use tokio::sync::mpsc::{self, error::SendError, Sender};
-use tokio::time::{sleep, Sleep};
+use tokio_util::time::{delay_queue, DelayQueue};
 use tower_lsp::lsp_types::Uri;
 use tracing::error;
 
@@ -16,6 +22,64 @@ pub struct Debouncer {
 pub enum DebouncerEvent {
     Interactive(Ctx),
     Background(Ctx),
+}
+
+pub struct Queue {
+    entries: HashMap<Uri, (usize, delay_queue::Key)>,
+    expirations: DelayQueue<Uri>,
+    backoff_factor: HashMap<Uri, u32>,
+    background_timeout: u64,
+    interactive_timeout: u64,
+}
+
+impl Queue {
+    pub fn new(interactive_timeout: u64, background_timeout: u64) -> Self {
+        Self {
+            entries: HashMap::new(),
+            expirations: DelayQueue::new(),
+            backoff_factor: HashMap::new(),
+            background_timeout,
+            interactive_timeout,
+        }
+    }
+
+    pub fn insert_interactive(&mut self, ctx: Ctx) {
+        self.backoff_factor.remove(&ctx.uri);
+        let key = self.expirations.insert(
+            ctx.uri.clone(),
+            Duration::from_millis(self.interactive_timeout),
+        );
+        self.entries.insert(ctx.uri, (ctx.rev, key));
+    }
+
+    pub fn insert_background(&mut self, ctx: Ctx) {
+        let factor = self.backoff_factor.entry(ctx.uri.clone()).or_insert(0);
+        *factor += 1;
+        let timeout = calculate_backoff_timeout(self.background_timeout, *factor);
+        let key = self
+            .expirations
+            .insert(ctx.uri.clone(), Duration::from_millis(timeout));
+        self.entries.insert(ctx.uri, (ctx.rev, key));
+    }
+}
+
+impl Stream for Queue {
+    type Item = Ctx;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        match this.expirations.poll_expired(cx) {
+            Poll::Ready(Some(expired)) => match this.entries.remove(&expired.get_ref().clone()) {
+                Some((rev, _)) => Poll::Ready(Some(Ctx {
+                    uri: expired.get_ref().clone(),
+                    rev,
+                })),
+                None => Poll::Ready(None),
+            },
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
 }
 
 impl Debouncer {
@@ -53,66 +117,26 @@ impl Debouncer {
         let (internal_tx, mut internal_rx) = mpsc::channel::<DebouncerEvent>(64);
         self.sender = Some(internal_tx);
         let tx = self.tx.clone();
-        let interactive_timeout = self.interactive_timeout;
-        let background_timeout = self.background_timeout;
+        let mut q = Queue::new(self.interactive_timeout, self.background_timeout);
 
         tokio::spawn(async move {
-            let mut uri: Option<Uri> = None;
-            let mut rev = 0;
-            let mut delay: Option<Pin<Box<Sleep>>> = None;
-            let mut backoff_uri: Option<Uri> = None;
-            let mut backoff_factor: u32 = 0;
-
             loop {
                 tokio::select! {
                     // Handle incoming Ctx messages
-                    some_event = internal_rx.recv() => {
-                        let Some(event) = some_event else{break};
-                        let timeout=match event {
-                              DebouncerEvent::Interactive(ctx) => {
-                                    uri = Some(ctx.uri.clone());
-                                    rev = ctx.rev;
-                                    //reset backoff
-                                    backoff_uri = Some(ctx.uri.clone());
-                                    backoff_factor = 0;
-                                    interactive_timeout
-                                },
-                                DebouncerEvent::Background(ctx) => {
-                                    if let Some(uri) = &backoff_uri {
-                                        if uri == &ctx.uri {
-                                            backoff_factor += 1;
-                                        } else {
-                                            backoff_uri = Some(ctx.uri.clone());
-                                            backoff_factor = 0;
-                                        }
-                                    }
-                                    uri = Some(ctx.uri.clone());
-                                    rev = ctx.rev;
-                                    calculate_backoff_timeout(background_timeout, backoff_factor)
-                                }
-                        };
-                        delay = Some(Box::pin(sleep(Duration::from_millis(timeout))));
-                    }
-
-                    // Handle the delay if it's set
-                    () = async {
-                        if let Some(ref mut d) = delay {
-                            d.await
-                        } else {
-                            futures::future::pending::<()>().await
-                        }
-                    }, if delay.is_some() => {
-                        if let Some(current_uri) = &uri {
-                            let ctx = Ctx {
-                                uri: current_uri.clone(),
-                                rev,
-                            };
-                            if let Err(e) = tx.send(CargoDocumentEvent::ReadyToResolve(ctx)).await {
-                                error!("failed to send Ctx from debouncer: {}", e);
+                    Some(event) = internal_rx.recv() => {
+                        match event {
+                            DebouncerEvent::Interactive(ctx) => {
+                                q.insert_interactive(ctx);
+                            },
+                            DebouncerEvent::Background(ctx) => {
+                                q.insert_background(ctx);
                             }
+                        };
+                    }
+                    Some(ctx) = q.next() => {
+                        if let Err(e) = tx.send(CargoDocumentEvent::ReadyToResolve(ctx)).await {
+                            error!("failed to send Ctx from debouncer: {}", e);
                         }
-                        // Reset the delay
-                        delay = None;
                     }
                 }
             }

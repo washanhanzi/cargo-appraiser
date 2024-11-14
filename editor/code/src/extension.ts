@@ -32,7 +32,7 @@ export async function activate(context: ExtensionContext) {
         },
         debug: {
             command: serverPath,
-            args: ["--renderer", "vscode"],
+            args: ["--renderer", "vscode", "--client-capabilities", "readFile"],
             transport: TransportKind.stdio,
         }
     }
@@ -127,6 +127,7 @@ async function languageServerBinaryPath(context: ExtensionContext): Promise<stri
 
     //show status bar message with version info
     const statusBarItem = window.createStatusBarItem("download-lsp-server", StatusBarAlignment.Left, 0)
+
     //claude write this
     // let spinnerIndex = 0
     // const spinnerChars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -134,6 +135,7 @@ async function languageServerBinaryPath(context: ExtensionContext): Promise<stri
     //     statusBarItem.text = `${spinnerChars[spinnerIndex]} Downloading Cargo-appraiser LSP server ${releaseInfo.tag_name}...`
     //     spinnerIndex = (spinnerIndex + 1) % spinnerChars.length
     // }, 100)
+
     statusBarItem.text = `$(loading~spin) Downloading cargo-appraiser server ${releaseInfo.tag_name}...`
     statusBarItem.show()
 
