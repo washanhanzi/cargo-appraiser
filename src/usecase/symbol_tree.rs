@@ -11,9 +11,9 @@ use taplo::{
 use tower_lsp::lsp_types::{Position, Range};
 
 use crate::entity::{
-    strip_quote, validate_crate_name, validate_feature_name, validate_profile_name, CargoTable,
-    Dependency, DependencyEntryKind, DependencyKeyKind, EntryDiff, EntryKind, KeyKind, Manifest,
-    SymbolTree, TomlNode, TomlParsingError, Value, WorkspaceEntryKind, WorkspaceKeyKind,
+    validate_crate_name, validate_feature_name, validate_profile_name, CargoTable, Dependency,
+    DependencyEntryKind, DependencyKeyKind, EntryDiff, EntryKind, KeyKind, Manifest, SymbolTree,
+    TomlNode, TomlParsingError, Value, WorkspaceEntryKind, WorkspaceKeyKind,
 };
 
 pub struct Walker {
@@ -470,7 +470,7 @@ impl Walker {
                     TomlNode::new_entry(
                         id.to_string(),
                         lsp_range,
-                        strip_quote(text),
+                        text,
                         table,
                         EntryKind::Table(table),
                     ),
@@ -487,7 +487,7 @@ impl Walker {
                     TomlNode::new_entry(
                         id.to_string(),
                         lsp_range,
-                        strip_quote(text),
+                        text,
                         table,
                         EntryKind::Value(name.to_string()),
                     ),
@@ -504,7 +504,7 @@ impl Walker {
                     TomlNode::new_entry(
                         id.to_string(),
                         lsp_range,
-                        strip_quote(text),
+                        text,
                         table,
                         EntryKind::Value(name.to_string()),
                     ),

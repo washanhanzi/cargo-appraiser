@@ -75,9 +75,9 @@ pub enum WorkspaceEntryKind {
     Members,
 }
 
-pub fn strip_quote(s: String) -> String {
+pub fn strip_quotes(s: &str) -> String {
     if s.starts_with('"') && s.ends_with('"') {
         return s[1..s.len() - 1].to_string();
     }
-    s
+    s.to_string()
 }
