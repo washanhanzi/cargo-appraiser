@@ -27,7 +27,7 @@ export async function activate(context: ExtensionContext) {
     const serverOptions: ServerOptions = {
         run: {
             command: serverPath,
-            args: ["--renderer", "vscode"],
+            args: ["--renderer", "vscode", "--client-capabilities", "readFile"],
             transport: TransportKind.stdio,
         },
         debug: {
