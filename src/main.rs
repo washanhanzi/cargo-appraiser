@@ -289,8 +289,8 @@ struct Args {
     #[arg(short, long, default_value = "true")]
     stdio: bool,
     ///list of supported client capabilities (e.g., "readFile")
-    #[arg(short = 'c', long, value_delimiter = ',', default_value = "")]
-    client_capabilities: Vec<ClientCapability>,
+    #[arg(short = 'c', long, value_delimiter = ',')]
+    client_capabilities: Option<Vec<ClientCapability>>,
 }
 
 #[tokio::main]
@@ -315,7 +315,11 @@ async fn main() {
         let render = DecorationRenderer::new(client.clone(), args.renderer);
         let render_tx = render.init();
 
-        let state = Appraiser::new(client.clone(), render_tx.clone(), &args.client_capabilities);
+        let state = Appraiser::new(
+            client.clone(),
+            render_tx.clone(),
+            args.client_capabilities.as_deref(),
+        );
         let tx = state.initialize();
 
         CargoAppraiser { client, tx, render }

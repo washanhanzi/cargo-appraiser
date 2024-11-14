@@ -81,7 +81,7 @@ impl Appraiser {
     pub fn new(
         client: Client,
         render_tx: Sender<DecorationEvent>,
-        client_capabilities: &[ClientCapability],
+        client_capabilities: Option<&[ClientCapability]>,
     ) -> Self {
         let client_capabilities = ClientCapabilities::new(client_capabilities);
         Self {

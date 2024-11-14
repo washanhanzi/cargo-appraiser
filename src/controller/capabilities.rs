@@ -10,11 +10,13 @@ pub struct ClientCapabilities {
 }
 
 impl ClientCapabilities {
-    pub fn new(client_capabilities: &[ClientCapability]) -> Self {
+    pub fn new(client_capabilities: Option<&[ClientCapability]>) -> Self {
         let mut c = ClientCapabilities { read_file: false };
-        for capability in client_capabilities {
-            match capability {
-                ClientCapability::ReadFile => c.read_file = true,
+        if let Some(client_capabilities) = client_capabilities {
+            for capability in client_capabilities {
+                match capability {
+                    ClientCapability::ReadFile => c.read_file = true,
+                }
             }
         }
         c
