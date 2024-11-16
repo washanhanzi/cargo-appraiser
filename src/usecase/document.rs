@@ -217,6 +217,13 @@ impl Document {
             .filter(|v| v.package_name() == crate_name)
             .collect()
     }
+
+    pub fn mark_dirty(&mut self) {
+        self.rev += 1;
+        for key in self.dependencies.keys() {
+            self.dirty_nodes.insert(key.to_string(), self.rev);
+        }
+    }
 }
 
 mod tests {

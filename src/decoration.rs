@@ -5,7 +5,6 @@ use tower_lsp::{
     lsp_types::{InlayHint, Range, Uri},
     Client,
 };
-use tracing::info;
 
 use crate::entity::{commit_str_short, git_ref_str, Dependency};
 

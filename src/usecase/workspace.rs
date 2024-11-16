@@ -8,14 +8,12 @@ use crate::entity::{EntryDiff, TomlParsingError};
 use super::document::Document;
 
 pub struct Workspace {
-    pub cur_uri: Option<Uri>,
     pub documents: HashMap<Uri, Document>,
 }
 
 impl Workspace {
     pub fn new() -> Self {
         Self {
-            cur_uri: None,
             documents: HashMap::new(),
         }
     }
@@ -44,17 +42,13 @@ impl Workspace {
         self.documents.remove(uri);
     }
 
-    pub fn clear_except_current(&mut self) -> Option<&Document> {
-        let uri = self.cur_uri.as_ref()?.clone();
-        self.documents.retain(|_, doc| doc.uri == uri);
-        let doc = self.document_mut(&uri);
-        match doc {
-            Some(doc) => {
-                doc.rev += 1;
-                Some(doc)
-            }
-            None => None,
+    pub fn mark_all_dirty(&mut self) -> Vec<(Uri, usize)> {
+        let mut uris = Vec::new();
+        for doc in self.documents.values_mut() {
+            doc.mark_dirty();
+            uris.push((doc.uri.clone(), doc.rev));
         }
+        uris
     }
 
     pub fn reconsile(
@@ -66,9 +60,8 @@ impl Workspace {
         if !new_doc.parsing_errors.is_empty() {
             return Err(new_doc.parsing_errors);
         }
-        self.cur_uri = Some(uri.clone());
         match self.documents.entry(uri.clone()) {
-            Entry::Occupied(mut entry) => {
+            Entry::Occupied(entry) => {
                 let diff = Document::diff(Some(entry.get()), &new_doc);
                 let doc = entry.into_mut();
                 if !diff.is_empty() {

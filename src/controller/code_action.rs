@@ -2,13 +2,16 @@ use std::collections::HashMap;
 
 use cargo::util::OptVersionReq;
 use semver::{Op, Version};
+use serde_json::Value;
 use tower_lsp::lsp_types::{
-    CodeAction, CodeActionKind, CodeActionResponse, Range, TextEdit, Uri, WorkspaceEdit,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionResponse, Command, Range, TextEdit,
+    Uri, WorkspaceEdit,
 };
+use tracing::info;
 
 use crate::{
     decoration::{version_decoration, VersionDecoration},
-    entity::{strip_quotes, Dependency, DependencyEntryKind, EntryKind, NodeKind, TomlNode},
+    entity::{strip_quotes, Dependency, DependencyEntryKind, EntryKind, NodeKind, TomlNode, CARGO},
 };
 
 pub fn code_action(uri: Uri, node: TomlNode, dep: &Dependency) -> Option<CodeActionResponse> {
@@ -53,6 +56,7 @@ pub fn code_action_dependency(
                     let v = latest?;
                     actions.add_refactor(v);
                     actions.add_quickfix(v);
+                    actions.add_command(dep.package_name(), v);
                 }
                 VersionDecoration::NoncompatibleLatest => {
                     let v = latest?;
@@ -69,6 +73,9 @@ pub fn code_action_dependency(
                 VersionDecoration::NotParsed => return None,
             };
             actions.add_eq_refactor();
+            if let Some(p) = dep.resolved.as_ref() {
+                actions.add_precise_eq_refactor(p.version());
+            }
             actions.add_simple_table_refactor(dep);
 
             Some(actions.take())
@@ -170,6 +177,17 @@ impl<'a> VersionCodeAction<'a> {
         }
     }
 
+    fn add_precise_eq_refactor(&mut self, v: &Version) {
+        if !self.is_precise {
+            self.add_code_action(
+                format!("\"={}\"", v),
+                CodeActionKind::REFACTOR,
+                self.node.range,
+                None,
+            );
+        }
+    }
+
     fn add_refactor(&mut self, v: &Version) {
         if self.major_code_action {
             self.add_code_action(
@@ -211,22 +229,64 @@ impl<'a> VersionCodeAction<'a> {
         range: Range,
         title: Option<String>,
     ) {
-        self.actions.push(
-            CodeAction {
-                title: title.unwrap_or(v.to_string()),
-                kind: Some(kind),
-                diagnostics: None,
-                edit: Some(WorkspaceEdit {
-                    changes: Some(HashMap::from([(
-                        self.uri.clone(),
-                        vec![TextEdit { new_text: v, range }],
-                    )])),
-                    document_changes: None,
-                    change_annotations: None,
-                }),
-                ..Default::default()
-            }
-            .into(),
-        );
+        self.actions
+            .push(MyCodeAction::new(self.uri.clone(), v, kind, range, title).into());
     }
+
+    fn add_command(&mut self, package_name: &str, v: &Version) {
+        self.actions.push(new_command(package_name, v).into());
+    }
+}
+
+struct MyCodeAction(CodeAction);
+
+impl From<MyCodeAction> for CodeActionOrCommand {
+    fn from(value: MyCodeAction) -> Self {
+        value.0.into()
+    }
+}
+
+impl MyCodeAction {
+    fn new(uri: Uri, v: String, kind: CodeActionKind, range: Range, title: Option<String>) -> Self {
+        Self(CodeAction {
+            title: title.unwrap_or(v.to_string()),
+            kind: Some(kind),
+            diagnostics: None,
+            edit: Some(WorkspaceEdit {
+                changes: Some(HashMap::from([(
+                    uri,
+                    vec![TextEdit { new_text: v, range }],
+                )])),
+                document_changes: None,
+                change_annotations: None,
+            }),
+            ..Default::default()
+        })
+    }
+
+    fn with_command(&mut self, package_name: &str, v: &Version) {
+        self.0.command = Some(Command::new(
+            format!("update {} to {}", package_name, v),
+            CARGO.to_string(),
+            Some(vec![
+                Value::String("update".to_string()),
+                Value::String(package_name.to_string()),
+                Value::String("--precise".to_string()),
+                Value::String(v.to_string()),
+            ]),
+        ));
+    }
+}
+
+fn new_command(package_name: &str, v: &Version) -> Command {
+    Command::new(
+        format!("update {} to {} use cargo", package_name, v),
+        CARGO.to_string(),
+        Some(vec![
+            Value::String("update".to_string()),
+            Value::String(package_name.to_string()),
+            Value::String("--precise".to_string()),
+            Value::String(v.to_string()),
+        ]),
+    )
 }

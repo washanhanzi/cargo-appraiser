@@ -123,7 +123,7 @@ impl Appraiser {
         });
 
         //timer task
-        let mut debouncer = Debouncer::new(tx.clone(), 300, 3000);
+        let mut debouncer = Debouncer::new(tx.clone(), 1000, 10000);
         debouncer.spawn();
 
         //audit task
@@ -286,20 +286,18 @@ impl Appraiser {
                         };
                         let _ = tx.send(action);
                     }
-                    CargoDocumentEvent::Closed(uri) => {}
+                    CargoDocumentEvent::Closed(uri) => {
+                        if let Some(doc) = state.document_mut(&uri) {
+                            doc.mark_dirty();
+                        }
+                    }
                     CargoDocumentEvent::CargoLockChanged => {
                         //clear state except the "current" uri
-                        let Some(doc) = state.clear_except_current() else {
-                            continue;
-                        };
-                        if let Err(e) = debouncer
-                            .send_interactive(Ctx {
-                                uri: doc.uri.clone(),
-                                rev: doc.rev,
-                            })
-                            .await
-                        {
-                            error!("debounder send interactive error: {}", e);
+                        let uris = state.mark_all_dirty();
+                        for (uri, rev) in uris {
+                            if let Err(e) = debouncer.send_background(Ctx { uri, rev }).await {
+                                error!("debounder send interactive error: {}", e);
+                            }
                         }
                     }
                     CargoDocumentEvent::Changed(msg) => {
@@ -370,7 +368,7 @@ impl Appraiser {
                         };
                         let doc = match state.reconsile(&msg.uri, &msg.text) {
                             Ok((doc, diff)) => {
-                                if diff.is_empty() {
+                                if diff.is_empty() && !doc.is_dirty() {
                                     continue;
                                 } else {
                                     doc
@@ -577,14 +575,14 @@ async fn start_resolve(
     let Some(doc) = state.document_mut(uri) else {
         return;
     };
-    doc.populate_dependencies();
+    // doc.populate_dependencies();
 
     //virtual workspace doesn't need to resolve
     if doc.is_virtual() {
         return;
     }
 
-    //no change to document
+    //no need to resolve
     if !doc.is_dirty() {
         return;
     }

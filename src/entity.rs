@@ -1,4 +1,5 @@
 mod cargo_error;
+mod command;
 mod dependency;
 mod entry;
 mod key;
@@ -14,6 +15,7 @@ mod value;
 mod workspace;
 
 pub use cargo_error::*;
+pub use command::*;
 pub use dependency::*;
 pub use entry::*;
 pub use key::*;

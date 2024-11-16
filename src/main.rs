@@ -2,6 +2,8 @@ use clap::{arg, command, Parser};
 use config::{initialize_config, Config};
 use controller::{Appraiser, CargoDocumentEvent, CargoTomlPayload, ClientCapability};
 use decoration::{DecorationRenderer, Renderer};
+use entity::{supported_commands, CARGO};
+use serde_json::Value;
 use tokio::sync::{mpsc::Sender, oneshot};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -19,6 +21,7 @@ struct CargoAppraiser {
     client: Client,
     tx: Sender<CargoDocumentEvent>,
     render: DecorationRenderer,
+    cargo_path: Option<String>,
 }
 
 #[tower_lsp::async_trait]
@@ -34,6 +37,10 @@ impl LanguageServer for CargoAppraiser {
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: supported_commands(),
+                    ..Default::default()
+                }),
                 definition_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
@@ -118,6 +125,35 @@ impl LanguageServer for CargoAppraiser {
         let _ = params;
         info!("Got a textDocument/definition request, but it is not implemented");
         Ok(None)
+    }
+
+    async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<Value>> {
+        let Some(cargo_path) = self.cargo_path.as_deref() else {
+            return Ok(None);
+        };
+        match params.command.as_str() {
+            CARGO => {
+                let cargo_path = cargo_path.to_string();
+                let args = params
+                    .arguments
+                    .iter()
+                    .map(|v| v.as_str().unwrap().to_string())
+                    .collect::<Vec<_>>();
+                //run cargo command with params in a new task
+                let command_result = tokio::process::Command::new(cargo_path).args(args).spawn();
+                if command_result.is_err() {
+                    return Ok(None);
+                }
+                if let Err(e) = self.tx.send(CargoDocumentEvent::CargoLockChanged).await {
+                    error!(
+                        "error sending cargo lock changed event from execute command: {}",
+                        e
+                    );
+                }
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -331,8 +367,15 @@ async fn main() {
             args.client_capabilities.as_deref(),
         );
         let tx = state.initialize();
+        let cargo_path =
+            executable_path_finder::find_with_cargo_home("cargo").map(|p| p.to_string());
 
-        CargoAppraiser { client, tx, render }
+        CargoAppraiser {
+            client,
+            tx,
+            render,
+            cargo_path,
+        }
     });
 
     Server::new(stdin, stdout, socket).serve(service).await;

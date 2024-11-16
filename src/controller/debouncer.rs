@@ -152,5 +152,5 @@ fn calculate_backoff_timeout(base_timeout: u64, count: u32) -> u64 {
         16..=20 => 4,
         _ => 5,
     };
-    (base_timeout * factor).min(15_000) // Cap at 15 seconds
+    (base_timeout * factor).min(30_000) // Cap at 15 seconds
 }
