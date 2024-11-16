@@ -50,14 +50,19 @@ pub fn hover(
                 .collect();
             let mut feature_list = features.keys().collect::<Vec<_>>();
             feature_list.sort();
-            let feature_list = feature_list
-                .iter()
-                .map(|key| format!("- {}", key))
-                .collect::<Vec<_>>()
-                .join("\n");
+            let mut s = String::new();
+            for key in feature_list {
+                s.push_str(&format!("- {}", key));
+                if !features[key].is_empty() {
+                    s.push_str(": [");
+                    s.push_str(&features[key].join(", "));
+                    s.push(']');
+                }
+                s.push('\n');
+            }
 
             Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(feature_list)),
+                contents: HoverContents::Scalar(MarkedString::String(s)),
                 range: Some(node.range),
             })
         }

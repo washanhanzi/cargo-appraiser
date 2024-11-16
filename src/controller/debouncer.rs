@@ -9,7 +9,7 @@ use std::{
 use tokio::sync::mpsc::{self, error::SendError, Sender};
 use tokio_util::time::{delay_queue, DelayQueue};
 use tower_lsp::lsp_types::Uri;
-use tracing::error;
+use tracing::{error, info};
 
 // Change Timer
 pub struct Debouncer {
@@ -68,16 +68,21 @@ impl Stream for Queue {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
-        match this.expirations.poll_expired(cx) {
-            Poll::Ready(Some(expired)) => match this.entries.remove(&expired.get_ref().clone()) {
-                Some((rev, _)) => Poll::Ready(Some(Ctx {
+
+        while let Poll::Ready(Some(expired)) = this.expirations.poll_expired(cx) {
+            if let Some((rev, _)) = this.entries.remove(expired.get_ref()) {
+                return Poll::Ready(Some(Ctx {
                     uri: expired.get_ref().clone(),
                     rev,
-                })),
-                None => Poll::Ready(None),
-            },
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
+                }));
+            } // If not found in entries, just loop to the next expired item.
+        }
+
+        // Only return None when the DelayQueue itself is empty.
+        if this.expirations.is_empty() {
+            Poll::Ready(None)
+        } else {
+            Poll::Pending
         }
     }
 }
@@ -146,11 +151,11 @@ impl Debouncer {
 
 fn calculate_backoff_timeout(base_timeout: u64, count: u32) -> u64 {
     let factor = match count {
-        0..=5 => 1,
-        6..=10 => 2,
-        11..=15 => 3,
-        16..=20 => 4,
-        _ => 5,
+        0..=2 => 1,
+        3..=5 => 2,
+        6..=10 => 3,
+        11..=15 => 6,
+        _ => 7,
     };
-    (base_timeout * factor).min(30_000) // Cap at 15 seconds
+    (base_timeout * factor).min(30_000) // Cap at 30 seconds
 }

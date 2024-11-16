@@ -70,6 +70,7 @@ pub enum CargoDocumentEvent {
     Completion(Uri, Position, oneshot::Sender<Option<CompletionResponse>>),
     CargoDiagnostic(Uri, CargoError),
     Audited(AuditReports),
+    Parse(CargoTomlPayload),
 }
 
 pub struct CargoTomlPayload {
@@ -123,7 +124,7 @@ impl Appraiser {
         });
 
         //timer task
-        let mut debouncer = Debouncer::new(tx.clone(), 1000, 10000);
+        let mut debouncer = Debouncer::new(tx.clone(), 1000, 5000);
         debouncer.spawn();
 
         //audit task
@@ -289,6 +290,9 @@ impl Appraiser {
                     CargoDocumentEvent::Closed(uri) => {
                         if let Some(doc) = state.document_mut(&uri) {
                             doc.mark_dirty();
+                            if let Err(e) = render_tx.send(DecorationEvent::Reset(uri)).await {
+                                error!("render tx send reset error: {}", e);
+                            }
                         }
                     }
                     CargoDocumentEvent::CargoLockChanged => {
@@ -362,6 +366,31 @@ impl Appraiser {
                             error!("debounder send interactive error: {}", e);
                         }
                     }
+                    CargoDocumentEvent::Parse(msg) => {
+                        if let Err(e) = audit_controller.send(&msg.uri).await {
+                            error!("audit controller send error: {}", e);
+                        };
+                        match state.reconsile(&msg.uri, &msg.text) {
+                            Ok((doc, diff)) => {
+                                if diff.is_empty() && !doc.is_dirty() {
+                                    continue;
+                                } else {
+                                    doc
+                                }
+                            }
+                            Err(err) => {
+                                for e in err {
+                                    let Some((id, diag)) = e.diagnostic() else {
+                                        continue;
+                                    };
+                                    diagnostic_controller
+                                        .add_parse_diagnostic(&msg.uri, &id, diag)
+                                        .await;
+                                }
+                                continue;
+                            }
+                        };
+                    }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
                         if let Err(e) = audit_controller.send(&msg.uri).await {
                             error!("audit controller send error: {}", e);
@@ -387,45 +416,6 @@ impl Appraiser {
                             }
                         };
 
-                        if let Some(uri) = doc.root_manifest.as_ref() {
-                            if uri != &msg.uri {
-                                if client_capabilities.can_read_file() {
-                                    let param = ReadFileParam { uri: uri.clone() };
-                                    match client.send_request::<ReadFile>(param).await {
-                                        Ok(content) => {
-                                            if let Err(e) = inner_tx
-                                                .send(CargoDocumentEvent::Opened(
-                                                    CargoTomlPayload {
-                                                        uri: uri.clone(),
-                                                        text: content.content,
-                                                    },
-                                                ))
-                                                .await
-                                            {
-                                                error!("inner tx send error: {}", e);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("read file error: {}", e);
-                                        }
-                                    }
-                                } else {
-                                    //read file with os
-                                    let content =
-                                        std::fs::read_to_string(uri.path().as_str()).unwrap();
-                                    if let Err(e) = inner_tx
-                                        .send(CargoDocumentEvent::Opened(CargoTomlPayload {
-                                            uri: uri.clone(),
-                                            text: content,
-                                        }))
-                                        .await
-                                    {
-                                        error!("inner tx send error: {}", e);
-                                    }
-                                }
-                            }
-                        }
-
                         if let Err(e) = debouncer
                             .send_interactive(Ctx {
                                 uri: msg.uri,
@@ -437,8 +427,21 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::ReadyToResolve(ctx) => {
+                        //delay audit
+                        if let Err(e) = audit_controller.send(&ctx.uri).await {
+                            error!("audit controller send error: {}", e);
+                        };
                         if state.check_rev(&ctx.uri, ctx.rev) {
-                            start_resolve(&ctx.uri, &mut state, &render_tx, &cargo_tx).await;
+                            start_resolve(
+                                &ctx.uri,
+                                &mut state,
+                                &render_tx,
+                                &cargo_tx,
+                                &inner_tx,
+                                &client,
+                                &client_capabilities,
+                            )
+                            .await;
                         }
                     }
                     CargoDocumentEvent::CargoResolved(mut output) => {
@@ -454,96 +457,62 @@ impl Appraiser {
                         for dep in doc.dependencies.values_mut() {
                             let key = dep.toml_key();
 
-                            if doc.dirty_nodes.contains_key(&dep.id) {
+                            if let Some(rev) = doc.dirty_nodes.get(&dep.id) {
+                                if *rev > output.ctx.rev {
+                                    continue;
+                                }
                                 // Take resolved out of the output.dependencies hashmap
                                 let maybe_resolved = output.dependencies.remove(&key);
                                 dep.resolved = maybe_resolved;
 
                                 let package_name = dep.package_name();
-                                let Some(summaries) = output.summaries.remove(package_name) else {
+                                let Some(mut summaries) = output.summaries.remove(package_name)
+                                else {
                                     continue;
                                 };
-                                dep.summaries = Some(summaries.clone());
-
-                                if let Some(resolved) = dep.resolved.as_ref() {
+                                if let (Some(resolved), Some(unresolved)) =
+                                    (dep.resolved.as_ref(), dep.unresolved.as_ref())
+                                {
                                     let installed = resolved.version().clone();
-                                    let req_version =
-                                        dep.unresolved.as_ref().unwrap().version_req();
+                                    let req_version = unresolved.version_req();
 
-                                    let mut latest: Option<&Version> = None;
-                                    let mut latest_matched: Option<&Version> = None;
+                                    //order summaries by version
+                                    summaries.sort_by(|a, b| b.version().cmp(a.version()));
                                     for summary in &summaries {
+                                        if dep.matched_summary.is_some()
+                                            && dep.latest_matched_summary.is_some()
+                                            && dep.latest_summary.is_some()
+                                        {
+                                            break;
+                                        }
                                         if &installed == summary.version() {
                                             dep.matched_summary = Some(summary.clone());
                                         }
-                                        match latest {
-                                            Some(cur)
-                                                if summary.version() > cur
-                                                    && summary.version().is_prerelease()
-                                                        == installed.is_prerelease() =>
-                                            {
-                                                latest = Some(summary.version());
-                                                dep.latest_summary = Some(summary.clone());
-                                            }
-                                            None if summary.version().is_prerelease()
-                                                == installed.is_prerelease() =>
-                                            {
-                                                latest = Some(summary.version());
-                                                dep.latest_summary = Some(summary.clone());
-                                            }
-                                            _ => {}
+                                        if dep.latest_summary.is_none()
+                                            && summary.version().is_prerelease()
+                                                == installed.is_prerelease()
+                                        {
+                                            dep.latest_summary = Some(summary.clone());
                                         }
-                                        match (latest_matched.as_ref(), installed.is_prerelease()) {
-                                            (Some(cur), true)
-                                                if req_version
-                                                    .matches_prerelease(summary.version())
-                                                    && summary.version() > cur =>
-                                            {
-                                                latest_matched = Some(summary.version());
-                                                dep.latest_matched_summary = Some(summary.clone());
-                                            }
-                                            (Some(cur), false)
-                                                if req_version.matches(summary.version())
-                                                    && summary.version() > cur =>
-                                            {
-                                                latest_matched = Some(summary.version());
-                                                dep.latest_matched_summary = Some(summary.clone());
-                                            }
-                                            (None, true)
-                                                if req_version
-                                                    .matches_prerelease(summary.version()) =>
-                                            {
-                                                latest_matched = Some(summary.version());
-                                                dep.latest_matched_summary = Some(summary.clone());
-                                            }
-                                            (None, false)
-                                                if req_version.matches(summary.version()) =>
-                                            {
-                                                latest_matched = Some(summary.version());
-                                                dep.latest_matched_summary = Some(summary.clone());
-                                            }
-                                            _ => {}
+                                        if dep.latest_matched_summary.is_none()
+                                            && req_version.matches(summary.version())
+                                        {
+                                            dep.latest_matched_summary = Some(summary.clone());
                                         }
                                     }
+                                    dep.summaries = Some(summaries.clone());
                                 };
-
-                                //send to render
-                                if let Some(rev) = doc.dirty_nodes.get(&dep.id) {
-                                    if *rev > output.ctx.rev {
-                                        continue;
-                                    }
-                                    //send to render task
-                                    render_tx
-                                        .send(DecorationEvent::Dependency(
-                                            output.ctx.uri.clone(),
-                                            dep.id.clone(),
-                                            dep.range,
-                                            dep.clone(),
-                                        ))
-                                        .await
-                                        .unwrap();
-                                    doc.dirty_nodes.remove(&dep.id);
-                                }
+                                //send to render task
+                                render_tx
+                                    .send(DecorationEvent::Dependency(
+                                        output.ctx.uri.clone(),
+                                        dep.id.clone(),
+                                        dep.range,
+                                        dep.clone(),
+                                    ))
+                                    .await
+                                    .unwrap();
+                                doc.dirty_nodes.remove(&dep.id);
                             }
                         }
                         if doc.is_dirty() {
@@ -571,11 +540,50 @@ async fn start_resolve(
     state: &mut Workspace,
     render_tx: &Sender<DecorationEvent>,
     cargo_tx: &Sender<Ctx>,
+    inner_tx: &Sender<CargoDocumentEvent>,
+    client: &Client,
+    client_capabilities: &ClientCapabilities,
 ) {
     let Some(doc) = state.document_mut(uri) else {
         return;
     };
-    // doc.populate_dependencies();
+    doc.populate_dependencies();
+
+    if let Some(root_uri) = doc.root_manifest.as_ref() {
+        if root_uri != uri {
+            if client_capabilities.can_read_file() {
+                let param = ReadFileParam { uri: uri.clone() };
+                match client.send_request::<ReadFile>(param).await {
+                    Ok(content) => {
+                        if let Err(e) = inner_tx
+                            .send(CargoDocumentEvent::Parse(CargoTomlPayload {
+                                uri: uri.clone(),
+                                text: content.content,
+                            }))
+                            .await
+                        {
+                            error!("inner tx send error: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("read file error: {}", e);
+                    }
+                }
+            } else {
+                //read file with os
+                let content = std::fs::read_to_string(uri.path().as_str()).unwrap();
+                if let Err(e) = inner_tx
+                    .send(CargoDocumentEvent::Parse(CargoTomlPayload {
+                        uri: uri.clone(),
+                        text: content,
+                    }))
+                    .await
+                {
+                    error!("inner tx send error: {}", e);
+                }
+            }
+        }
+    }
 
     //virtual workspace doesn't need to resolve
     if doc.is_virtual() {

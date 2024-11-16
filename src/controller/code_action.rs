@@ -7,10 +7,9 @@ use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionResponse, Command, Range, TextEdit,
     Uri, WorkspaceEdit,
 };
-use tracing::info;
 
 use crate::{
-    decoration::{version_decoration, VersionDecoration},
+    decoration::{version_decoration, VersionDecorationKind},
     entity::{strip_quotes, Dependency, DependencyEntryKind, EntryKind, NodeKind, TomlNode, CARGO},
 };
 
@@ -31,46 +30,52 @@ pub fn code_action_dependency(
 ) -> Option<CodeActionResponse> {
     match key {
         DependencyEntryKind::SimpleDependency | DependencyEntryKind::TableDependencyVersion => {
-            let version_deco = version_decoration(dep);
-            let latest = dep.latest_summary.as_ref().map(|s| s.version());
-            let latest_matched = dep.latest_matched_summary.as_ref().map(|s| s.version());
+            let version = version_decoration(dep);
             let mut actions = VersionCodeAction::new(uri, node);
             actions.check_unresolved(dep);
-            match version_deco {
-                VersionDecoration::Latest => {
-                    if let Some(v) = latest {
+            match version.kind {
+                VersionDecorationKind::Latest => {
+                    if let Some(v) = version.latest.as_ref() {
                         actions.add_refactor(v);
                     }
                 }
-                VersionDecoration::Local => return None,
-                VersionDecoration::NotInstalled => return None,
-                VersionDecoration::MixedUpgradeable => {
-                    if let Some(v) = latest_matched {
+                VersionDecorationKind::Local => return None,
+                VersionDecorationKind::NotInstalled => return None,
+                VersionDecorationKind::MixedUpgradeable => {
+                    if let Some(v) = version.latest_matched.as_ref() {
+                        actions.add_quickfix(v);
+                        // actions.add_precies_update_command(dep.package_name(), v);
+                    }
+                    if let Some(v) = version.latest.as_ref() {
                         actions.add_quickfix(v);
                     }
-                    if let Some(v) = latest {
-                        actions.add_quickfix(v);
-                    }
+                    actions.add_update_command(dep.package_name());
                 }
-                VersionDecoration::CompatibleLatest => {
-                    let v = latest?;
+                VersionDecorationKind::CompatibleLatest => {
+                    let v = version.latest.as_ref()?;
                     actions.add_refactor(v);
                     actions.add_quickfix(v);
-                    actions.add_command(dep.package_name(), v);
+                    // actions.add_precies_update_command(dep.package_name(), v);
+                    actions.add_update_command(dep.package_name());
                 }
-                VersionDecoration::NoncompatibleLatest => {
-                    let v = latest?;
+                VersionDecorationKind::NonCompatibleLatest => {
+                    let v = version.latest.as_ref()?;
                     actions.add_quickfix(v);
+                    actions.add_update_command(dep.package_name());
                 }
-                VersionDecoration::Yanked => {
-                    if let Some(v) = latest {
+                VersionDecorationKind::Yanked => {
+                    if let Some(v) = version.latest.as_ref() {
                         actions.add_quickfix(v);
                     }
-                    if let Some(v) = latest_matched {
+                    if let Some(v) = version.latest_matched.as_ref() {
                         actions.add_quickfix(v);
                     }
+                    actions.add_update_command(dep.package_name());
                 }
-                VersionDecoration::NotParsed => return None,
+                VersionDecorationKind::Git => {
+                    actions.add_update_command(dep.package_name());
+                }
+                VersionDecorationKind::NotParsed => return None,
             };
             actions.add_eq_refactor();
             if let Some(p) = dep.resolved.as_ref() {
@@ -230,63 +235,63 @@ impl<'a> VersionCodeAction<'a> {
         title: Option<String>,
     ) {
         self.actions
-            .push(MyCodeAction::new(self.uri.clone(), v, kind, range, title).into());
+            .push(new_code_action(self.uri.clone(), v, kind, range, title));
     }
 
-    fn add_command(&mut self, package_name: &str, v: &Version) {
-        self.actions.push(new_command(package_name, v).into());
+    fn add_precies_update_command(&mut self, package_name: &str, v: &Version) {
+        self.actions
+            .push(new_precise_update_command(package_name, v).into());
     }
-}
 
-struct MyCodeAction(CodeAction);
-
-impl From<MyCodeAction> for CodeActionOrCommand {
-    fn from(value: MyCodeAction) -> Self {
-        value.0.into()
+    fn add_update_command(&mut self, package_name: &str) {
+        self.actions.push(new_update_command(package_name).into());
     }
 }
 
-impl MyCodeAction {
-    fn new(uri: Uri, v: String, kind: CodeActionKind, range: Range, title: Option<String>) -> Self {
-        Self(CodeAction {
-            title: title.unwrap_or(v.to_string()),
-            kind: Some(kind),
-            diagnostics: None,
-            edit: Some(WorkspaceEdit {
-                changes: Some(HashMap::from([(
-                    uri,
-                    vec![TextEdit { new_text: v, range }],
-                )])),
-                document_changes: None,
-                change_annotations: None,
-            }),
-            ..Default::default()
-        })
+fn new_code_action(
+    uri: Uri,
+    v: String,
+    kind: CodeActionKind,
+    range: Range,
+    title: Option<String>,
+) -> CodeActionOrCommand {
+    CodeAction {
+        title: title.unwrap_or(v.to_string()),
+        kind: Some(kind),
+        diagnostics: None,
+        edit: Some(WorkspaceEdit {
+            changes: Some(HashMap::from([(
+                uri,
+                vec![TextEdit { new_text: v, range }],
+            )])),
+            document_changes: None,
+            change_annotations: None,
+        }),
+        ..Default::default()
     }
-
-    fn with_command(&mut self, package_name: &str, v: &Version) {
-        self.0.command = Some(Command::new(
-            format!("update {} to {}", package_name, v),
-            CARGO.to_string(),
-            Some(vec![
-                Value::String("update".to_string()),
-                Value::String(package_name.to_string()),
-                Value::String("--precise".to_string()),
-                Value::String(v.to_string()),
-            ]),
-        ));
-    }
+    .into()
 }
 
-fn new_command(package_name: &str, v: &Version) -> Command {
+fn new_precise_update_command(package_name: &str, v: &Version) -> Command {
     Command::new(
-        format!("update {} to {} use cargo", package_name, v),
+        format!("cargo update {} --precise {}", package_name, v),
         CARGO.to_string(),
         Some(vec![
             Value::String("update".to_string()),
             Value::String(package_name.to_string()),
             Value::String("--precise".to_string()),
             Value::String(v.to_string()),
+        ]),
+    )
+}
+
+fn new_update_command(package_name: &str) -> Command {
+    Command::new(
+        format!("cargo update {}", package_name),
+        CARGO.to_string(),
+        Some(vec![
+            Value::String("update".to_string()),
+            Value::String(package_name.to_string()),
         ]),
     )
 }

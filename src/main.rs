@@ -1,5 +1,5 @@
 use clap::{arg, command, Parser};
-use config::{initialize_config, Config};
+use config::{initialize_config, UserConfig};
 use controller::{Appraiser, CargoDocumentEvent, CargoTomlPayload, ClientCapability};
 use decoration::{DecorationRenderer, Renderer};
 use entity::{supported_commands, CARGO};
@@ -28,7 +28,7 @@ struct CargoAppraiser {
 impl LanguageServer for CargoAppraiser {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         //init config
-        let config: Config = params
+        let config: UserConfig = params
             .initialization_options
             .map(serde_json::from_value)
             .and_then(|v| v.ok())

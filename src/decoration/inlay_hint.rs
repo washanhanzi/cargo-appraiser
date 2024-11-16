@@ -47,9 +47,9 @@ mod inlay_hint_decoration_state {
         }
     }
 
-    pub fn reset(state: &RwLock<InlayHintDecorationState>) {
+    pub fn reset(state: &RwLock<InlayHintDecorationState>, uri: &Uri) {
         let mut state = state.write();
-        state.clear();
+        state.remove(uri);
     }
 
     pub fn list(state: &RwLock<InlayHintDecorationState>, uri: &Uri) -> Vec<InlayHint> {
@@ -100,9 +100,9 @@ impl InlayHintDecoration {
                                 value: GLOBAL_CONFIG
                                     .read()
                                     .unwrap()
-                                    .renderer
                                     .decoration_formatter
                                     .waiting
+                                    .template()
                                     .to_string(),
                                 tooltip: None,
                                 location: None,
@@ -120,13 +120,12 @@ impl InlayHintDecoration {
                     DecorationEvent::DependencyRemove(path, id) => {
                         inlay_hint_decoration_state::remove(&state, &path, &id);
                     }
-                    DecorationEvent::Reset => {
-                        inlay_hint_decoration_state::reset(&state);
+                    DecorationEvent::Reset(uri) => {
+                        inlay_hint_decoration_state::reset(&state, &uri);
                     }
                     DecorationEvent::Dependency(path, id, range, p) => {
                         let config = GLOBAL_CONFIG.read().unwrap();
-                        let Some(decoration) =
-                            formatted_string(&p, &config.renderer.decoration_formatter)
+                        let Some(decoration) = formatted_string(&p, &config.decoration_formatter)
                         else {
                             continue;
                         };
@@ -157,8 +156,8 @@ impl InlayHintDecoration {
         inlay_hint_decoration_state::remove(&self.hints, uri, id);
     }
 
-    pub fn reset(&mut self) {
-        inlay_hint_decoration_state::reset(&self.hints);
+    pub fn reset(&mut self, uri: &Uri) {
+        inlay_hint_decoration_state::reset(&self.hints, uri);
     }
 }
 

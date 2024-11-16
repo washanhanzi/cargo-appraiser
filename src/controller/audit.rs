@@ -144,7 +144,7 @@ impl AuditController {
                                 received_uri = Some(uri);
                             }
                         }
-                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(20))));
+                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(60))));
                     }
                     () = async {
                         if let Some(ref mut t) = timer {
@@ -178,6 +178,7 @@ pub fn audit_workspace(
     uri: &Uri,
     audited: &mut Option<String>,
 ) -> Result<AuditReports, anyhow::Error> {
+    info!("audit workspace: {}", uri.path());
     let gctx = cargo::util::context::GlobalContext::default()?;
     let path = Path::new(uri.path().as_str());
     let workspace = cargo::core::Workspace::new(path, &gctx)?;

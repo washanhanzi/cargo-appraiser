@@ -66,14 +66,14 @@ impl Workspace {
                 let doc = entry.into_mut();
                 if !diff.is_empty() {
                     doc.reconsile(new_doc, &diff);
-                    doc.populate_dependencies();
+                    // doc.populate_dependencies();
                 }
                 Ok((doc, diff))
             }
             Entry::Vacant(entry) => {
                 let diff = Document::diff(None, &new_doc);
                 new_doc.self_reconsile(&diff);
-                new_doc.populate_dependencies();
+                // new_doc.populate_dependencies();
                 let doc = entry.insert(new_doc);
                 Ok((doc, diff))
             }

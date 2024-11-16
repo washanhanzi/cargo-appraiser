@@ -1,10 +1,12 @@
 use cargo::core::SourceKind;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 use tower_lsp::{
     lsp_types::{InlayHint, Range, Uri},
     Client,
 };
+use tracing::info;
 
 use crate::entity::{commit_str_short, git_ref_str, Dependency};
 
@@ -55,15 +57,17 @@ impl DecorationRenderer {
 
 #[derive(Clone)]
 pub enum DecorationEvent {
-    Reset,
+    Reset(Uri),
     DependencyRangeUpdate(Uri, String, Range),
     DependencyRemove(Uri, String),
     DependencyWaiting(Uri, String, Range),
     Dependency(Uri, String, Range, Dependency),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum VersionDecoration {
+#[derive(Debug, Default, PartialEq, Eq, Clone, Serialize)]
+pub enum VersionDecorationKind {
+    #[default]
+    NotParsed,
     //installed == latest_matched == latest
     Latest,
     Local,
@@ -73,155 +77,118 @@ pub enum VersionDecoration {
     //installed -> latest_matched == latest
     CompatibleLatest,
     //installed !-> latest_matched == latest
-    NoncompatibleLatest,
+    NonCompatibleLatest,
     Yanked,
-    NotParsed,
+    Git,
 }
 
 #[derive(Debug, Default, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DecorationPayload {
-    installed: String,
-    latest_matched: String,
-    latest: String,
+    pub kind: VersionDecorationKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed: Option<Version>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_matched: Option<Version>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest: Option<Version>,
     //(ref,commit)
-    git: Option<(String, String)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<(String, String)>,
 }
 
-pub fn decoration_payload(dep: &Dependency) -> DecorationPayload {
-    let mut git = None;
-    let installed = match dep.resolved.as_ref() {
-        Some(resolved) => {
+pub fn formatted_string(dep: &Dependency, formatter: &CompiledFormatter) -> Option<String> {
+    let version = version_decoration(dep);
+
+    let template = match version.kind {
+        VersionDecorationKind::Git => &formatter.git,
+        VersionDecorationKind::Latest => &formatter.latest,
+        VersionDecorationKind::Local => &formatter.local,
+        VersionDecorationKind::NotInstalled => &formatter.not_installed,
+        VersionDecorationKind::MixedUpgradeable => &formatter.mixed_upgradeable,
+        VersionDecorationKind::CompatibleLatest => &formatter.compatible_latest,
+        VersionDecorationKind::NonCompatibleLatest => &formatter.noncompatible_latest,
+        VersionDecorationKind::Yanked => &formatter.yanked,
+        VersionDecorationKind::NotParsed => return None,
+    };
+
+    Some(template.format(&version))
+}
+
+pub fn version_decoration(dep: &Dependency) -> DecorationPayload {
+    let Some(unresolved) = dep.unresolved.as_ref() else {
+        return DecorationPayload {
+            kind: VersionDecorationKind::NotParsed,
+            ..Default::default()
+        };
+    };
+    let Some(resolved) = dep.resolved.as_ref() else {
+        return DecorationPayload {
+            kind: VersionDecorationKind::NotInstalled,
+            ..Default::default()
+        };
+    };
+    match unresolved.source_id().kind() {
+        SourceKind::Path => DecorationPayload {
+            kind: VersionDecorationKind::Local,
+            ..Default::default()
+        },
+        //TODO idk what's this
+        SourceKind::Directory => DecorationPayload {
+            kind: VersionDecorationKind::Local,
+            ..Default::default()
+        },
+        SourceKind::Git(_) => {
+            let mut git = None;
             if resolved.package_id().source_id().is_git() {
                 git = Some((
                     git_ref_str(&resolved.package_id().source_id()).unwrap_or_default(),
                     commit_str_short(&resolved.package_id().source_id())
                         .map_or(String::new(), |c| c.to_string()),
                 ));
-                String::new()
-            } else {
-                resolved.version().to_string()
+            };
+            DecorationPayload {
+                kind: VersionDecorationKind::Git,
+                git,
+                ..Default::default()
             }
         }
-        None => "".to_string(),
-    };
-    let latest_matched = match dep.latest_matched_summary.as_ref() {
-        Some(matched) => matched.version().to_string(),
-        None => "".to_string(),
-    };
-    let latest = match dep.latest_summary.as_ref() {
-        Some(latest) => latest.version().to_string(),
-        None => "".to_string(),
-    };
-    DecorationPayload {
-        installed,
-        latest_matched,
-        latest,
-        git,
-    }
-}
-
-pub fn formatted_string(dep: &Dependency, formatter: &DecorationFormatter) -> Option<String> {
-    let version = version_decoration(dep);
-    let payload = decoration_payload(dep);
-    if let Some((r, commit)) = payload.git {
-        return Some(
-            formatter
-                .git
-                .replace("{{ref}}", &r)
-                .replace("{{commit}}", &commit),
-        );
-    }
-    match version {
-        VersionDecoration::Latest => Some(
-            formatter
-                .latest
-                .replace("{{installed}}", &payload.installed)
-                .replace("{{latest_matched}}", &payload.latest_matched)
-                .replace("{{latest}}", &payload.latest),
-        ),
-        VersionDecoration::Local => Some(
-            formatter
-                .local
-                .replace("{{installed}}", &payload.installed)
-                .replace("{{latest_matched}}", &payload.latest_matched)
-                .replace("{{latest}}", &payload.latest),
-        ),
-        VersionDecoration::NotInstalled => Some(
-            formatter
-                .not_installed
-                .replace("{{installed}}", &payload.installed)
-                .replace("{{latest_matched}}", &payload.latest_matched)
-                .replace("{{latest}}", &payload.latest),
-        ),
-        VersionDecoration::MixedUpgradeable => Some(
-            formatter
-                .mixed_upgradeable
-                .replace("{{installed}}", &payload.installed)
-                .replace("{{latest_matched}}", &payload.latest_matched)
-                .replace("{{latest}}", &payload.latest),
-        ),
-        VersionDecoration::CompatibleLatest => Some(
-            formatter
-                .compatible_latest
-                .replace("{{installed}}", &payload.installed)
-                .replace("{{latest_matched}}", &payload.latest_matched)
-                .replace("{{latest}}", &payload.latest),
-        ),
-        VersionDecoration::NoncompatibleLatest => Some(
-            formatter
-                .noncompatible_latest
-                .replace("{{installed}}", &payload.installed)
-                .replace("{{latest_matched}}", &payload.latest_matched)
-                .replace("{{latest}}", &payload.latest),
-        ),
-        VersionDecoration::Yanked => Some(
-            formatter
-                .yanked
-                .replace("{{installed}}", &payload.installed)
-                .replace("{{latest_matched}}", &payload.latest_matched)
-                .replace("{{latest}}", &payload.latest),
-        ),
-        _ => None,
-    }
-}
-
-pub fn version_decoration(dep: &Dependency) -> VersionDecoration {
-    let Some(unresolved) = dep.unresolved.as_ref() else {
-        return VersionDecoration::NotParsed;
-    };
-    match unresolved.source_id().kind() {
-        SourceKind::Path => VersionDecoration::Local,
-        //TODO idk what's this
-        SourceKind::Directory => VersionDecoration::Local,
         _ => {
             match (
-                dep.resolved.as_ref(),
                 dep.matched_summary.as_ref(),
                 dep.latest_matched_summary.as_ref(),
                 dep.latest_summary.as_ref(),
             ) {
-                (Some(_), Some(matched), Some(latest_matched), Some(latest)) => {
+                (Some(matched), Some(latest_matched), Some(latest)) => {
                     //latest
+                    let mut p = DecorationPayload::default();
                     if matched.version() == latest_matched.version()
                         && latest_matched.version() == latest.version()
                     {
-                        VersionDecoration::Latest
+                        p.kind = VersionDecorationKind::Latest;
                     } else if matched.version() != latest_matched.version()
                         && latest_matched.version() == latest.version()
                     {
-                        VersionDecoration::CompatibleLatest
+                        p.kind = VersionDecorationKind::CompatibleLatest;
                     } else if matched.version() == latest_matched.version()
                         && latest_matched.version() != latest.version()
                     {
-                        VersionDecoration::NoncompatibleLatest
+                        p.kind = VersionDecorationKind::NonCompatibleLatest;
                     } else {
-                        VersionDecoration::MixedUpgradeable
+                        p.kind = VersionDecorationKind::MixedUpgradeable;
                     }
+                    p.installed = Some(matched.version().clone());
+                    p.latest = Some(latest.version().clone());
+                    p.latest_matched = Some(latest_matched.version().clone());
+                    p
                 }
-                (Some(_), None, Some(_), Some(_)) => VersionDecoration::Yanked,
-                (None, _, _, _) => VersionDecoration::NotInstalled,
-                //TODO get latest version for not installed
+                (None, Some(latest_matched), Some(latest)) => DecorationPayload {
+                    kind: VersionDecorationKind::Yanked,
+                    installed: Some(resolved.version().clone()),
+                    latest_matched: Some(latest_matched.version().clone()),
+                    latest: Some(latest.version().clone()),
+                    ..Default::default()
+                },
                 //TODO any other match arm?
                 _ => unreachable!(),
             }
@@ -269,6 +236,22 @@ pub struct DecorationFormatter {
     pub git: String,
 }
 
+impl DecorationFormatter {
+    pub fn compile(&self) -> CompiledFormatter {
+        CompiledFormatter {
+            waiting: CompiledTemplate::new(self.waiting.clone()),
+            latest: CompiledTemplate::new(self.latest.clone()),
+            local: CompiledTemplate::new(self.local.clone()),
+            not_installed: CompiledTemplate::new(self.not_installed.clone()),
+            mixed_upgradeable: CompiledTemplate::new(self.mixed_upgradeable.clone()),
+            compatible_latest: CompiledTemplate::new(self.compatible_latest.clone()),
+            noncompatible_latest: CompiledTemplate::new(self.noncompatible_latest.clone()),
+            yanked: CompiledTemplate::new(self.yanked.clone()),
+            git: CompiledTemplate::new(self.git.clone()),
+        }
+    }
+}
+
 impl Default for DecorationFormatter {
     fn default() -> Self {
         Self {
@@ -282,6 +265,76 @@ impl Default for DecorationFormatter {
             yanked: default_yanked(),
             git: default_git(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CompiledFormatter {
+    waiting: CompiledTemplate,
+    latest: CompiledTemplate,
+    local: CompiledTemplate,
+    not_installed: CompiledTemplate,
+    mixed_upgradeable: CompiledTemplate,
+    compatible_latest: CompiledTemplate,
+    noncompatible_latest: CompiledTemplate,
+    yanked: CompiledTemplate,
+    git: CompiledTemplate,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompiledTemplate {
+    template: String,
+    needs_installed: bool,
+    needs_latest_matched: bool,
+    needs_latest: bool,
+    needs_git_ref: bool,
+    needs_git_commit: bool,
+}
+
+impl CompiledTemplate {
+    fn new(template: String) -> Self {
+        Self {
+            needs_installed: template.contains("{{installed}}"),
+            needs_latest_matched: template.contains("{{latest_matched}}"),
+            needs_latest: template.contains("{{latest}}"),
+            needs_git_ref: template.contains("{{ref}}"),
+            needs_git_commit: template.contains("{{commit}}"),
+            template,
+        }
+    }
+
+    fn template(&self) -> &str {
+        &self.template
+    }
+
+    fn format(&self, version: &DecorationPayload) -> String {
+        let mut result = self.template.clone();
+
+        if self.needs_installed && version.installed.is_some() {
+            result = result.replace(
+                "{{installed}}",
+                &version.installed.as_ref().unwrap().to_string(),
+            );
+        }
+        if self.needs_latest_matched && version.latest_matched.is_some() {
+            result = result.replace(
+                "{{latest_matched}}",
+                &version.latest_matched.as_ref().unwrap().to_string(),
+            );
+        }
+        if self.needs_latest && version.latest.is_some() {
+            result = result.replace("{{latest}}", &version.latest.as_ref().unwrap().to_string());
+        }
+        if let Some((ref_str, commit)) = version.git.as_ref() {
+            if self.needs_git_ref {
+                result = result.replace("{{ref}}", ref_str);
+            }
+            if self.needs_git_commit {
+                result = result.replace("{{commit}}", commit);
+            }
+        }
+
+        result
     }
 }
 
