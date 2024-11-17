@@ -11,6 +11,7 @@
     will show its values
   - code action on version
   - `cargo update` command on version's code action
+  - goto definition on workspace dependency
 
 # Config
 

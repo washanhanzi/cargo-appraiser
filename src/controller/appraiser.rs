@@ -7,7 +7,10 @@ use tokio::sync::{
     oneshot,
 };
 use tower_lsp::{
-    lsp_types::{CodeActionResponse, CompletionResponse, Diagnostic, Hover, Position, Range, Uri},
+    lsp_types::{
+        CodeActionResponse, CompletionResponse, Diagnostic, GotoDefinitionResponse, Hover,
+        Position, Range, Uri,
+    },
     Client,
 };
 use tracing::{error, info};
@@ -19,7 +22,7 @@ use crate::{
     },
     decoration::DecorationEvent,
     entity::{into_file_uri, CargoError, Dependency},
-    usecase::Workspace,
+    usecase::{Document, Workspace},
 };
 
 use super::{
@@ -28,6 +31,7 @@ use super::{
     cargo::{cargo_resolve, CargoResolveOutput},
     debouncer::Debouncer,
     diagnostic::DiagnosticController,
+    gd::goto_definition,
     hover::hover,
     read_file::ReadFile,
 };
@@ -49,16 +53,15 @@ pub struct Appraiser {
 }
 
 pub enum CargoDocumentEvent {
-    //cargo.toml save event
-    //start to parse the document, update the state, and send event for cargo_tree task
     Opened(CargoTomlPayload),
     Saved(CargoTomlPayload),
+    //Parse event won't trigger Cargo.toml resolve compare to Opened and Saved
+    Parse(CargoTomlPayload),
     Changed(CargoTomlPayload),
     ReadyToResolve(Ctx),
-    //reset document state
+    //mark dependencies dirty, clear decorations
     Closed(Uri),
-    //result from cargo command
-    //consolidate state and send render event
+    //result from cargo
     CargoResolved(CargoResolveOutput),
     //cargo.lock change
     //CargoLockCreated,
@@ -66,11 +69,16 @@ pub enum CargoDocumentEvent {
     //code action, path and range
     CodeAction(Uri, Range, oneshot::Sender<CodeActionResponse>),
     //hover event, path and position
-    Hovered(Uri, Position, oneshot::Sender<Hover>),
+    Hovered(Uri, Position, oneshot::Sender<Option<Hover>>),
     Completion(Uri, Position, oneshot::Sender<Option<CompletionResponse>>),
+    //goto definition
+    Gded(
+        Uri,
+        Position,
+        oneshot::Sender<Option<GotoDefinitionResponse>>,
+    ),
     CargoDiagnostic(Uri, CargoError),
     Audited(AuditReports),
-    Parse(CargoTomlPayload),
 }
 
 pub struct CargoTomlPayload {
@@ -250,10 +258,18 @@ impl Appraiser {
                             Some(id) => doc.dependency(&id),
                             None => None,
                         };
-                        let Some(h) = hover(&node, dep, doc.members.as_deref()) else {
+                        let h = hover(&node, dep, doc.members.as_deref());
+                        let _ = tx.send(h);
+                    }
+                    CargoDocumentEvent::Gded(uri, pos, tx) => {
+                        let Some(doc) = state.document(&uri) else {
                             continue;
                         };
-                        let _ = tx.send(h);
+                        let Some(node) = doc.precise_match(pos) else {
+                            continue;
+                        };
+                        let gd = goto_definition(&state, doc, &node);
+                        let _ = tx.send(gd);
                     }
                     CargoDocumentEvent::Completion(uri, pos, tx) => {
                         let Some(doc) = state.document(&uri) else {
@@ -370,50 +386,17 @@ impl Appraiser {
                         if let Err(e) = audit_controller.send(&msg.uri).await {
                             error!("audit controller send error: {}", e);
                         };
-                        match state.reconsile(&msg.uri, &msg.text) {
-                            Ok((doc, diff)) => {
-                                if diff.is_empty() && !doc.is_dirty() {
-                                    continue;
-                                } else {
-                                    doc
-                                }
-                            }
-                            Err(err) => {
-                                for e in err {
-                                    let Some((id, diag)) = e.diagnostic() else {
-                                        continue;
-                                    };
-                                    diagnostic_controller
-                                        .add_parse_diagnostic(&msg.uri, &id, diag)
-                                        .await;
-                                }
-                                continue;
-                            }
-                        };
+                        let _ =
+                            reconsile_document(&mut state, &mut diagnostic_controller, &msg).await;
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
                         if let Err(e) = audit_controller.send(&msg.uri).await {
                             error!("audit controller send error: {}", e);
                         };
-                        let doc = match state.reconsile(&msg.uri, &msg.text) {
-                            Ok((doc, diff)) => {
-                                if diff.is_empty() && !doc.is_dirty() {
-                                    continue;
-                                } else {
-                                    doc
-                                }
-                            }
-                            Err(err) => {
-                                for e in err {
-                                    let Some((id, diag)) = e.diagnostic() else {
-                                        continue;
-                                    };
-                                    diagnostic_controller
-                                        .add_parse_diagnostic(&msg.uri, &id, diag)
-                                        .await;
-                                }
-                                continue;
-                            }
+                        let Some(doc) =
+                            reconsile_document(&mut state, &mut diagnostic_controller, &msg).await
+                        else {
+                            continue;
                         };
 
                         if let Err(e) = debouncer
@@ -457,7 +440,7 @@ impl Appraiser {
                         for dep in doc.dependencies.values_mut() {
                             let key = dep.toml_key();
 
-                            if let Some(rev) = doc.dirty_nodes.get(&dep.id) {
+                            if let Some(rev) = doc.dirty_dependencies.get(&dep.id) {
                                 if *rev > output.ctx.rev {
                                     continue;
                                 }
@@ -512,10 +495,10 @@ impl Appraiser {
                                     ))
                                     .await
                                     .unwrap();
-                                doc.dirty_nodes.remove(&dep.id);
+                                doc.dirty_dependencies.remove(&dep.id);
                             }
                         }
-                        if doc.is_dirty() {
+                        if doc.is_dependencies_dirty() {
                             if let Err(e) = debouncer
                                 .send_background(Ctx {
                                     uri: output.ctx.uri,
@@ -552,12 +535,14 @@ async fn start_resolve(
     if let Some(root_uri) = doc.root_manifest.as_ref() {
         if root_uri != uri {
             if client_capabilities.can_read_file() {
-                let param = ReadFileParam { uri: uri.clone() };
+                let param = ReadFileParam {
+                    uri: root_uri.clone(),
+                };
                 match client.send_request::<ReadFile>(param).await {
                     Ok(content) => {
                         if let Err(e) = inner_tx
                             .send(CargoDocumentEvent::Parse(CargoTomlPayload {
-                                uri: uri.clone(),
+                                uri: root_uri.clone(),
                                 text: content.content,
                             }))
                             .await
@@ -571,10 +556,10 @@ async fn start_resolve(
                 }
             } else {
                 //read file with os
-                let content = std::fs::read_to_string(uri.path().as_str()).unwrap();
+                let content = std::fs::read_to_string(root_uri.path().as_str()).unwrap();
                 if let Err(e) = inner_tx
                     .send(CargoDocumentEvent::Parse(CargoTomlPayload {
-                        uri: uri.clone(),
+                        uri: root_uri.clone(),
                         text: content,
                     }))
                     .await
@@ -591,11 +576,11 @@ async fn start_resolve(
     }
 
     //no need to resolve
-    if !doc.is_dirty() {
+    if !doc.is_dependencies_dirty() {
         return;
     }
 
-    for v in doc.dirty_nodes.keys() {
+    for v in doc.dirty_dependencies.keys() {
         if let Some(n) = doc.entry(v) {
             render_tx
                 .send(DecorationEvent::DependencyWaiting(
@@ -617,5 +602,32 @@ async fn start_resolve(
         .await
     {
         error!("cargo resolve tx error: {}", e);
+    }
+}
+
+async fn reconsile_document<'a>(
+    state: &'a mut Workspace,
+    diagnostic_controller: &'a mut DiagnosticController,
+    msg: &CargoTomlPayload,
+) -> Option<&'a Document> {
+    match state.reconsile(&msg.uri, &msg.text) {
+        Ok((doc, diff)) => {
+            if diff.is_empty() && !doc.is_dependencies_dirty() {
+                None
+            } else {
+                Some(doc)
+            }
+        }
+        Err(err) => {
+            for e in err {
+                let Some((id, diag)) = e.diagnostic() else {
+                    continue;
+                };
+                diagnostic_controller
+                    .add_parse_diagnostic(&msg.uri, &id, diag)
+                    .await;
+            }
+            None
+        }
     }
 }

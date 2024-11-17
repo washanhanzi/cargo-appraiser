@@ -122,9 +122,30 @@ impl LanguageServer for CargoAppraiser {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let _ = params;
-        info!("Got a textDocument/definition request, but it is not implemented");
-        Ok(None)
+        let uri = params.text_document_position_params.text_document.uri;
+        if !uri.path().as_str().ends_with("Cargo.toml") {
+            return Ok(None);
+        };
+        //create a once channel with payload Hover
+        let (tx, rx) = oneshot::channel();
+        if let Err(e) = self
+            .tx
+            .send(CargoDocumentEvent::Gded(
+                uri,
+                params.text_document_position_params.position,
+                tx,
+            ))
+            .await
+        {
+            error!("error sending goto definition event: {}", e);
+            return Ok(None);
+        };
+        match rx.await {
+            Ok(gd) => return Ok(gd),
+            Err(_) => {
+                return Ok(None);
+            }
+        }
     }
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<Value>> {
@@ -301,7 +322,7 @@ impl LanguageServer for CargoAppraiser {
             return Ok(None);
         };
         match rx.await {
-            Ok(hover) => return Ok(Some(hover)),
+            Ok(hover) => return Ok(hover),
             Err(_) => {
                 return Ok(None);
             }

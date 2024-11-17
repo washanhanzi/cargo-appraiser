@@ -433,6 +433,12 @@ impl Walker {
             Node::Bool(b) => {
                 let entry_kind = match key.value() {
                     "workspace" => {
+                        let _ = self.insert_key(
+                            id,
+                            table,
+                            key,
+                            KeyKind::Dependency(dep.id.to_string(), DependencyKeyKind::Workspace),
+                        );
                         dep.workspace = Some(Value::new(id.to_string(), b.value()));
                         EntryKind::Dependency(
                             dep.id.to_string(),

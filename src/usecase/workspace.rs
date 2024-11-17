@@ -1,7 +1,6 @@
 use std::collections::{hash_map::Entry, HashMap};
 
 use tower_lsp::lsp_types::Uri;
-use tracing::info;
 
 use crate::entity::{EntryDiff, TomlParsingError};
 

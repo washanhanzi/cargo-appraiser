@@ -31,6 +31,7 @@ pub enum DependencyKeyKind {
     CrateName,
     Version,
     Features,
+    Workspace,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

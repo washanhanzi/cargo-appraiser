@@ -17,7 +17,7 @@ pub struct Document {
     pub reverse_tree: ReverseSymbolTree,
     //might be empty
     pub dependencies: HashMap<String, Dependency>,
-    pub dirty_nodes: HashMap<String, usize>,
+    pub dirty_dependencies: HashMap<String, usize>,
     pub parsing_errors: Vec<TomlParsingError>,
     pub manifest: Manifest,
     pub members: Option<Vec<cargo::core::package::Package>>,
@@ -58,7 +58,7 @@ impl Document {
             manifest,
             reverse_tree: reverse_symbols,
             dependencies: deps,
-            dirty_nodes: HashMap::with_capacity(len),
+            dirty_dependencies: HashMap::with_capacity(len),
             parsing_errors: errs,
             root_manifest: None,
             members: None,
@@ -78,13 +78,13 @@ impl Document {
         self.rev += 1;
         //merge dependencies
         for v in &diff.created {
-            self.dirty_nodes.insert(v.to_string(), self.rev);
+            self.dirty_dependencies.insert(v.to_string(), self.rev);
             if let Some(dep) = new.dependencies.get(v) {
                 self.dependencies.insert(v.to_string(), dep.clone());
             }
         }
         for v in &diff.value_updated {
-            self.dirty_nodes.insert(v.to_string(), self.rev);
+            self.dirty_dependencies.insert(v.to_string(), self.rev);
             if let Some(new_dep) = new.dependencies.remove(v) {
                 self.dependencies
                     .entry(v.to_string())
@@ -119,7 +119,7 @@ impl Document {
             }
         }
         for v in &diff.deleted {
-            self.dirty_nodes.remove(v);
+            self.dirty_dependencies.remove(v);
         }
     }
 
@@ -132,7 +132,7 @@ impl Document {
             .chain(&diff.range_updated)
             .chain(&diff.value_updated)
         {
-            self.dirty_nodes.insert(v.to_string(), self.rev);
+            self.dirty_dependencies.insert(v.to_string(), self.rev);
         }
     }
 
@@ -172,8 +172,8 @@ impl Document {
         }
     }
 
-    pub fn is_dirty(&self) -> bool {
-        !self.dirty_nodes.is_empty()
+    pub fn is_dependencies_dirty(&self) -> bool {
+        !self.dirty_dependencies.is_empty()
     }
 
     pub fn precise_match(&self, pos: Position) -> Option<TomlNode> {
@@ -221,7 +221,7 @@ impl Document {
     pub fn mark_dirty(&mut self) {
         self.rev += 1;
         for key in self.dependencies.keys() {
-            self.dirty_nodes.insert(key.to_string(), self.rev);
+            self.dirty_dependencies.insert(key.to_string(), self.rev);
         }
     }
 }
