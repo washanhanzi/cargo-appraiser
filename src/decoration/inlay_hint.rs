@@ -125,14 +125,14 @@ impl InlayHintDecoration {
                     }
                     DecorationEvent::Dependency(path, id, range, p) => {
                         let config = GLOBAL_CONFIG.read().unwrap();
-                        let Some(decoration) = formatted_string(&p, &config.decoration_formatter)
+                        let Some((_, text)) = formatted_string(&p, &config.decoration_formatter)
                         else {
                             continue;
                         };
 
                         let hint = InlayHint {
                             position: Position::new(range.end.line, range.end.character),
-                            label: InlayHintLabel::String(decoration),
+                            label: InlayHintLabel::String(text),
                             kind: None,
                             text_edits: None,
                             tooltip: None,
@@ -142,8 +142,8 @@ impl InlayHintDecoration {
                         };
                         inlay_hint_decoration_state::upsert(&state, &path, &id, hint);
                     }
-                    DecorationEvent::DependencyRangeUpdate(path, id, range) => {
-                        inlay_hint_decoration_state::update_range(&state, &path, &id, range);
+                    DecorationEvent::DependencyRangeUpdate(uri, id, range) => {
+                        inlay_hint_decoration_state::update_range(&state, &uri, &id, range);
                     }
                 }
                 client.inlay_hint_refresh().await.unwrap();

@@ -6,6 +6,7 @@ use tower_lsp::{
     lsp_types::{InlayHint, Range, Uri},
     Client,
 };
+mod vscode;
 use tracing::info;
 
 use crate::entity::{commit_str_short, git_ref_str, Dependency};
@@ -42,9 +43,9 @@ impl DecorationRenderer {
             Renderer::InlayHint => DecorationRenderer::InlayHint(Box::new(
                 inlay_hint::InlayHintDecoration::new(client),
             )),
-            Renderer::VSCode => DecorationRenderer::InlayHint(Box::new(
-                inlay_hint::InlayHintDecoration::new(client),
-            )),
+            Renderer::VSCode => {
+                DecorationRenderer::VSCode(Box::new(vscode::VSCodeDecoration::new(client)))
+            }
         }
     }
     pub fn init(&self) -> Sender<DecorationEvent> {
@@ -64,7 +65,8 @@ pub enum DecorationEvent {
     Dependency(Uri, String, Range, Dependency),
 }
 
-#[derive(Debug, Default, PartialEq, Eq, Clone, Serialize)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum VersionDecorationKind {
     #[default]
     NotParsed,
@@ -97,10 +99,13 @@ pub struct DecorationPayload {
     pub git: Option<(String, String)>,
 }
 
-pub fn formatted_string(dep: &Dependency, formatter: &CompiledFormatter) -> Option<String> {
+pub fn formatted_string(
+    dep: &Dependency,
+    formatter: &CompiledFormatter,
+) -> Option<(VersionDecorationKind, String)> {
     let version = version_decoration(dep);
 
-    let template = match version.kind {
+    let template = match &version.kind {
         VersionDecorationKind::Git => &formatter.git,
         VersionDecorationKind::Latest => &formatter.latest,
         VersionDecorationKind::Local => &formatter.local,
@@ -112,7 +117,7 @@ pub fn formatted_string(dep: &Dependency, formatter: &CompiledFormatter) -> Opti
         VersionDecorationKind::NotParsed => return None,
     };
 
-    Some(template.format(&version))
+    Some((version.kind.clone(), template.format(&version)))
 }
 
 pub fn version_decoration(dep: &Dependency) -> DecorationPayload {
@@ -212,8 +217,8 @@ pub fn version_decoration(dep: &Dependency) -> DecorationPayload {
 /// compatible_latest: the installed version can update to latest version
 /// noncompatible_latest: the installed version can't upate to latest version
 /// yanked: the installed version is yanked
-/// git: support {{ref}}, {{commit}}
-#[derive(Debug, Deserialize, Clone)]
+// git: the dependency is a git dependency, support {{ref}}, {{commit}}
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DecorationFormatter {
     #[serde(default = "default_latest")]

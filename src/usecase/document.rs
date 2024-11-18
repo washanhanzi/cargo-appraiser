@@ -34,6 +34,7 @@ impl Document {
     }
 
     pub fn parse(uri: &Uri, text: &str) -> Self {
+        //TODO I'm too stupid to apprehend the rowan tree else I would use incremental patching
         let p = taplo::parser::parse(text);
         let dom = p.into_dom();
         let table = dom.as_table().unwrap();

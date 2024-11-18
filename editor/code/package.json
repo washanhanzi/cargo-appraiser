@@ -43,7 +43,34 @@
           "strings": "on"
         }
       }
-    }
+    },
+    "configuration": [
+      {
+        "title": "cargo-appraiser",
+        "properties": {
+          "cargo-appraiser.decorationColor.light": {
+            "type": "object",
+            "description": "the decoration color for light theme"
+          },
+          "cargo-appraiser.decorationColor.dark": {
+            "type": "object",
+            "description": "the decoration color for dark theme"
+          },
+          "cargo-appraiser.decorationColor.highContrast": {
+            "type": "object",
+            "description": "the decoration color for high contrast theme"
+          },
+          "cargo-appraiser.decorationColor.highContrastLight": {
+            "type": "object",
+            "description": "the decoration color for high contrast light theme"
+          },
+          "cargo-appraiser.decorationFormatter": {
+            "type": "object",
+            "description": "the format string used by decoration"
+          }
+        }
+      }
+    ]
   },
   "scripts": {
     "build": "pnpm run package && vsce package --no-dependencies",

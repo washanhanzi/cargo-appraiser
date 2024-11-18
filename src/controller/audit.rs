@@ -178,7 +178,6 @@ pub fn audit_workspace(
     uri: &Uri,
     audited: &mut Option<String>,
 ) -> Result<AuditReports, anyhow::Error> {
-    info!("audit workspace: {}", uri.path());
     let gctx = cargo::util::context::GlobalContext::default()?;
     let path = Path::new(uri.path().as_str());
     let workspace = cargo::core::Workspace::new(path, &gctx)?;

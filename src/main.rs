@@ -210,6 +210,7 @@ impl LanguageServer for CargoAppraiser {
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        info!("did close");
         let uri = params.text_document.uri;
         if !uri.path().as_str().ends_with("Cargo.toml") {
             return;

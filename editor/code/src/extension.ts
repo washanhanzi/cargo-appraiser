@@ -6,6 +6,8 @@ import {
     ServerOptions,
     TransportKind
 } from 'vscode-languageclient/node'
+import { DecorationCtrl } from './decoration'
+import { config } from './config'
 
 
 let client: LanguageClient
@@ -37,6 +39,8 @@ export async function activate(context: ExtensionContext) {
         }
     }
 
+    config.init()
+
     // Options to control the language client
     const clientOptions: LanguageClientOptions = {
         // Register the server for TOML documents
@@ -45,6 +49,7 @@ export async function activate(context: ExtensionContext) {
             // Notify the server about file changes to '.clientrc files contained in the workspace
             fileEvents: workspace.createFileSystemWatcher('**/Cargo.lock')
         },
+        initializationOptions: config.getInitializationOptions(),
         outputChannel: traceOutputChannel,
     }
 
@@ -63,6 +68,16 @@ export async function activate(context: ExtensionContext) {
             content: document.getText()
         }
     })
+
+    const decorationCtrl = new DecorationCtrl()
+    decorationCtrl.listen(client)
+
+    workspace.onDidChangeConfiguration(config.onChange, config)
+
+    context.subscriptions.push(
+        window.onDidChangeActiveColorTheme(config.onThemeChange),
+        window.onDidChangeActiveTextEditor(decorationCtrl.onDidChangeActiveTextEditor, decorationCtrl)
+    )
 
     // Start the client. This will also launch the server
     client.start()
