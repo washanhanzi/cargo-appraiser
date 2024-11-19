@@ -103,7 +103,11 @@ export class DecorationCtrl {
         if (!innerMap) {
             return
         }
-        innerMap.delete(id)
+        const d = innerMap.get(id)
+        if (d) {
+            d.handle.dispose()
+            innerMap.delete(id)
+        }
     }
 
     updateRange(uri: Uri, id: string, range: Range) {
