@@ -109,7 +109,7 @@ pub fn into_diagnostic_severity(
     reports
         .iter()
         .map(|r| r.severity())
-        .max()
+        .min()
         .unwrap_or(DiagnosticSeverity::INFORMATION)
 }
 

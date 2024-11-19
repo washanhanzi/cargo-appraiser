@@ -232,7 +232,7 @@ impl CargoError {
 
                             // Check if the requirement in the error message matches the dependency's requirement
                             if error_msg.contains(&format!("`{} = \"{}\"", d.name, req)) {
-                                let version = d.version.as_ref()?.id.as_str();
+                                let version = d.version.as_ref()?.id();
                                 let range = tree.entries.get(version)?.range;
                                 Some((
                                     version.to_string(),
@@ -268,7 +268,7 @@ impl CargoError {
                     };
                     let mut feature_map = HashMap::with_capacity(features.len());
                     for f in features {
-                        feature_map.insert(f.value.to_string(), f.id.to_string());
+                        feature_map.insert(f.value().to_string(), f.id().to_string());
                     }
                     let version = unresolved.version_req().to_string();
                     let summaries =

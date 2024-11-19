@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, str::FromStr};
 
 use cargo::util::VersionExt;
-use semver::Version;
+use semver::{Version, VersionReq};
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -191,17 +191,39 @@ impl Appraiser {
                                     }
                                     None => {
                                         for (v, rr) in reports_map {
-                                            if dep
-                                                .unresolved
-                                                .as_ref()
-                                                .unwrap()
-                                                .version_req()
-                                                .matches(&Version::parse(v).unwrap())
-                                            {
-                                                audited.insert(
-                                                    (cargo_path_uri.clone(), dep.id.to_string()),
-                                                    (dep.clone(), rr.clone()),
-                                                );
+                                            match dep.unresolved.as_ref() {
+                                                Some(unresolved) => {
+                                                    if unresolved
+                                                        .version_req()
+                                                        .matches(&Version::parse(v).unwrap())
+                                                    {
+                                                        audited.insert(
+                                                            (
+                                                                cargo_path_uri.clone(),
+                                                                dep.id.to_string(),
+                                                            ),
+                                                            (dep.clone(), rr.clone()),
+                                                        );
+                                                    }
+                                                }
+                                                None => {
+                                                    if let Some(v) = dep.version.as_ref() {
+                                                        let Ok(req)=  cargo_util_schemas::core::PartialVersion::from_str(v.value())else{
+                                                            continue;
+                                                        };
+                                                        if req.to_caret_req().matches(
+                                                            &Version::parse(v.value()).unwrap(),
+                                                        ) {
+                                                            audited.insert(
+                                                                (
+                                                                    cargo_path_uri.clone(),
+                                                                    dep.id.to_string(),
+                                                                ),
+                                                                (dep.clone(), rr.clone()),
+                                                            );
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }

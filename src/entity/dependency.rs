@@ -36,7 +36,7 @@ impl Dependency {
     pub fn package_name(&self) -> &str {
         self.package
             .as_ref()
-            .map(|v| v.value.as_str())
+            .map(|v| v.value())
             .unwrap_or(&self.name)
     }
 
