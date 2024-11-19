@@ -100,6 +100,7 @@ impl Walker {
                                                     .range(join_ranges(entry.text_ranges()))
                                                     .unwrap(),
                                             ),
+                                            is_virtual:true,
                                             ..Default::default()
                                         };
                                         self.enter_dependency(
@@ -287,7 +288,17 @@ impl Walker {
                     id,
                     node,
                     table,
-                    EntryKind::Dependency(dep.id.to_string(), DependencyEntryKind::TableDependency),
+                    dep.is_virtual
+                        .then(|| {
+                            EntryKind::Dependency(
+                                dep.id.to_string(),
+                                DependencyEntryKind::VirtualTableDependency,
+                            )
+                        })
+                        .unwrap_or(EntryKind::Dependency(
+                            dep.id.to_string(),
+                            DependencyEntryKind::TableDependency,
+                        )),
                 );
                 let entries = t.entries().read();
                 for (key, entry) in entries.iter() {
@@ -422,10 +433,16 @@ impl Walker {
                             KeyKind::Dependency(dep.id.to_string(), DependencyKeyKind::CrateName),
                         );
                         dep.version = Some(Value::new(id.to_string(), s.value().to_string()));
-                        EntryKind::Dependency(
-                            dep.id.to_string(),
-                            DependencyEntryKind::SimpleDependency,
-                        )
+                        match dep.is_virtual {
+                            true => EntryKind::Dependency(
+                                dep.id.to_string(),
+                                DependencyEntryKind::VirtualSimpleDependency,
+                            ),
+                            false => EntryKind::Dependency(
+                                dep.id.to_string(),
+                                DependencyEntryKind::SimpleDependency,
+                            ),
+                        }
                     }
                 };
                 self.insert_entry(id, node, table, entry_kind);

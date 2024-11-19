@@ -20,7 +20,7 @@ pub fn goto_definition(
         let root_uri = doc.root_manifest.as_ref()?;
         let root_doc = state.document(root_uri)?;
         for d in root_doc.dependencies.values() {
-            if d.name == dep.name {
+            if d.name == dep.name && d.is_virtual {
                 return Some(GotoDefinitionResponse::Scalar(Location {
                     uri: root_uri.clone(),
                     range: d.range,

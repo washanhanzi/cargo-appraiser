@@ -29,6 +29,7 @@ pub struct Dependency {
     pub latest_summary: Option<Summary>,
     //the latest summary that satisify the version requirement
     pub latest_matched_summary: Option<Summary>,
+    pub is_virtual: bool,
 }
 
 impl Dependency {

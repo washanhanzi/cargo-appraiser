@@ -438,6 +438,9 @@ impl Appraiser {
                             .await;
                         //populate deps
                         for dep in doc.dependencies.values_mut() {
+                            if dep.is_virtual {
+                                continue;
+                            }
                             let key = dep.toml_key();
 
                             if let Some(rev) = doc.dirty_dependencies.get(&dep.id) {
