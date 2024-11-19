@@ -100,17 +100,9 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
 
     let mut res = HashMap::with_capacity(deps.len());
     for dep in deps {
-        //does the values().find introduce a loop inside loop?
         if let Some(pkg) = package_map.values().find(|&pkg| dep.matches(pkg.summary())) {
             let toml_key = cargo_dependency_to_toml_key(dep);
-            res.insert(
-                toml_key,
-                (*pkg).clone(),
-                // pkg.serialized(
-                //     workspace.gctx().cli_unstable(),
-                //     workspace.unstable_features(),
-                // ),
-            );
+            res.insert(toml_key, (*pkg).clone());
         }
     }
     Ok(CargoResolveOutput {

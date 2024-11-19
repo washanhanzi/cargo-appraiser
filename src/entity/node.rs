@@ -2,7 +2,7 @@ use tower_lsp::lsp_types::Range;
 
 use crate::entity::DependencyEntryKind;
 
-use super::{CargoTable, DependencyKeyKind, EntryKind, KeyKind, TomlEntry, TomlKey};
+use super::{CargoTable, DependencyKeyKind, EntryKind, KeyKind};
 
 #[derive(Debug, Clone)]
 pub struct TomlNode {
@@ -20,22 +20,6 @@ pub enum NodeKind {
 }
 
 impl TomlNode {
-    pub fn is_entry(&self) -> bool {
-        matches!(self.kind, NodeKind::Entry(_))
-    }
-
-    pub fn is_key(&self) -> bool {
-        matches!(self.kind, NodeKind::Key(_))
-    }
-
-    pub fn is_dependency(&self) -> bool {
-        match self.kind {
-            NodeKind::Entry(EntryKind::Dependency(_, _)) => true,
-            NodeKind::Key(KeyKind::Dependency(_, _)) => true,
-            _ => false,
-        }
-    }
-
     pub fn is_top_level_dependency(&self) -> bool {
         matches!(
             self.kind,

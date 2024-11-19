@@ -1,7 +1,7 @@
 use std::{collections::HashMap, str::FromStr};
 
 use cargo::util::VersionExt;
-use semver::{Version, VersionReq};
+use semver::Version;
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -13,7 +13,7 @@ use tower_lsp::{
     },
     Client,
 };
-use tracing::{error, info};
+use tracing::error;
 
 use crate::{
     controller::{
@@ -535,7 +535,6 @@ impl Appraiser {
                             }
                         }
                     }
-                    _ => {}
                 }
             }
         });

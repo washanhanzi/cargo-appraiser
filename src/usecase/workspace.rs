@@ -37,10 +37,6 @@ impl Workspace {
             .and_then(|doc| if doc.rev != rev { None } else { Some(doc) })
     }
 
-    pub fn del(&mut self, uri: &Uri) {
-        self.documents.remove(uri);
-    }
-
     pub fn mark_all_dirty(&mut self) -> Vec<(Uri, usize)> {
         let mut uris = Vec::new();
         for doc in self.documents.values_mut() {
@@ -65,23 +61,15 @@ impl Workspace {
                 let doc = entry.into_mut();
                 if !diff.is_empty() {
                     doc.reconsile(new_doc, &diff);
-                    // doc.populate_dependencies();
                 }
                 Ok((doc, diff))
             }
             Entry::Vacant(entry) => {
                 let diff = Document::diff(None, &new_doc);
                 new_doc.self_reconsile(&diff);
-                // new_doc.populate_dependencies();
                 let doc = entry.insert(new_doc);
                 Ok((doc, diff))
             }
-        }
-    }
-
-    pub fn populate_dependencies(&mut self, uri: &Uri) {
-        if let Some(doc) = self.document_mut(uri) {
-            doc.populate_dependencies();
         }
     }
 }

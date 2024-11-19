@@ -66,7 +66,6 @@ impl TomlParsingError {
                     data: None,
                 },
             )),
-            _ => None,
         }
     }
 }
@@ -168,9 +167,9 @@ pub enum InvalidProfileName {
 }
 
 pub fn validate_profile_name(name: &str) -> Result<(), TomlError> {
-    if let Some(ch) = name
+    if name
         .chars()
-        .find(|ch| !ch.is_alphanumeric() && *ch != '_' && *ch != '-')
+        .any(|ch| !ch.is_alphanumeric() && ch != '_' && ch != '-')
     {
         return Err(InvalidProfileName::InvalidCharacter(name.to_string()).into());
     }

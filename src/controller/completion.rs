@@ -54,7 +54,7 @@ pub async fn completion(node: &TomlNode, dep: Option<&Dependency>) -> Option<Com
                     }
                 })
                 .collect();
-            return Some(CompletionResponse::Array(versions));
+            Some(CompletionResponse::Array(versions))
         }
         NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyFeature)) => {
             let summary = dep.matched_summary.as_ref()?;
@@ -77,11 +77,10 @@ pub async fn completion(node: &TomlNode, dep: Option<&Dependency>) -> Option<Com
                     ..Default::default()
                 })
                 .collect();
-            return Some(CompletionResponse::Array(versions));
+            Some(CompletionResponse::Array(versions))
         }
-        _ => return None,
+        _ => None,
     }
-    None
 }
 
 async fn crate_name_completion(crate_name: &str) -> Option<CompletionResponse> {

@@ -109,7 +109,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn diagnostic(
         &self,
-        params: DocumentDiagnosticParams,
+        _: DocumentDiagnosticParams,
     ) -> Result<DocumentDiagnosticReportResult> {
         Ok(DocumentDiagnosticReportResult::Partial(
             DocumentDiagnosticReportPartialResult {

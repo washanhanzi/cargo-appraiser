@@ -7,7 +7,6 @@ use tower_lsp::{
     Client,
 };
 mod vscode;
-use tracing::info;
 
 use crate::entity::{commit_str_short, git_ref_str, Dependency};
 

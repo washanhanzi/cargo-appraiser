@@ -34,10 +34,6 @@ pub struct AuditController {
 pub struct AuditResult {
     pub warning: Option<rustsec::Warning>,
     pub vuln: Option<rustsec::Vulnerability>,
-    // the workspace member package
-    // pub workspace_member: cargo::core::package::Package,
-    // the direct dependency package from a workspace member
-    // pub dep_package: cargo_lock::Package,
     pub tree: Vec<Vec<String>>,
 }
 

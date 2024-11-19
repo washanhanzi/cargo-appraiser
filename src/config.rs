@@ -1,7 +1,6 @@
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::sync::RwLock;
-use tracing::info;
 
 use crate::decoration::{CompiledFormatter, DecorationFormatter};
 
