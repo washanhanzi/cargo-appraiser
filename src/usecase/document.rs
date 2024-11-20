@@ -221,8 +221,10 @@ impl Document {
 
     pub fn mark_dirty(&mut self) {
         self.rev += 1;
-        for key in self.dependencies.keys() {
-            self.dirty_dependencies.insert(key.to_string(), self.rev);
+        for (k, v) in &self.dependencies {
+            if !v.is_virtual {
+                self.dirty_dependencies.insert(k.to_string(), self.rev);
+            }
         }
     }
 }
