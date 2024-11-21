@@ -80,23 +80,6 @@ impl LanguageServer for CargoAppraiser {
                     file_operations: None,
                 }),
                 inlay_hint_provider: Some(OneOf::Left(true)),
-                diagnostic_provider: Some(DiagnosticServerCapabilities::RegistrationOptions(
-                    DiagnosticRegistrationOptions {
-                        text_document_registration_options: TextDocumentRegistrationOptions {
-                            document_selector: Some(vec![DocumentFilter {
-                                language: Some("toml".to_string()),
-                                pattern: Some("**/Cargo.toml".to_string()),
-                                scheme: None,
-                            }]),
-                        },
-                        diagnostic_options: DiagnosticOptions {
-                            workspace_diagnostics: false,
-                            inter_file_dependencies: false,
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    },
-                )),
                 ..Default::default()
             },
             ..Default::default()
@@ -105,17 +88,6 @@ impl LanguageServer for CargoAppraiser {
 
     async fn initialized(&self, _: InitializedParams) {
         info!("cargo-appraiser server initialized!");
-    }
-
-    async fn diagnostic(
-        &self,
-        _: DocumentDiagnosticParams,
-    ) -> Result<DocumentDiagnosticReportResult> {
-        Ok(DocumentDiagnosticReportResult::Partial(
-            DocumentDiagnosticReportPartialResult {
-                related_documents: None,
-            },
-        ))
     }
 
     async fn goto_definition(

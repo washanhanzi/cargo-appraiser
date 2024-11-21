@@ -6,6 +6,7 @@ use tower_lsp::{
     lsp_types::{InlayHint, InlayHintLabel, InlayHintLabelPart, Position, Uri},
     Client,
 };
+use tracing::error;
 
 use crate::config::GLOBAL_CONFIG;
 
@@ -146,7 +147,9 @@ impl InlayHintDecoration {
                         inlay_hint_decoration_state::update_range(&state, &uri, &id, range);
                     }
                 }
-                client.inlay_hint_refresh().await.unwrap();
+                if let Err(e) = client.inlay_hint_refresh().await {
+                    error!("inlay hint refresh error: {}", e);
+                }
             }
         });
         render_tx

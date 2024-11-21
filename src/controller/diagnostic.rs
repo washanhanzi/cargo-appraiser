@@ -50,9 +50,7 @@ impl DiagnosticController {
         let rev = self.rev.entry(uri.clone()).or_insert(0);
         *rev += 1;
         let diags: Vec<Diagnostic> = diags_map.values().cloned().collect();
-        self.client
-            .publish_diagnostics(uri.clone(), diags, Some(*rev))
-            .await;
+        publish(&self.client, uri, diags).await;
     }
 
     pub async fn add_parse_diagnostic(&mut self, uri: &Uri, id: &str, diag: Diagnostic) {
@@ -66,9 +64,7 @@ impl DiagnosticController {
         let diags_map = self.diagnostics.get(uri).unwrap();
         // Update the revision number for the given URI
         let diags: Vec<Diagnostic> = diags_map.values().cloned().collect();
-        self.client
-            .publish_diagnostics(uri.clone(), diags, None)
-            .await;
+        publish(&self.client, uri, diags).await;
     }
 
     pub async fn clear_cargo_diagnostics(&mut self, uri: &Uri) {
@@ -77,9 +73,7 @@ impl DiagnosticController {
 
             // Update diagnostics display
             let diags: Vec<Diagnostic> = diags_map.values().cloned().collect();
-            self.client
-                .publish_diagnostics(uri.clone(), diags, None)
-                .await;
+            publish(&self.client, uri, diags).await;
         }
     }
 
@@ -89,9 +83,7 @@ impl DiagnosticController {
 
             // Update diagnostics display
             let diags: Vec<Diagnostic> = diags_map.values().cloned().collect();
-            self.client
-                .publish_diagnostics(uri.clone(), diags, None)
-                .await;
+            publish(&self.client, uri, diags).await;
         }
     }
 
@@ -106,9 +98,7 @@ impl DiagnosticController {
         let diags_map = self.diagnostics.get(uri).unwrap();
         // Update the revision number for the given URI
         let diags: Vec<Diagnostic> = diags_map.values().cloned().collect();
-        self.client
-            .publish_diagnostics(uri.clone(), diags, None)
-            .await;
+        publish(&self.client, uri, diags).await;
     }
 
     pub async fn clear_audit_diagnostics(&mut self) {
@@ -117,9 +107,13 @@ impl DiagnosticController {
 
             // Update diagnostics display
             let diags: Vec<Diagnostic> = diags_map.values().cloned().collect();
-            self.client
-                .publish_diagnostics(uri.clone(), diags, None)
-                .await;
+            publish(&self.client, uri, diags).await;
         }
+    }
+}
+
+async fn publish(client: &Client, uri: &Uri, diags: Vec<Diagnostic>) {
+    if !diags.is_empty() {
+        client.publish_diagnostics(uri.clone(), diags, None).await
     }
 }
