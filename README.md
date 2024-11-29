@@ -99,6 +99,7 @@ to apply these config changes, you need to restart the lsp
 
 - [VS Code](https://marketplace.visualstudio.com/items?itemName=washan.cargo-appraiser)
 - [Zed](https://github.com/washanhanzi/zed-cargo-appraiser)
+- [Vim](https://github.com/washanhanzi/cargo-appraiser.nvim)
 
 # Thanks to
 
