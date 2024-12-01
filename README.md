@@ -9,8 +9,8 @@
   - hover on git dependency will show the git reference and commit
   - hover on `features` will show available features, hover on a feature name
     will show its values
-  - code action on version
-  - `cargo update` command on version's code action
+  - code action on dependency's `version`
+  - `cargo update` code action on dependency's `version` and `workspace`
   - goto definition on workspace dependency
 
 # Config

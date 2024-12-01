@@ -10,26 +10,30 @@ use tower_lsp::lsp_types::{
 
 use crate::{
     decoration::{version_decoration, VersionDecorationKind},
-    entity::{strip_quotes, Dependency, DependencyEntryKind, EntryKind, NodeKind, TomlNode, CARGO},
+    entity::{
+        strip_quotes, Dependency, DependencyEntryKind, DependencyKeyKind, EntryKind, KeyKind,
+        NodeKind, TomlNode, CARGO,
+    },
 };
 
-pub fn code_action(uri: Uri, node: TomlNode, dep: &Dependency) -> Option<CodeActionResponse> {
-    if let NodeKind::Entry(EntryKind::Dependency(id, key)) = &node.kind {
-        code_action_dependency(uri, id, key, &node, dep)
-    } else {
-        None
-    }
+pub fn code_action(
+    uri: Uri,
+    node: TomlNode,
+    dep: Option<&Dependency>,
+) -> Option<CodeActionResponse> {
+    //only support dependency code action fro now
+    let dep = dep?;
+    code_action_dependency(uri, &node, dep)
 }
 
 pub fn code_action_dependency(
     uri: Uri,
-    id: &str,
-    key: &DependencyEntryKind,
     node: &TomlNode,
     dep: &Dependency,
 ) -> Option<CodeActionResponse> {
-    match key {
-        DependencyEntryKind::SimpleDependency | DependencyEntryKind::TableDependencyVersion => {
+    match node.kind {
+        NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::SimpleDependency))
+        | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyVersion)) => {
             let version = version_decoration(dep);
             let mut actions = VersionCodeAction::new(uri, node);
             actions.check_unresolved(dep);
@@ -61,7 +65,6 @@ pub fn code_action_dependency(
                 VersionDecorationKind::NonCompatibleLatest => {
                     let v = version.latest.as_ref()?;
                     actions.add_quickfix(v);
-                    actions.add_update_command(dep.package_name());
                 }
                 VersionDecorationKind::Yanked => {
                     if let Some(v) = version.latest.as_ref() {
@@ -83,6 +86,30 @@ pub fn code_action_dependency(
             }
             actions.add_simple_table_refactor(dep);
 
+            Some(actions.take())
+        }
+        NodeKind::Key(KeyKind::Dependency(_, DependencyKeyKind::Workspace))
+        | NodeKind::Entry(EntryKind::Dependency(
+            _,
+            DependencyEntryKind::TableDependencyWorkspace,
+        )) => {
+            let version = version_decoration(dep);
+            let mut actions = VersionCodeAction::new(uri, node);
+            match version.kind {
+                VersionDecorationKind::MixedUpgradeable => {
+                    actions.add_update_command(dep.package_name());
+                }
+                VersionDecorationKind::CompatibleLatest => {
+                    actions.add_update_command(dep.package_name());
+                }
+                VersionDecorationKind::Yanked => {
+                    actions.add_update_command(dep.package_name());
+                }
+                VersionDecorationKind::Git => {
+                    actions.add_update_command(dep.package_name());
+                }
+                _ => return None,
+            };
             Some(actions.take())
         }
         _ => None,

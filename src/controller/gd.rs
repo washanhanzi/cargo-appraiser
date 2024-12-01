@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position};
+use tower_lsp::lsp_types::{GotoDefinitionResponse, Location};
 
 use crate::{
     entity::{DependencyEntryKind, DependencyKeyKind, EntryKind, KeyKind, NodeKind, TomlNode},

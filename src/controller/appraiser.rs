@@ -311,15 +311,13 @@ impl Appraiser {
                         let Some(doc) = state.document(&uri) else {
                             continue;
                         };
-                        let Some(node) = doc.precise_match_entry(range.start) else {
+                        let Some(node) = doc.precise_match(range.start) else {
                             continue;
                         };
                         let Some(id) = node.row_id() else {
                             continue;
                         };
-                        let Some(dep) = doc.dependency(&id) else {
-                            continue;
-                        };
+                        let dep = doc.dependency(&id);
                         let Some(action) = code_action(uri, node, dep) else {
                             continue;
                         };
