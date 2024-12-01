@@ -485,6 +485,10 @@ impl Appraiser {
                                     let req_version = unresolved.version_req();
 
                                     //order summaries by version
+                                    //clear matched result from previous resolve
+                                    dep.matched_summary = None;
+                                    dep.latest_matched_summary = None;
+                                    dep.latest_summary = None;
                                     summaries.sort_by(|a, b| b.version().cmp(a.version()));
                                     for summary in &summaries {
                                         if dep.matched_summary.is_some()
