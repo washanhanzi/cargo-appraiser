@@ -103,7 +103,9 @@ impl DiagnosticController {
 
     pub async fn clear_audit_diagnostics(&mut self) {
         for (uri, diags_map) in self.diagnostics.iter_mut() {
-            diags_map.retain(|k, _| !matches!(k.kind, DiagnosticKind::Audit));
+            //retain Parse and Cargo kind
+            diags_map
+                .retain(|k, _| matches!(k.kind, DiagnosticKind::Parse | DiagnosticKind::Cargo));
 
             // Update diagnostics display
             let diags: Vec<Diagnostic> = diags_map.values().cloned().collect();
@@ -113,7 +115,5 @@ impl DiagnosticController {
 }
 
 async fn publish(client: &Client, uri: &Uri, diags: Vec<Diagnostic>) {
-    if !diags.is_empty() {
-        client.publish_diagnostics(uri.clone(), diags, None).await
-    }
+    client.publish_diagnostics(uri.clone(), diags, None).await
 }
