@@ -29,7 +29,6 @@ petgraph = "0.6.5"
 tokio-util = { version = "0.7.12", features = ["time"] }
 unicode-xid = "0.2.6"
 cargo-util-schemas = "0"
-
 cargo = { git = "https://github.com/washanhanzi/cargo.git", branch = "master" }
 tower-lsp = { git = "https://github.com/washanhanzi/tower-lsp", branch = "master", features = [
     "proposed",
