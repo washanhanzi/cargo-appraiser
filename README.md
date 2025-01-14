@@ -5,11 +5,12 @@
 - Workspace
   - hover on members will show the list of members
 - Dependencies
-  - hover on version will show the available versions
-  - hover on git dependency will show the git reference and commit
-  - hover on `features` will show available features, hover on a feature name
-    will show its values
-  - code action on dependency's `version`
+  - version decorations ![CleanShot 2025-01-14 at 11 55 18@2x](https://github.com/user-attachments/assets/bad3f5ae-6242-4998-9d14-6aed0ebd9845)
+  - hover on version will show the available versions ![CleanShot 2025-01-14 at 11 56 04@2x](https://github.com/user-attachments/assets/d04c73f3-9010-4ca4-b2d9-85af6afe4b59)
+  - hover on git dependency will show the git reference and commit ![CleanShot 2025-01-14 at 11 56 55@2x](https://github.com/user-attachments/assets/37b70a50-27bc-4ad5-a851-ffe338682c1c)
+  - hover on `features` will show available features, hover on a feature name 
+    will show its values ![CleanShot 2025-01-14 at 11 57 37@2x](https://github.com/user-attachments/assets/df9fcdc7-9f7f-41e7-9fde-43f08fe7d7b4) ![CleanShot 2025-01-14 at 11 58 26@2x](https://github.com/user-attachments/assets/55b1d02b-d01f-486e-81af-282a8027be4d)
+  - code action on dependency's `version`  ![CleanShot 2025-01-14 at 12 00 57@2x](https://github.com/user-attachments/assets/ad4eab3c-d47c-415c-84c9-cc3253f15306)
   - `cargo update` code action on dependency's `version` and `workspace`
   - goto definition on workspace dependency
 
