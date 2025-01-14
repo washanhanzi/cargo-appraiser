@@ -12,7 +12,7 @@ use cargo::{
         Package, PackageId, SourceId, Summary, Workspace,
     },
     ops::{
-        tree::{EdgeKind, Prefix, Target, TreeOptions},
+        tree::{DisplayDepth, EdgeKind, Prefix, Target, TreeOptions},
         Packages,
     },
     sources::source::{QueryKind, Source},
@@ -66,7 +66,7 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         duplicates: false,
         format: "".to_string(),
         graph_features: false,
-        max_display_depth: 1,
+        display_depth: DisplayDepth::MaxDisplayDepth(1),
         no_proc_macro: false,
     };
 
