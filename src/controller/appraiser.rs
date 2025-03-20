@@ -211,16 +211,16 @@ impl Appraiser {
                                                         let Ok(req)=  cargo_util_schemas::core::PartialVersion::from_str(v.value())else{
                                                             continue;
                                                         };
-                                                        if req.to_caret_req().matches(
-                                                            &Version::parse(v.value()).unwrap(),
-                                                        ) {
-                                                            audited.insert(
-                                                                (
-                                                                    cargo_path_uri.clone(),
-                                                                    dep.id.to_string(),
-                                                                ),
-                                                                (dep.clone(), rr.clone()),
-                                                            );
+                                                        if let Ok(v) = Version::parse(v.value()) {
+                                                            if req.to_caret_req().matches(&v) {
+                                                                audited.insert(
+                                                                    (
+                                                                        cargo_path_uri.clone(),
+                                                                        dep.id.to_string(),
+                                                                    ),
+                                                                    (dep.clone(), rr.clone()),
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                 }
