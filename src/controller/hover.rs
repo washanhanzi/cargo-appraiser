@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::{Hover, HoverContents, MarkedString};
-use tracing::info;
+use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
 use crate::entity::{
     commit_str, git_ref_str, Dependency, DependencyEntryKind, DependencyKeyKind, EntryKind,
@@ -33,7 +32,10 @@ pub fn hover(
                 .join("\n");
 
             Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(formatted_versions)),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: formatted_versions,
+                }),
                 range: Some(node.range),
             })
         }
@@ -62,7 +64,10 @@ pub fn hover(
             }
 
             Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(s)),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: s,
+                }),
                 range: Some(node.range),
             })
         }
@@ -86,7 +91,10 @@ pub fn hover(
                 return None;
             }
             Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(s)),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: s,
+                }),
                 range: Some(node.range),
             })
         }
@@ -98,7 +106,10 @@ pub fn hover(
                 .collect::<Vec<_>>()
                 .join("\n");
             Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(member_list)),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: member_list,
+                }),
                 range: Some(node.range),
             })
         }
@@ -119,7 +130,10 @@ pub fn hover(
                 return None;
             }
             Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(s)),
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: s,
+                }),
                 range: Some(node.range),
             })
         }
