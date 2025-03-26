@@ -8,7 +8,7 @@
   - version decorations ![CleanShot 2025-01-14 at 11 55 18@2x](https://github.com/user-attachments/assets/bad3f5ae-6242-4998-9d14-6aed0ebd9845)
   - hover on version will show the available versions ![CleanShot 2025-01-14 at 11 56 04@2x](https://github.com/user-attachments/assets/d04c73f3-9010-4ca4-b2d9-85af6afe4b59)
   - hover on git dependency will show the git reference and commit ![CleanShot 2025-01-14 at 11 56 55@2x](https://github.com/user-attachments/assets/37b70a50-27bc-4ad5-a851-ffe338682c1c)
-  - hover on `features` will show available features, hover on a feature name 
+  - hover on `features` will show available features, hover on a feature name
     will show its values ![CleanShot 2025-01-14 at 11 57 37@2x](https://github.com/user-attachments/assets/df9fcdc7-9f7f-41e7-9fde-43f08fe7d7b4) ![CleanShot 2025-01-14 at 11 58 26@2x](https://github.com/user-attachments/assets/55b1d02b-d01f-486e-81af-282a8027be4d)
   - code action on dependency's `version`  ![CleanShot 2025-01-14 at 12 00 57@2x](https://github.com/user-attachments/assets/ad4eab3c-d47c-415c-84c9-cc3253f15306)
   - `cargo update` code action on dependency's `version` and `workspace`
@@ -16,7 +16,7 @@
 
 # Config
 
-- vscode specific config
+## VSCode specific config
 
 ```jsonc
 {
@@ -56,32 +56,56 @@
 }
 ```
 
-- lsp initialization options
+##  lsp initialization options
 
-to apply these config changes, you need to restart the lsp
+To apply these config, you need to restart the lsp.
+
+- VSCode
 
 ```jsonc
 {
-  // use cargo-appraiser.decorationFormatter in vscode settings
-  // the formatter may has 3 template strings:
-  // - installed: the installed version
-  // - latest_matched: the latest compatible version
-  // - latest: the latest version, the latest version may or may not be compatilbe with the version requirement
-  //
-  // a dependency is waiting for resolve for 2 possible reasons:
-  // 1. wait for `cargo` to run. `Cargo.toml` is not saved, so `cargo` haven't picked up the change.
-  // 2. wait for `cargo` to finish. `cargo` is running in process to resolve the dependency.
-  //
-  // the formatter has 7 fields:
-  // latest: the dependency has the latest version installed
-  // local: the dependency is a local path dependency
-  // not_installed: the dependency is not installed
-  // waiting: the dependency is waiting for resolve
-  // mixed_upgradeable: the installed version has an compatible upgrade, and the latest version is not compatible with the current version requirement
-  // compatible_latest: the installed version can update to latest version
-  // noncompatible_latest: the installed version can't upate to latest version
-  // yanked: the installed version is yanked
-  // git: the dependency is a git dependency, support {{ref}}, {{commit}}
+  "cargo-appraiser.decorationFormatter": {} //see below
+}
+```
+
+- Zed
+
+```jsonc
+{
+    "lsp": {
+        "cargo-appraiser": {
+            "initialization_options": {
+                "decorationFormatter": {} //see below
+            }
+        }
+    }
+}
+
+```
+
+```jsonc
+{
+  /// the formatter has 7 fields:
+  /// latest: the dependency has the latest version installed
+  /// local: the dependency is a local path dependency
+  /// not_installed: the dependency is not installed maybe because of platform mismatch
+  /// loading: the dependency is loading
+  /// mixed_upgradeable: the installed version has an compatible upgrade, but the latest version is not compatible with the current version requirement
+  /// compatible_latest: the installed version can update to latest version
+  /// noncompatible_latest: the installed version can't upate to latest version and there is no compatible upgrade
+  /// yanked: the installed version is yanked
+  /// git: the dependency is a git dependency, support {{ref}}, {{commit}} template strings
+  ///
+  /// a dependency is in `waiting` state for 2 possible reasons:
+  /// 1. wait for `cargo` to run. `Cargo.toml` is not saved, so `cargo` haven't picked up the change.
+  /// 2. wait for `cargo` to finish. `cargo` is running in process to resolve the dependency.
+  ///
+  /// each field's value may has 3 template strings:
+  /// - installed: the installed version
+  /// - latest_matched: the latest compatible version
+  /// - latest: the latest version, the latest version may or may not be compatilbe with the version requirement
+  ///
+  /// the default formatter is:
   "decorationFormatter": {
     "latest": "✅ {{installed}}",
     "local": "Local",

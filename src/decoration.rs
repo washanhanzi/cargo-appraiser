@@ -201,22 +201,22 @@ pub fn version_decoration(dep: &Dependency) -> DecorationPayload {
 }
 
 /// decoration formatter
-/// the formatter may has 3 template strings:
+/// the formatter has 7 fields:
+/// latest: the dependency has the latest version installed
+/// local: the dependency is a local path dependency
+/// not_installed: the dependency is not installed maybe because of platform mismatch
+/// loading: the dependency is loading
+/// mixed_upgradeable: the installed version has an compatible upgrade, but the latest version is not compatible with the current version requirement
+/// compatible_latest: the installed version can update to latest version
+/// noncompatible_latest: the installed version can't upate to latest version and there is no compatible upgrade
+/// yanked: the installed version is yanked
+/// git: the dependency is a git dependency, support {{ref}}, {{commit}} template strings
+///
+/// each field's value may has 3 template strings:
 /// - installed: the installed version
 /// - latest_matched: the latest compatible version
 /// - latest: the latest version, the latest version may or may not be compatilbe with the version requirement
 /// - git: if the dependency source is git
-///
-/// the formatter has 7 fields:
-/// latest: the dependency has the latest version installed
-/// local: the dependency is a local path dependency
-/// not_installed: the dependency is not installed
-/// loading: the dependency is loading
-/// mixed_upgradeable: the installed version has an compatible upgrade, and the latest version is not compatible with the current version requirement
-/// compatible_latest: the installed version can update to latest version
-/// noncompatible_latest: the installed version can't upate to latest version
-/// yanked: the installed version is yanked
-// git: the dependency is a git dependency, support {{ref}}, {{commit}}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DecorationFormatter {
