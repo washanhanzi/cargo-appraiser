@@ -122,9 +122,23 @@ To apply these config, you need to restart the lsp.
 
 # Supported Editors
 
-- [VS Code](https://marketplace.visualstudio.com/items?itemName=washan.cargo-appraiser)
-- [Zed](https://github.com/washanhanzi/zed-cargo-appraiser)
-- [Vim](https://github.com/washanhanzi/cargo-appraiser.nvim)
+## [VS Code](https://marketplace.visualstudio.com/items?itemName=washan.cargo-appraiser)
+
+VSCode is the main supported editor.
+
+## [Zed](https://github.com/washanhanzi/zed-cargo-appraiser)
+
+Enable `inlay_hints` in settings.
+
+```jsonc
+"inlay_hints": {
+	"enabled": true
+}
+```
+
+## [Vim](https://github.com/washanhanzi/cargo-appraiser.nvim)
+
+Vim has minimal support for now.
 
 # Thanks to
 
