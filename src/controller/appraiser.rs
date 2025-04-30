@@ -13,7 +13,7 @@ use tower_lsp::{
     },
     Client,
 };
-use tracing::error;
+use tracing::{debug, error, info};
 
 use crate::{
     controller::{
@@ -56,7 +56,7 @@ pub enum CargoDocumentEvent {
     Opened(CargoTomlPayload),
     Saved(CargoTomlPayload),
     //Parse event won't trigger Cargo.toml resolve compare to Opened and Saved
-    Parse(CargoTomlPayload),
+    Parse(Uri),
     Changed(CargoTomlPayload),
     ReadyToResolve(Ctx),
     //mark dependencies dirty, clear decorations
@@ -154,99 +154,99 @@ impl Appraiser {
             while let Some(event) = rx.recv().await {
                 match event {
                     CargoDocumentEvent::Audited(reports) => {
-                        //a hashset to record which is already audited
-                        let mut audited: HashMap<(Uri, String), (Dependency, Vec<AuditResult>)> =
-                            HashMap::new();
-                        for (path, report) in &reports.members {
-                            let cargo_path_uri = into_file_uri(path.join("Cargo.toml").as_path());
-                            //go to state.document(uri) and then state.document(root_manifest)
-                            let doc = match state.document(&cargo_path_uri) {
-                                Some(doc) => doc,
-                                None => match state.document(&reports.root) {
-                                    Some(doc) => doc,
-                                    None => continue,
-                                },
-                            };
-                            //loop dependencies and write the audited with root_manifest
-                            for dep in doc.dependencies.values() {
-                                //if it has resolved dependency, we can compare the version
-                                //if it doesn't(for virtual workspace), we can just compare the version compatibility
-                                //first find matching dependency name in resports
-                                let Some(reports_map) = report.get(dep.package_name()) else {
-                                    continue;
-                                };
-                                //then find matching dependency version in reports_map
-                                match dep.resolved.as_ref() {
-                                    Some(resolved) => {
-                                        //then find matching dependency version in rs
-                                        let Some(rr) = reports_map
-                                            .get(resolved.version().to_string().as_str())
-                                        else {
-                                            continue;
-                                        };
-                                        audited.insert(
-                                            (cargo_path_uri.clone(), dep.id.to_string()),
-                                            (dep.clone(), rr.clone()),
-                                        );
-                                    }
-                                    None => {
-                                        for (v, rr) in reports_map {
-                                            match dep.unresolved.as_ref() {
-                                                Some(unresolved) => {
-                                                    if unresolved
-                                                        .version_req()
-                                                        .matches(&Version::parse(v).unwrap())
-                                                    {
-                                                        audited.insert(
-                                                            (
-                                                                cargo_path_uri.clone(),
-                                                                dep.id.to_string(),
-                                                            ),
-                                                            (dep.clone(), rr.clone()),
-                                                        );
-                                                    }
-                                                }
-                                                None => {
-                                                    if let Some(v) = dep.version.as_ref() {
-                                                        let Ok(req)=  cargo_util_schemas::core::PartialVersion::from_str(v.value())else{
-                                                            continue;
-                                                        };
-                                                        if let Ok(v) = Version::parse(v.value()) {
-                                                            if req.to_caret_req().matches(&v) {
-                                                                audited.insert(
-                                                                    (
-                                                                        cargo_path_uri.clone(),
-                                                                        dep.id.to_string(),
-                                                                    ),
-                                                                    (dep.clone(), rr.clone()),
-                                                                );
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                };
-                            }
-                            //send to diagnostic
-                            for ((uri, _), (dep, rr)) in &audited {
-                                let diag = Diagnostic {
-                                    range: dep.range,
-                                    severity: Some(into_diagnostic_severity(rr)),
-                                    code: None,
-                                    code_description: None,
-                                    source: Some("cargo-appraiser".to_string()),
-                                    message: into_diagnostic_text(rr),
-                                    related_information: None,
-                                    tags: None,
-                                    data: None,
-                                };
-                                diagnostic_controller
-                                    .add_audit_diagnostic(uri, &dep.id, diag)
-                                    .await;
-                            }
-                        }
+                        // //a hashset to record which is already audited
+                        // let mut audited: HashMap<(Uri, String), (Dependency, Vec<AuditResult>)> =
+                        //     HashMap::new();
+                        // for (path, report) in &reports.members {
+                        //     let cargo_path_uri = into_file_uri(path.join("Cargo.toml").as_path());
+                        //     //go to state.document(uri) and then state.document(root_manifest)
+                        //     let doc = match state.document(&cargo_path_uri) {
+                        //         Some(doc) => doc,
+                        //         None => match state.document(&reports.root) {
+                        //             Some(doc) => doc,
+                        //             None => continue,
+                        //         },
+                        //     };
+                        //     //loop dependencies and write the audited with root_manifest
+                        //     for dep in doc.dependencies.values() {
+                        //         //if it has resolved dependency, we can compare the version
+                        //         //if it doesn't(for virtual workspace), we can just compare the version compatibility
+                        //         //first find matching dependency name in resports
+                        //         let Some(reports_map) = report.get(dep.package_name()) else {
+                        //             continue;
+                        //         };
+                        //         //then find matching dependency version in reports_map
+                        //         match dep.resolved.as_ref() {
+                        //             Some(resolved) => {
+                        //                 //then find matching dependency version in rs
+                        //                 let Some(rr) = reports_map
+                        //                     .get(resolved.version().to_string().as_str())
+                        //                 else {
+                        //                     continue;
+                        //                 };
+                        //                 audited.insert(
+                        //                     (cargo_path_uri.clone(), dep.id.to_string()),
+                        //                     (dep.clone(), rr.clone()),
+                        //                 );
+                        //             }
+                        //             None => {
+                        //                 for (v, rr) in reports_map {
+                        //                     match dep.unresolved.as_ref() {
+                        //                         Some(unresolved) => {
+                        //                             if unresolved
+                        //                                 .version_req()
+                        //                                 .matches(&Version::parse(v).unwrap())
+                        //                             {
+                        //                                 audited.insert(
+                        //                                     (
+                        //                                         cargo_path_uri.clone(),
+                        //                                         dep.id.to_string(),
+                        //                                     ),
+                        //                                     (dep.clone(), rr.clone()),
+                        //                                 );
+                        //                             }
+                        //                         }
+                        //                         None => {
+                        //                             if let Some(v) = dep.version.as_ref() {
+                        //                                 let Ok(req)=  cargo_util_schemas::core::PartialVersion::from_str(v.value())else{
+                        //                                     continue;
+                        //                                 };
+                        //                                 if let Ok(v) = Version::parse(v.value()) {
+                        //                                     if req.to_caret_req().matches(&v) {
+                        //                                         audited.insert(
+                        //                                             (
+                        //                                                 cargo_path_uri.clone(),
+                        //                                                 dep.id.to_string(),
+                        //                                             ),
+                        //                                             (dep.clone(), rr.clone()),
+                        //                                         );
+                        //                                     }
+                        //                                 }
+                        //                             }
+                        //                         }
+                        //                     }
+                        //                 }
+                        //             }
+                        //         };
+                        //     }
+                        //     //send to diagnostic
+                        //     for ((uri, _), (dep, rr)) in &audited {
+                        //         let diag = Diagnostic {
+                        //             range: dep.range,
+                        //             severity: Some(into_diagnostic_severity(rr)),
+                        //             code: None,
+                        //             code_description: None,
+                        //             source: Some("cargo-appraiser".to_string()),
+                        //             message: into_diagnostic_text(rr),
+                        //             related_information: None,
+                        //             tags: None,
+                        //             data: None,
+                        //         };
+                        //         diagnostic_controller
+                        //             .add_audit_diagnostic(uri, &dep.id, diag)
+                        //             .await;
+                        //     }
+                        // }
                     }
                     CargoDocumentEvent::CargoDiagnostic(uri, err) => {
                         diagnostic_controller.clear_cargo_diagnostics(&uri).await;
@@ -402,12 +402,29 @@ impl Appraiser {
                             error!("debounder send interactive error: {}", e);
                         }
                     }
-                    CargoDocumentEvent::Parse(msg) => {
-                        if let Err(e) = audit_controller.send(&msg.uri).await {
+                    CargoDocumentEvent::Parse(uri) => {
+                        let content = if client_capabilities.can_read_file() {
+                            let param = ReadFileParam { uri: uri.clone() };
+                            match client.send_request::<ReadFile>(param).await {
+                                Ok(content) => content.content,
+                                Err(e) => {
+                                    error!("read file error: {}", e);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            //read file with os
+                            std::fs::read_to_string(uri.path().as_str()).unwrap()
+                        };
+                        if let Err(e) = audit_controller.send(&uri).await {
                             error!("audit controller send error: {}", e);
                         };
-                        let _ =
-                            reconsile_document(&mut state, &mut diagnostic_controller, &msg).await;
+                        let _ = reconsile_document(
+                            &mut state,
+                            &mut diagnostic_controller,
+                            &CargoTomlPayload { uri, text: content },
+                        )
+                        .await;
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
                         if let Err(e) = audit_controller.send(&msg.uri).await {
@@ -448,6 +465,17 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::CargoResolved(mut output) => {
+                        //resolve virtual manifest if we haven't
+                        let root_manifest_uri = output.root_manifest_uri.clone();
+                        if state.document(&root_manifest_uri).is_none() {
+                            if let Err(e) = inner_tx
+                                .send(CargoDocumentEvent::Parse(root_manifest_uri.clone()))
+                                .await
+                            {
+                                error!("inner tx send error: {}", e);
+                            }
+                        }
+
                         let Some(doc) =
                             state.document_mut_with_rev(&output.ctx.uri, output.ctx.rev)
                         else {
@@ -456,64 +484,22 @@ impl Appraiser {
                         diagnostic_controller
                             .clear_cargo_diagnostics(&output.ctx.uri)
                             .await;
+
+                        doc.root_manifest = Some(root_manifest_uri);
+
                         //populate deps
                         for dep in doc.dependencies.values_mut() {
-                            if dep.is_virtual {
+                            let Some(rev) = doc.dirty_dependencies.get(&dep.id) else {
+                                continue;
+                            };
+                            if *rev > output.ctx.rev {
                                 continue;
                             }
-                            let key = dep.toml_key();
 
-                            if let Some(rev) = doc.dirty_dependencies.get(&dep.id) {
-                                if *rev > output.ctx.rev {
-                                    continue;
-                                }
-                                // Take resolved out of the output.dependencies hashmap
-                                let maybe_resolved = output.dependencies.remove(&key);
-                                dep.resolved = maybe_resolved;
-
-                                let package_name = dep.package_name();
-                                let Some(mut summaries) = output.summaries.remove(package_name)
-                                else {
-                                    continue;
-                                };
-                                if let (Some(resolved), Some(unresolved)) =
-                                    (dep.resolved.as_ref(), dep.unresolved.as_ref())
-                                {
-                                    let installed = resolved.version().clone();
-                                    let req_version = unresolved.version_req();
-
-                                    //order summaries by version
-                                    //clear matched result from previous resolve
-                                    dep.matched_summary = None;
-                                    dep.latest_matched_summary = None;
-                                    dep.latest_summary = None;
-                                    summaries.sort_by(|a, b| b.version().cmp(a.version()));
-                                    for summary in &summaries {
-                                        if dep.matched_summary.is_some()
-                                            && dep.latest_matched_summary.is_some()
-                                            && dep.latest_summary.is_some()
-                                        {
-                                            break;
-                                        }
-                                        if &installed == summary.version() {
-                                            dep.matched_summary = Some(summary.clone());
-                                        }
-                                        if dep.latest_summary.is_none()
-                                            && summary.version().is_prerelease()
-                                                == installed.is_prerelease()
-                                        {
-                                            dep.latest_summary = Some(summary.clone());
-                                        }
-                                        if dep.latest_matched_summary.is_none()
-                                            && req_version.matches(summary.version())
-                                        {
-                                            dep.latest_matched_summary = Some(summary.clone());
-                                        }
-                                    }
-                                    dep.summaries = Some(summaries.clone());
-                                };
-                                //send to render task
-                                render_tx
+                            //populate requested
+                            let Some(requested_result) = output.dependencies.remove(&dep.name)
+                            else {
+                                if let Err(e) = render_tx
                                     .send(DecorationEvent::Dependency(
                                         output.ctx.uri.clone(),
                                         dep.id.clone(),
@@ -521,10 +507,112 @@ impl Appraiser {
                                         dep.clone(),
                                     ))
                                     .await
-                                    .unwrap();
+                                {
+                                    error!("render tx send error: {}", e);
+                                };
                                 doc.dirty_dependencies.remove(&dep.id);
+                                continue;
+                            };
+                            let requested = match requested_result.len() {
+                                0 => unreachable!(),
+                                1 => requested_result.first().unwrap(),
+                                _ => {
+                                    let mut matched_requested_dep = None;
+                                    for requested_dep in &requested_result {
+                                        // For not virtual dependency, they should in same table
+                                        if !dep.is_virtual
+                                            && dep.table.to_string()
+                                                != requested_dep.1.kind().kind_table()
+                                        {
+                                            continue;
+                                        }
+
+                                        // For virtual dependency, they should in same platform
+                                        if dep.platform().is_none()
+                                            && requested_dep.1.platform().is_none()
+                                        {
+                                            matched_requested_dep = Some(requested_dep);
+                                            break;
+                                        } else if let Some(p) = requested_dep.1.platform() {
+                                            if p.to_string() == dep.platform().unwrap_or_default() {
+                                                matched_requested_dep = Some(requested_dep);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    let Some(requested_dep) = matched_requested_dep else {
+                                        error!("matched_requested_dep is None for {}", dep.id);
+                                        continue;
+                                    };
+                                    requested_dep
+                                }
+                            };
+                            dep.requested = Some(requested.1.clone());
+
+                            let mut summaries = output.summaries.remove(&requested.0).unwrap();
+                            summaries.sort_by(|a, b| b.version().cmp(a.version()));
+                            dep.summaries = Some(summaries.clone());
+
+                            if let Some(pkgs) =
+                                output.packages.get(&requested.1.package_name().to_string())
+                            {
+                                for pkg in pkgs {
+                                    if requested.1.matches(pkg.summary()) {
+                                        dep.resolved = Some(pkg.clone());
+                                        break;
+                                    }
+                                }
                             }
+
+                            if let (Some(resolved), Some(requested)) =
+                                (dep.resolved.as_ref(), dep.requested.as_ref())
+                            {
+                                let installed = resolved.version().clone();
+                                let req_version = requested.version_req();
+
+                                //order summaries by version
+                                //clear matched result from previous resolve
+                                dep.matched_summary = None;
+                                dep.latest_matched_summary = None;
+                                dep.latest_summary = None;
+                                for summary in &summaries {
+                                    if dep.matched_summary.is_some()
+                                        && dep.latest_matched_summary.is_some()
+                                        && dep.latest_summary.is_some()
+                                    {
+                                        break;
+                                    }
+                                    if &installed == summary.version() {
+                                        dep.matched_summary = Some(summary.clone());
+                                    }
+                                    if dep.latest_summary.is_none()
+                                        && summary.version().is_prerelease()
+                                            == installed.is_prerelease()
+                                    {
+                                        dep.latest_summary = Some(summary.clone());
+                                    }
+                                    if dep.latest_matched_summary.is_none()
+                                        && req_version.matches(summary.version())
+                                    {
+                                        dep.latest_matched_summary = Some(summary.clone());
+                                    }
+                                }
+                            };
+                            //send to render task
+                            if let Err(e) = render_tx
+                                .send(DecorationEvent::Dependency(
+                                    output.ctx.uri.clone(),
+                                    dep.id.clone(),
+                                    dep.range,
+                                    dep.clone(),
+                                ))
+                                .await
+                            {
+                                error!("render tx send error: {}", e);
+                            };
+                            doc.dirty_dependencies.remove(&dep.id);
                         }
+
                         if doc.is_dependencies_dirty() {
                             if let Err(e) = debouncer
                                 .send_background(Ctx {
@@ -556,50 +644,45 @@ async fn start_resolve(
     let Some(doc) = state.document_mut(uri) else {
         return;
     };
-    doc.populate_dependencies();
+    // doc.populate_dependencies();
 
-    if let Some(root_uri) = doc.root_manifest.as_ref() {
-        if root_uri != uri {
-            if client_capabilities.can_read_file() {
-                let param = ReadFileParam {
-                    uri: root_uri.clone(),
-                };
-                match client.send_request::<ReadFile>(param).await {
-                    Ok(content) => {
-                        if let Err(e) = inner_tx
-                            .send(CargoDocumentEvent::Parse(CargoTomlPayload {
-                                uri: root_uri.clone(),
-                                text: content.content,
-                            }))
-                            .await
-                        {
-                            error!("inner tx send error: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        error!("read file error: {}", e);
-                    }
-                }
-            } else {
-                //read file with os
-                let content = std::fs::read_to_string(root_uri.path().as_str()).unwrap();
-                if let Err(e) = inner_tx
-                    .send(CargoDocumentEvent::Parse(CargoTomlPayload {
-                        uri: root_uri.clone(),
-                        text: content,
-                    }))
-                    .await
-                {
-                    error!("inner tx send error: {}", e);
-                }
-            }
-        }
-    }
-
-    //virtual workspace doesn't need to resolve
-    if doc.is_virtual() {
-        return;
-    }
+    // if let Some(root_uri) = doc.root_manifest.as_ref() {
+    //     if root_uri != uri {
+    //         if client_capabilities.can_read_file() {
+    //             let param = ReadFileParam {
+    //                 uri: root_uri.clone(),
+    //             };
+    //             match client.send_request::<ReadFile>(param).await {
+    //                 Ok(content) => {
+    //                     if let Err(e) = inner_tx
+    //                         .send(CargoDocumentEvent::Parse(CargoTomlPayload {
+    //                             uri: root_uri.clone(),
+    //                             text: content.content,
+    //                         }))
+    //                         .await
+    //                     {
+    //                         error!("inner tx send error: {}", e);
+    //                     }
+    //                 }
+    //                 Err(e) => {
+    //                     error!("read file error: {}", e);
+    //                 }
+    //             }
+    //         } else {
+    //             //read file with os
+    //             let content = std::fs::read_to_string(root_uri.path().as_str()).unwrap();
+    //             if let Err(e) = inner_tx
+    //                 .send(CargoDocumentEvent::Parse(CargoTomlPayload {
+    //                     uri: root_uri.clone(),
+    //                     text: content,
+    //                 }))
+    //                 .await
+    //             {
+    //                 error!("inner tx send error: {}", e);
+    //             }
+    //         }
+    //     }
+    // }
 
     //no need to resolve
     if !doc.is_dependencies_dirty() {
@@ -619,7 +702,7 @@ async fn start_resolve(
         }
     }
 
-    //resolve cargo dependencies in another task
+    //resolve cargo dependencies
     if let Err(e) = cargo_tx
         .send(Ctx {
             uri: uri.clone(),

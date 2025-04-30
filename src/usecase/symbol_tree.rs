@@ -94,13 +94,13 @@ impl Walker {
                                         let mut dep = Dependency {
                                             id: new_id.clone(),
                                             name: key.value().to_string(),
-                                            table: crate::entity::DependencyTable::WorkspaceDependencies,
+                                            table: crate::entity::DependencyTable::Dependencies,
                                             range: into_lsp_range(
                                                 self.mapper
                                                     .range(join_ranges(entry.text_ranges()))
                                                     .unwrap(),
                                             ),
-                                            is_virtual:true,
+                                            is_virtual: true,
                                             ..Default::default()
                                         };
                                         self.enter_dependency(
@@ -288,17 +288,7 @@ impl Walker {
                     id,
                     node,
                     table,
-                    dep.is_virtual
-                        .then(|| {
-                            EntryKind::Dependency(
-                                dep.id.to_string(),
-                                DependencyEntryKind::VirtualTableDependency,
-                            )
-                        })
-                        .unwrap_or(EntryKind::Dependency(
-                            dep.id.to_string(),
-                            DependencyEntryKind::TableDependency,
-                        )),
+                    EntryKind::Dependency(dep.id.to_string(), DependencyEntryKind::TableDependency),
                 );
                 let entries = t.entries().read();
                 for (key, entry) in entries.iter() {
@@ -433,16 +423,10 @@ impl Walker {
                             KeyKind::Dependency(dep.id.to_string(), DependencyKeyKind::CrateName),
                         );
                         dep.version = Some(Value::new(id.to_string(), s.value().to_string()));
-                        match dep.is_virtual {
-                            true => EntryKind::Dependency(
-                                dep.id.to_string(),
-                                DependencyEntryKind::VirtualSimpleDependency,
-                            ),
-                            false => EntryKind::Dependency(
-                                dep.id.to_string(),
-                                DependencyEntryKind::SimpleDependency,
-                            ),
-                        }
+                        EntryKind::Dependency(
+                            dep.id.to_string(),
+                            DependencyEntryKind::SimpleDependency,
+                        )
                     }
                 };
                 self.insert_entry(id, node, table, entry_kind);

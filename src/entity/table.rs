@@ -45,7 +45,7 @@ impl Display for DependencyTable {
                 DependencyTable::Dependencies => "dependencies",
                 DependencyTable::DevDependencies => "dev-dependencies",
                 DependencyTable::BuildDependencies => "build-dependencies",
-                DependencyTable::WorkspaceDependencies => "workspace-dependencies",
+                DependencyTable::WorkspaceDependencies => "dependencies",
             }
         )
     }

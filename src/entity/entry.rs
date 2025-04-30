@@ -53,8 +53,6 @@ impl EntryKind {
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub enum DependencyEntryKind {
     SimpleDependency,
-    VirtualSimpleDependency,
-    VirtualTableDependency,
     TableDependency,
     TableDependencyVersion,
     TableDependencyFeatures,

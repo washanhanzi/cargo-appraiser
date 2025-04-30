@@ -120,9 +120,9 @@ pub fn formatted_string(
 }
 
 pub fn version_decoration(dep: &Dependency) -> DecorationPayload {
-    let Some(unresolved) = dep.unresolved.as_ref() else {
+    let Some(requested) = dep.requested.as_ref() else {
         return DecorationPayload {
-            kind: VersionDecorationKind::NotParsed,
+            kind: VersionDecorationKind::NotInstalled,
             ..Default::default()
         };
     };
@@ -132,7 +132,7 @@ pub fn version_decoration(dep: &Dependency) -> DecorationPayload {
             ..Default::default()
         };
     };
-    match unresolved.source_id().kind() {
+    match requested.source_id().kind() {
         SourceKind::Path => DecorationPayload {
             kind: VersionDecorationKind::Local,
             ..Default::default()

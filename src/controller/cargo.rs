@@ -9,45 +9,88 @@ use cargo::{
         compiler::{CompileKind, RustcTargetData},
         dependency::DepKind,
         resolver::{CliFeatures, ForceAllTargets, HasDevUnits},
-        Package, PackageId, SourceId, Summary, Workspace,
+        Dependency, Package, PackageId, SourceId, Summary, Workspace,
     },
     ops::{
         tree::{DisplayDepth, EdgeKind, Prefix, Target, TreeOptions},
         Packages,
     },
-    sources::source::{QueryKind, Source},
+    sources::{
+        source::{QueryKind, Source},
+        SourceConfigMap,
+    },
     util::{cache_lock::CacheLockMode, OptVersionReq},
     GlobalContext,
 };
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity};
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Uri};
 use tracing::{error, info};
 
 use crate::entity::{
-    cargo_dependency_to_toml_key, from_resolve_error, CargoError, CargoErrorKind, Dependency,
-    SymbolTree, TomlNode,
+    cargo_dependency_to_toml_key, from_resolve_error, into_file_uri, CargoError, CargoErrorKind,
+    Dependency as EntityDependency, SymbolTree, TomlNode,
 };
 
 use super::appraiser::Ctx;
 
+#[derive(Debug)]
 pub struct CargoResolveOutput {
     pub ctx: Ctx,
-    //the hashmap key is toml_id, which is<table>:<package name>
-    pub dependencies: HashMap<String, Package>,
-    pub summaries: HashMap<String, Vec<Summary>>,
+    pub root_manifest_uri: Uri,
+    //toml_name -> Dependency
+    pub dependencies: HashMap<String, Vec<DependencyWithId>>,
+    //package_name -> Vec<Package>
+    pub packages: HashMap<String, Vec<Package>>,
+    //DependencyId -> Vec<Summary>
+    pub summaries: HashMap<u32, Vec<Summary>>,
 }
+
+#[derive(Debug, Clone)]
+pub struct DependencyWithId(pub u32, pub Dependency);
 
 #[tracing::instrument(name = "cargo_resolve", level = "trace")]
 pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> {
     let path = Path::new(ctx.uri.path().as_str());
-    let gctx = cargo::util::context::GlobalContext::default().map_err(CargoError::resolve_error)?;
+    let gctx = GlobalContext::default().unwrap();
+
+    // Create workspace and ensure it's properly configured
     let workspace =
         cargo::core::Workspace::new(path, &gctx).map_err(CargoError::workspace_error)?;
-    let Ok(current) = workspace.current() else {
-        return Err(CargoError::workspace_error(anyhow::anyhow!(
-            "virtual workspace"
-        )));
+
+    let root_manifest_uri = into_file_uri(&workspace.root().join("Cargo.toml"));
+
+    //Dependency is a what cargo.toml requested
+    //workspace resolve specs
+    let mut specs = Vec::with_capacity(5);
+    let deps = match workspace.current() {
+        Ok(current) => current.dependencies().to_vec(),
+        Err(_) => {
+            let mut deps = Vec::new();
+            for member in workspace.members() {
+                deps.extend(member.dependencies().to_vec());
+                specs.push(member.package_id().to_spec());
+            }
+            deps
+        }
     };
-    let deps = current.dependencies();
+
+    let mut deps_map = HashMap::new();
+    let mut source_ids = HashMap::new();
+
+    for (id_counter, dep) in (0_u32..).zip(deps.into_iter()) {
+        let toml_key = dep.name_in_toml().to_string();
+        let source_id = dep.source_id();
+        let dependency_with_id = DependencyWithId(id_counter, dep);
+
+        deps_map
+            .entry(toml_key)
+            .or_insert_with(Vec::new)
+            .push(dependency_with_id.clone());
+
+        source_ids
+            .entry(source_id)
+            .or_insert_with(Vec::new)
+            .push(dependency_with_id);
+    }
 
     let mut edge_kinds = HashSet::with_capacity(3);
     edge_kinds.insert(EdgeKind::Dep(DepKind::Normal));
@@ -74,9 +117,19 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         .map_err(CargoError::resolve_error)?;
     let mut target_data = RustcTargetData::new(&workspace, &[CompileKind::Host])
         .map_err(CargoError::resolve_error)?;
-    let specs = opts.packages.to_package_id_specs(&workspace).unwrap();
+
+    // Acquire package cache lock to ensure we have access to all registry data
+    let _guard = gctx
+        .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
+        .map_err(|e| {
+            CargoError::resolve_error(anyhow::anyhow!(
+                "Failed to acquire package cache lock: {}",
+                e
+            ))
+        })?;
+
     // Convert Result to Option
-    let ws_resolve = match cargo::ops::resolve_ws_with_opts(
+    let ws_resolve = cargo::ops::resolve_ws_with_opts(
         &workspace,
         &mut target_data,
         &requested_kinds,
@@ -85,82 +138,108 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         HasDevUnits::Yes,
         ForceAllTargets::No,
         false,
-    ) {
-        Ok(ws_resolve) => ws_resolve,
-        Err(e) => {
-            return Err(from_resolve_error(e));
-        }
-    };
+    )
+    .map_err(from_resolve_error)?;
 
-    let package_map: HashMap<PackageId, &Package> = ws_resolve
-        .pkg_set
-        .packages()
-        .map(|pkg| (pkg.package_id(), pkg))
-        .collect();
+    let packages: HashMap<String, Vec<Package>> =
+        ws_resolve
+            .pkg_set
+            .packages()
+            .fold(HashMap::new(), |mut acc, pkg| {
+                acc.entry(pkg.name().to_string())
+                    .or_default()
+                    .push(pkg.clone());
+                acc
+            });
 
-    let mut res = HashMap::with_capacity(deps.len());
-    for dep in deps {
-        if let Some(pkg) = package_map.values().find(|&pkg| dep.matches(pkg.summary())) {
-            let toml_key = cargo_dependency_to_toml_key(dep);
-            res.insert(toml_key, (*pkg).clone());
-        }
-    }
+    let summaries = summaries_map(&gctx, source_ids);
+
     Ok(CargoResolveOutput {
         ctx: ctx.clone(),
-        dependencies: res,
-        summaries: summaries_map(&gctx, &workspace),
+        root_manifest_uri,
+        dependencies: deps_map,
+        packages,
+        summaries,
     })
 }
 
 //TODO the current Vec<Summary> didn't include yanked
-fn summaries_map(gctx: &GlobalContext, workspace: &Workspace) -> HashMap<String, Vec<Summary>> {
-    let Ok(_guard) = gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive) else {
-        error!("failed to acquire package cache lock");
-        return HashMap::new();
-    };
-
+fn summaries_map(
+    gctx: &GlobalContext,
+    source_ids: HashMap<SourceId, Vec<DependencyWithId>>,
+) -> HashMap<u32, Vec<Summary>> {
     let mut res = HashMap::new();
 
-    // Step 1: Group dependencies by SourceId
-    let mut source_deps: HashMap<SourceId, Vec<_>> = HashMap::new();
+    // For each SourceId, create and configure a source
+    for (source_id, deps) in source_ids {
+        let source_config_map = match SourceConfigMap::new(gctx) {
+            Ok(map) => map,
+            Err(e) => {
+                error!("failed to create source config map: {:?}", e);
+                continue;
+            }
+        };
 
-    for member in workspace.members() {
-        for dep in member.dependencies() {
-            source_deps.entry(dep.source_id()).or_default().push(dep);
-        }
-    }
+        // This will respect source replacement settings from .cargo/config.toml
+        let mut source = match source_config_map.load(source_id, &HashSet::new()) {
+            Ok(source) => source,
+            Err(e) => {
+                error!("failed to load source: {:?}", e);
+                continue;
+            }
+        };
 
-    // Step 2: Process each source
-    for (source_id, package_names) in source_deps {
-        let mut source = source_id.load(gctx, &HashSet::new()).unwrap();
-        source.invalidate_cache();
-        source.block_until_ready().unwrap();
-        let mut summaries = Vec::new();
-        for dep in &package_names {
-            let mut any_dep = (*dep).clone();
-            any_dep.set_version_req(OptVersionReq::Any);
-            let poll = source.query_vec(&any_dep, QueryKind::Normalized);
-            summaries.push(poll);
+        // Prepare the source - this may download indices, etc.
+        if let Err(e) = source.block_until_ready() {
+            error!("failed to prepare source: {:?}", e);
+            continue;
         }
-        source.block_until_ready().unwrap();
-        for summary in summaries {
-            match summary {
-                Poll::Ready(summaries) => {
-                    let summaries = summaries.unwrap();
-                    let mut sums = Vec::new();
-                    let mut package_name = "".to_string();
-                    //map summaries to d.as_summary()
-                    for summary in &summaries {
-                        let name = summary.as_summary().name().to_string();
-                        package_name = name;
-                        sums.push(summary.as_summary().clone());
-                    }
-                    res.insert(package_name, sums);
+
+        // For each dependency, query the registry
+        for dep in deps {
+            // Set the version requirement to Any to get all available versions
+            let mut query_dep = dep.1.clone();
+            query_dep.set_version_req(OptVersionReq::Any);
+
+            // Query for the package using the dependency itself with QueryKind::Normalized
+            let dep_query = source.query_vec(&query_dep, QueryKind::Normalized);
+
+            // Ensure the query completes
+            if let Err(e) = source.block_until_ready() {
+                error!(
+                    "failed to complete query for {}: {:?}",
+                    dep.1.package_name(),
+                    e
+                );
+                continue;
+            }
+
+            match dep_query {
+                Poll::Ready(Ok(summaries)) => {
+                    res.insert(
+                        dep.0,
+                        summaries
+                            .into_iter()
+                            .map(|s| s.as_summary().clone())
+                            .collect(),
+                    );
                 }
-                Poll::Pending => unreachable!(),
+                Poll::Ready(Err(e)) => {
+                    error!(
+                        "failed to query dependency {}: {:?}",
+                        dep.1.package_name(),
+                        e
+                    );
+                }
+                Poll::Pending => {
+                    // This shouldn't happen, but just in case
+                    error!("query for {} is pending", dep.1.package_name());
+                    unreachable!()
+                }
             }
         }
     }
+
     res
 }
 
@@ -191,7 +270,7 @@ impl CargoError {
     pub fn diagnostic(
         self,
         keys: &[&TomlNode],
-        deps: &[&Dependency],
+        deps: &[&EntityDependency],
         tree: &SymbolTree,
     ) -> Option<Vec<(String, Diagnostic)>> {
         match &self.kind {
@@ -219,7 +298,7 @@ impl CargoError {
                 Some(
                     deps.iter()
                         .filter_map(|d| {
-                            let req = d.unresolved.as_ref()?.version_req().to_string();
+                            let req = d.requested.as_ref()?.version_req().to_string();
                             let error_msg = self.to_string();
 
                             // Check if the requirement in the error message matches the dependency's requirement
@@ -252,7 +331,7 @@ impl CargoError {
                 //check features
                 let mut diags = Vec::with_capacity(deps.len());
                 for d in deps {
-                    let Some(unresolved) = d.unresolved.as_ref() else {
+                    let Some(unresolved) = d.requested.as_ref() else {
                         continue;
                     };
                     let Some(features) = &d.features else {

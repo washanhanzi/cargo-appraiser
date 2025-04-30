@@ -146,7 +146,7 @@ impl<'a> VersionCodeAction<'a> {
     // if the version req contains no minor, provide a code action to refactor version to <major.minor>
     // if the version req contains patch, provide the above two code actions
     fn check_unresolved(&mut self, dep: &Dependency) {
-        if let Some(unresolved) = dep.unresolved.as_ref() {
+        if let Some(unresolved) = dep.requested.as_ref() {
             if let OptVersionReq::Req(req) = unresolved.version_req() {
                 for r in &req.comparators {
                     if r.minor.is_some() {

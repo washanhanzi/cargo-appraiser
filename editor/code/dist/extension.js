@@ -16289,18 +16289,18 @@ var require_node2 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/debug.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/debug.js
 var require_debug = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/debug.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/debug.js"(exports2, module2) {
     var debug = typeof process === "object" && process.env && process.env.NODE_DEBUG && /\bsemver\b/i.test(process.env.NODE_DEBUG) ? (...args) => console.error("SEMVER", ...args) : () => {
     };
     module2.exports = debug;
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/constants.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/constants.js
 var require_constants = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/constants.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/constants.js"(exports2, module2) {
     var SEMVER_SPEC_VERSION = "2.0.0";
     var MAX_LENGTH = 256;
     var MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER || /* istanbul ignore next */
@@ -16329,9 +16329,9 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/re.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/re.js
 var require_re = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/re.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/re.js"(exports2, module2) {
     var {
       MAX_SAFE_COMPONENT_LENGTH,
       MAX_SAFE_BUILD_LENGTH,
@@ -16342,6 +16342,7 @@ var require_re = __commonJS({
     var re = exports2.re = [];
     var safeRe = exports2.safeRe = [];
     var src = exports2.src = [];
+    var safeSrc = exports2.safeSrc = [];
     var t = exports2.t = {};
     var R = 0;
     var LETTERDASHNUMBER = "[a-zA-Z0-9-]";
@@ -16362,6 +16363,7 @@ var require_re = __commonJS({
       debug(name, index, value);
       t[name] = index;
       src[index] = value;
+      safeSrc[index] = safe;
       re[index] = new RegExp(value, isGlobal ? "g" : void 0);
       safeRe[index] = new RegExp(safe, isGlobal ? "g" : void 0);
     };
@@ -16414,9 +16416,9 @@ var require_re = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/parse-options.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/parse-options.js
 var require_parse_options = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/parse-options.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/parse-options.js"(exports2, module2) {
     var looseOption = Object.freeze({ loose: true });
     var emptyOpts = Object.freeze({});
     var parseOptions = (options) => {
@@ -16432,9 +16434,9 @@ var require_parse_options = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/identifiers.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/identifiers.js
 var require_identifiers = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/identifiers.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/identifiers.js"(exports2, module2) {
     var numeric = /^[0-9]+$/;
     var compareIdentifiers = (a, b) => {
       const anum = numeric.test(a);
@@ -16453,12 +16455,12 @@ var require_identifiers = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/classes/semver.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/classes/semver.js
 var require_semver = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/classes/semver.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/classes/semver.js"(exports2, module2) {
     var debug = require_debug();
     var { MAX_LENGTH, MAX_SAFE_INTEGER } = require_constants();
-    var { safeRe: re, t } = require_re();
+    var { safeRe: re, safeSrc: src, t } = require_re();
     var parseOptions = require_parse_options();
     var { compareIdentifiers } = require_identifiers();
     var SemVer = class _SemVer {
@@ -16598,6 +16600,18 @@ var require_semver = __commonJS({
       // preminor will bump the version up to the next minor release, and immediately
       // down to pre-release. premajor and prepatch work the same way.
       inc(release, identifier, identifierBase) {
+        if (release.startsWith("pre")) {
+          if (!identifier && identifierBase === false) {
+            throw new Error("invalid increment argument: identifier is empty");
+          }
+          if (identifier) {
+            const r = new RegExp(`^${this.options.loose ? src[t.PRERELEASELOOSE] : src[t.PRERELEASE]}$`);
+            const match = `-${identifier}`.match(r);
+            if (!match || match[1] !== identifier) {
+              throw new Error(`invalid identifier: ${identifier}`);
+            }
+          }
+        }
         switch (release) {
           case "premajor":
             this.prerelease.length = 0;
@@ -16623,6 +16637,12 @@ var require_semver = __commonJS({
             }
             this.inc("pre", identifier, identifierBase);
             break;
+          case "release":
+            if (this.prerelease.length === 0) {
+              throw new Error(`version ${this.raw} is not a prerelease`);
+            }
+            this.prerelease.length = 0;
+            break;
           case "major":
             if (this.minor !== 0 || this.patch !== 0 || this.prerelease.length === 0) {
               this.major++;
@@ -16646,9 +16666,6 @@ var require_semver = __commonJS({
             break;
           case "pre": {
             const base = Number(identifierBase) ? 1 : 0;
-            if (!identifier && identifierBase === false) {
-              throw new Error("invalid increment argument: identifier is empty");
-            }
             if (this.prerelease.length === 0) {
               this.prerelease = [base];
             } else {
@@ -16695,9 +16712,9 @@ var require_semver = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/parse.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/parse.js
 var require_parse = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/parse.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/parse.js"(exports2, module2) {
     var SemVer = require_semver();
     var parse = (version, options, throwErrors = false) => {
       if (version instanceof SemVer) {
@@ -16716,9 +16733,9 @@ var require_parse = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/lrucache.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/lrucache.js
 var require_lrucache = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/internal/lrucache.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/internal/lrucache.js"(exports2, module2) {
     var LRUCache = class {
       constructor() {
         this.max = 1e3;
@@ -16753,72 +16770,72 @@ var require_lrucache = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/compare.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/compare.js
 var require_compare = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/compare.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/compare.js"(exports2, module2) {
     var SemVer = require_semver();
     var compare = (a, b, loose) => new SemVer(a, loose).compare(new SemVer(b, loose));
     module2.exports = compare;
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/eq.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/eq.js
 var require_eq = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/eq.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/eq.js"(exports2, module2) {
     var compare = require_compare();
     var eq = (a, b, loose) => compare(a, b, loose) === 0;
     module2.exports = eq;
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/neq.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/neq.js
 var require_neq = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/neq.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/neq.js"(exports2, module2) {
     var compare = require_compare();
     var neq = (a, b, loose) => compare(a, b, loose) !== 0;
     module2.exports = neq;
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/gt.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/gt.js
 var require_gt = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/gt.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/gt.js"(exports2, module2) {
     var compare = require_compare();
     var gt = (a, b, loose) => compare(a, b, loose) > 0;
     module2.exports = gt;
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/gte.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/gte.js
 var require_gte = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/gte.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/gte.js"(exports2, module2) {
     var compare = require_compare();
     var gte = (a, b, loose) => compare(a, b, loose) >= 0;
     module2.exports = gte;
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/lt.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/lt.js
 var require_lt = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/lt.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/lt.js"(exports2, module2) {
     var compare = require_compare();
     var lt = (a, b, loose) => compare(a, b, loose) < 0;
     module2.exports = lt;
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/lte.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/lte.js
 var require_lte = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/lte.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/lte.js"(exports2, module2) {
     var compare = require_compare();
     var lte = (a, b, loose) => compare(a, b, loose) <= 0;
     module2.exports = lte;
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/cmp.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/cmp.js
 var require_cmp = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/cmp.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/cmp.js"(exports2, module2) {
     var eq = require_eq();
     var neq = require_neq();
     var gt = require_gt();
@@ -16865,9 +16882,9 @@ var require_cmp = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/classes/comparator.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/classes/comparator.js
 var require_comparator = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/classes/comparator.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/classes/comparator.js"(exports2, module2) {
     var ANY = Symbol("SemVer ANY");
     var Comparator = class _Comparator {
       static get ANY() {
@@ -16977,9 +16994,9 @@ var require_comparator = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/classes/range.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/classes/range.js
 var require_range = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/classes/range.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/classes/range.js"(exports2, module2) {
     var SPACE_CHARACTERS = /\s+/g;
     var Range2 = class _Range {
       constructor(range, options) {
@@ -17352,9 +17369,9 @@ var require_range = __commonJS({
   }
 });
 
-// node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/satisfies.js
+// node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/satisfies.js
 var require_satisfies = __commonJS({
-  "node_modules/.pnpm/semver@7.6.3/node_modules/semver/functions/satisfies.js"(exports2, module2) {
+  "node_modules/.pnpm/semver@7.7.1/node_modules/semver/functions/satisfies.js"(exports2, module2) {
     var Range2 = require_range();
     var satisfies = (version, range, options) => {
       try {
@@ -17948,7 +17965,7 @@ __export(extension_exports, {
 });
 module.exports = __toCommonJS(extension_exports);
 
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/errors/HTTPError.js
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/errors/HTTPError.js
 var HTTPError = class extends Error {
   response;
   request;
@@ -17966,7 +17983,7 @@ var HTTPError = class extends Error {
   }
 };
 
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/errors/TimeoutError.js
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/errors/TimeoutError.js
 var TimeoutError = class extends Error {
   request;
   constructor(request) {
@@ -17976,10 +17993,200 @@ var TimeoutError = class extends Error {
   }
 };
 
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/utils/is.js
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/core/constants.js
+var supportsRequestStreams = (() => {
+  let duplexAccessed = false;
+  let hasContentType = false;
+  const supportsReadableStream = typeof globalThis.ReadableStream === "function";
+  const supportsRequest = typeof globalThis.Request === "function";
+  if (supportsReadableStream && supportsRequest) {
+    try {
+      hasContentType = new globalThis.Request("https://empty.invalid", {
+        body: new globalThis.ReadableStream(),
+        method: "POST",
+        // @ts-expect-error - Types are outdated.
+        get duplex() {
+          duplexAccessed = true;
+          return "half";
+        }
+      }).headers.has("Content-Type");
+    } catch (error) {
+      if (error instanceof Error && error.message === "unsupported BodyInit type") {
+        return false;
+      }
+      throw error;
+    }
+  }
+  return duplexAccessed && !hasContentType;
+})();
+var supportsAbortController = typeof globalThis.AbortController === "function";
+var supportsResponseStreams = typeof globalThis.ReadableStream === "function";
+var supportsFormData = typeof globalThis.FormData === "function";
+var requestMethods = ["get", "post", "put", "patch", "head", "delete"];
+var validate = () => void 0;
+validate();
+var responseTypes = {
+  json: "application/json",
+  text: "text/*",
+  formData: "multipart/form-data",
+  arrayBuffer: "*/*",
+  blob: "*/*"
+};
+var maxSafeTimeout = 2147483647;
+var usualFormBoundarySize = new TextEncoder().encode("------WebKitFormBoundaryaxpyiPgbbPti10Rw").length;
+var stop = Symbol("stop");
+var kyOptionKeys = {
+  json: true,
+  parseJson: true,
+  stringifyJson: true,
+  searchParams: true,
+  prefixUrl: true,
+  retry: true,
+  timeout: true,
+  hooks: true,
+  throwHttpErrors: true,
+  onDownloadProgress: true,
+  onUploadProgress: true,
+  fetch: true
+};
+var requestOptionsRegistry = {
+  method: true,
+  headers: true,
+  body: true,
+  mode: true,
+  credentials: true,
+  cache: true,
+  redirect: true,
+  referrer: true,
+  referrerPolicy: true,
+  integrity: true,
+  keepalive: true,
+  signal: true,
+  window: true,
+  dispatcher: true,
+  duplex: true,
+  priority: true
+};
+
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/utils/body.js
+var getBodySize = (body) => {
+  if (!body) {
+    return 0;
+  }
+  if (body instanceof FormData) {
+    let size = 0;
+    for (const [key, value] of body) {
+      size += usualFormBoundarySize;
+      size += new TextEncoder().encode(`Content-Disposition: form-data; name="${key}"`).length;
+      size += typeof value === "string" ? new TextEncoder().encode(value).length : value.size;
+    }
+    return size;
+  }
+  if (body instanceof Blob) {
+    return body.size;
+  }
+  if (body instanceof ArrayBuffer) {
+    return body.byteLength;
+  }
+  if (typeof body === "string") {
+    return new TextEncoder().encode(body).length;
+  }
+  if (body instanceof URLSearchParams) {
+    return new TextEncoder().encode(body.toString()).length;
+  }
+  if ("byteLength" in body) {
+    return body.byteLength;
+  }
+  if (typeof body === "object" && body !== null) {
+    try {
+      const jsonString = JSON.stringify(body);
+      return new TextEncoder().encode(jsonString).length;
+    } catch {
+      return 0;
+    }
+  }
+  return 0;
+};
+var streamResponse = (response, onDownloadProgress) => {
+  const totalBytes = Number(response.headers.get("content-length")) || 0;
+  let transferredBytes = 0;
+  if (response.status === 204) {
+    if (onDownloadProgress) {
+      onDownloadProgress({ percent: 1, totalBytes, transferredBytes }, new Uint8Array());
+    }
+    return new Response(null, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers
+    });
+  }
+  return new Response(new ReadableStream({
+    async start(controller) {
+      const reader = response.body.getReader();
+      if (onDownloadProgress) {
+        onDownloadProgress({ percent: 0, transferredBytes: 0, totalBytes }, new Uint8Array());
+      }
+      async function read() {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        if (onDownloadProgress) {
+          transferredBytes += value.byteLength;
+          const percent = totalBytes === 0 ? 0 : transferredBytes / totalBytes;
+          onDownloadProgress({ percent, transferredBytes, totalBytes }, value);
+        }
+        controller.enqueue(value);
+        await read();
+      }
+      await read();
+    }
+  }), {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers
+  });
+};
+var streamRequest = (request, onUploadProgress) => {
+  const totalBytes = getBodySize(request.body);
+  let transferredBytes = 0;
+  return new Request(request, {
+    // @ts-expect-error - Types are outdated.
+    duplex: "half",
+    body: new ReadableStream({
+      async start(controller) {
+        const reader = request.body instanceof ReadableStream ? request.body.getReader() : new Response("").body.getReader();
+        async function read() {
+          const { done, value } = await reader.read();
+          if (done) {
+            if (onUploadProgress) {
+              onUploadProgress({ percent: 1, transferredBytes, totalBytes: Math.max(totalBytes, transferredBytes) }, new Uint8Array());
+            }
+            controller.close();
+            return;
+          }
+          transferredBytes += value.byteLength;
+          let percent = totalBytes === 0 ? 0 : transferredBytes / totalBytes;
+          if (totalBytes < transferredBytes || percent === 1) {
+            percent = 0.99;
+          }
+          if (onUploadProgress) {
+            onUploadProgress({ percent: Number(percent.toFixed(2)), transferredBytes, totalBytes }, value);
+          }
+          controller.enqueue(value);
+          await read();
+        }
+        await read();
+      }
+    })
+  });
+};
+
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/utils/is.js
 var isObject = (value) => value !== null && typeof value === "object";
 
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/utils/merge.js
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/utils/merge.js
 var validateAndMerge = (...sources) => {
   for (const source of sources) {
     if ((!isObject(source) || Array.isArray(source)) && source !== void 0) {
@@ -18040,80 +18247,7 @@ var deepMerge = (...sources) => {
   return returnValue;
 };
 
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/core/constants.js
-var supportsRequestStreams = (() => {
-  let duplexAccessed = false;
-  let hasContentType = false;
-  const supportsReadableStream = typeof globalThis.ReadableStream === "function";
-  const supportsRequest = typeof globalThis.Request === "function";
-  if (supportsReadableStream && supportsRequest) {
-    try {
-      hasContentType = new globalThis.Request("https://empty.invalid", {
-        body: new globalThis.ReadableStream(),
-        method: "POST",
-        // @ts-expect-error - Types are outdated.
-        get duplex() {
-          duplexAccessed = true;
-          return "half";
-        }
-      }).headers.has("Content-Type");
-    } catch (error) {
-      if (error instanceof Error && error.message === "unsupported BodyInit type") {
-        return false;
-      }
-      throw error;
-    }
-  }
-  return duplexAccessed && !hasContentType;
-})();
-var supportsAbortController = typeof globalThis.AbortController === "function";
-var supportsResponseStreams = typeof globalThis.ReadableStream === "function";
-var supportsFormData = typeof globalThis.FormData === "function";
-var requestMethods = ["get", "post", "put", "patch", "head", "delete"];
-var validate = () => void 0;
-validate();
-var responseTypes = {
-  json: "application/json",
-  text: "text/*",
-  formData: "multipart/form-data",
-  arrayBuffer: "*/*",
-  blob: "*/*"
-};
-var maxSafeTimeout = 2147483647;
-var stop = Symbol("stop");
-var kyOptionKeys = {
-  json: true,
-  parseJson: true,
-  stringifyJson: true,
-  searchParams: true,
-  prefixUrl: true,
-  retry: true,
-  timeout: true,
-  hooks: true,
-  throwHttpErrors: true,
-  onDownloadProgress: true,
-  fetch: true
-};
-var requestOptionsRegistry = {
-  method: true,
-  headers: true,
-  body: true,
-  mode: true,
-  credentials: true,
-  cache: true,
-  redirect: true,
-  referrer: true,
-  referrerPolicy: true,
-  integrity: true,
-  keepalive: true,
-  signal: true,
-  window: true,
-  dispatcher: true,
-  duplex: true,
-  priority: true
-};
-
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/utils/normalize.js
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/utils/normalize.js
 var normalizeRequestMethod = (input) => requestMethods.includes(input) ? input.toUpperCase() : input;
 var retryMethods = ["get", "put", "head", "delete", "options", "trace"];
 var retryStatusCodes = [408, 413, 429, 500, 502, 503, 504];
@@ -18146,7 +18280,7 @@ var normalizeRetryOptions = (retry = {}) => {
   };
 };
 
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/utils/timeout.js
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/utils/timeout.js
 async function timeout(request, init, abortController, options) {
   return new Promise((resolve, reject) => {
     const timeoutId = setTimeout(() => {
@@ -18161,7 +18295,7 @@ async function timeout(request, init, abortController, options) {
   });
 }
 
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/utils/delay.js
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/utils/delay.js
 async function delay(ms, { signal }) {
   return new Promise((resolve, reject) => {
     if (signal) {
@@ -18179,7 +18313,7 @@ async function delay(ms, { signal }) {
   });
 }
 
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/utils/options.js
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/utils/options.js
 var findUnknownOptions = (request, options) => {
   const unknownOptions = {};
   for (const key in options) {
@@ -18190,7 +18324,7 @@ var findUnknownOptions = (request, options) => {
   return unknownOptions;
 };
 
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/core/Ky.js
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/core/Ky.js
 var Ky = class _Ky {
   static create(input, options) {
     const ky2 = new _Ky(input, options);
@@ -18221,17 +18355,20 @@ var Ky = class _Ky {
         if (!supportsResponseStreams) {
           throw new Error("Streams are not supported in your environment. `ReadableStream` is missing.");
         }
-        return ky2._stream(response.clone(), ky2._options.onDownloadProgress);
+        return streamResponse(response.clone(), ky2._options.onDownloadProgress);
       }
       return response;
     };
     const isRetriableMethod = ky2._options.retry.methods.includes(ky2.request.method.toLowerCase());
-    const result = isRetriableMethod ? ky2._retry(function_) : function_();
+    const result = (isRetriableMethod ? ky2._retry(function_) : function_()).finally(async () => {
+      if (!ky2.request.bodyUsed) {
+        await ky2.request.body?.cancel();
+      }
+    });
     for (const [type, mimeType] of Object.entries(responseTypes)) {
       result[type] = async () => {
         ky2.request.headers.set("accept", ky2.request.headers.get("accept") || mimeType);
-        const awaitedResult = await result;
-        const response = awaitedResult.clone();
+        const response = await result;
         if (type === "json") {
           if (response.status === 204) {
             return "";
@@ -18267,7 +18404,7 @@ var Ky = class _Ky {
         beforeError: [],
         afterResponse: []
       }, options.hooks),
-      method: normalizeRequestMethod(options.method ?? this._input.method),
+      method: normalizeRequestMethod(options.method ?? this._input.method ?? "GET"),
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
       prefixUrl: String(options.prefixUrl || ""),
       retry: normalizeRetryOptions(options.retry),
@@ -18288,12 +18425,9 @@ var Ky = class _Ky {
       this._input = this._options.prefixUrl + this._input;
     }
     if (supportsAbortController) {
-      this.abortController = new globalThis.AbortController();
       const originalSignal = this._options.signal ?? this._input.signal;
-      originalSignal?.addEventListener("abort", () => {
-        this.abortController.abort(originalSignal.reason);
-      });
-      this._options.signal = this.abortController.signal;
+      this.abortController = new globalThis.AbortController();
+      this._options.signal = originalSignal ? AbortSignal.any([originalSignal, this.abortController.signal]) : this.abortController.signal;
     }
     if (supportsRequestStreams) {
       this._options.duplex = "half";
@@ -18311,6 +18445,18 @@ var Ky = class _Ky {
         this.request.headers.delete("content-type");
       }
       this.request = new globalThis.Request(new globalThis.Request(url, { ...this.request }), this._options);
+    }
+    if (this._options.onUploadProgress) {
+      if (typeof this._options.onUploadProgress !== "function") {
+        throw new TypeError("The `onUploadProgress` option must be a function");
+      }
+      if (!supportsRequestStreams) {
+        throw new Error("Request streams are not supported in your environment. The `duplex` option for `Request` is not available.");
+      }
+      const originalBody = this.request.body;
+      if (originalBody) {
+        this.request = streamRequest(this.request, this._options.onUploadProgress);
+      }
     }
   }
   _calculateRetryDelay(error) {
@@ -18388,51 +18534,9 @@ var Ky = class _Ky {
     }
     return timeout(mainRequest, nonRequestOptions, this.abortController, this._options);
   }
-  /* istanbul ignore next */
-  _stream(response, onDownloadProgress) {
-    const totalBytes = Number(response.headers.get("content-length")) || 0;
-    let transferredBytes = 0;
-    if (response.status === 204) {
-      if (onDownloadProgress) {
-        onDownloadProgress({ percent: 1, totalBytes, transferredBytes }, new Uint8Array());
-      }
-      return new globalThis.Response(null, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers
-      });
-    }
-    return new globalThis.Response(new globalThis.ReadableStream({
-      async start(controller) {
-        const reader = response.body.getReader();
-        if (onDownloadProgress) {
-          onDownloadProgress({ percent: 0, transferredBytes: 0, totalBytes }, new Uint8Array());
-        }
-        async function read() {
-          const { done, value } = await reader.read();
-          if (done) {
-            controller.close();
-            return;
-          }
-          if (onDownloadProgress) {
-            transferredBytes += value.byteLength;
-            const percent = totalBytes === 0 ? 0 : transferredBytes / totalBytes;
-            onDownloadProgress({ percent, transferredBytes, totalBytes }, value);
-          }
-          controller.enqueue(value);
-          await read();
-        }
-        await read();
-      }
-    }), {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers
-    });
-  }
 };
 
-// node_modules/.pnpm/ky@1.7.2/node_modules/ky/distribution/index.js
+// node_modules/.pnpm/ky@1.8.1/node_modules/ky/distribution/index.js
 var createInstance = (defaults) => {
   const ky2 = (input, options) => Ky.create(input, validateAndMerge(defaults, options));
   for (const method of requestMethods) {
