@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    hash::Hash,
     path::Path,
     task::Poll,
 };
@@ -9,7 +10,7 @@ use cargo::{
         compiler::{CompileKind, RustcTargetData},
         dependency::DepKind,
         resolver::{CliFeatures, ForceAllTargets, HasDevUnits},
-        Dependency, Package, PackageId, SourceId, Summary, Workspace,
+        Dependency, Package, PackageId, PackageIdSpec, SourceId, Summary, Workspace,
     },
     ops::{
         tree::{DisplayDepth, EdgeKind, Prefix, Target, TreeOptions},
@@ -26,8 +27,8 @@ use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Uri};
 use tracing::{error, info};
 
 use crate::entity::{
-    cargo_dependency_to_toml_key, from_resolve_error, into_file_uri, CargoError, CargoErrorKind,
-    Dependency as EntityDependency, SymbolTree, TomlNode,
+    from_resolve_error, into_file_uri, CargoError, CargoErrorKind, Dependency as EntityDependency,
+    SymbolTree, TomlNode,
 };
 
 use super::appraiser::Ctx;
@@ -36,6 +37,8 @@ use super::appraiser::Ctx;
 pub struct CargoResolveOutput {
     pub ctx: Ctx,
     pub root_manifest_uri: Uri,
+    pub specs: Vec<PackageIdSpec>,
+    pub member_manifest_uris: Vec<Uri>,
     //toml_name -> Dependency
     pub dependencies: HashMap<String, Vec<DependencyWithId>>,
     //package_name -> Vec<Package>
@@ -61,17 +64,20 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     //Dependency is a what cargo.toml requested
     //workspace resolve specs
     let mut specs = Vec::with_capacity(5);
-    let deps = match workspace.current() {
-        Ok(current) => current.dependencies().to_vec(),
-        Err(_) => {
-            let mut deps = Vec::new();
-            for member in workspace.members() {
-                deps.extend(member.dependencies().to_vec());
-                specs.push(member.package_id().to_spec());
-            }
-            deps
-        }
-    };
+    let mut member_manifest_uris = Vec::with_capacity(5);
+
+    let mut deps = HashSet::new();
+
+    if let Ok(current) = workspace.current() {
+        specs.push(current.package_id().to_spec());
+        deps.extend(current.dependencies().to_vec());
+    }
+
+    for member in workspace.members() {
+        specs.push(member.package_id().to_spec());
+        member_manifest_uris.push(into_file_uri(member.manifest_path()));
+        deps.extend(member.dependencies().to_vec());
+    }
 
     let mut deps_map = HashMap::new();
     let mut source_ids = HashMap::new();
@@ -157,6 +163,8 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     Ok(CargoResolveOutput {
         ctx: ctx.clone(),
         root_manifest_uri,
+        member_manifest_uris,
+        specs,
         dependencies: deps_map,
         packages,
         summaries,

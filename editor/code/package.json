@@ -2,7 +2,7 @@
   "name": "cargo-appraiser",
   "displayName": "cargo-appraiser",
   "description": "LSP for Cargo.toml",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "icon": "image/icon.webp",
   "publisher": "washan",
   "license": "SEE LICENSE IN LICENSE",
@@ -47,6 +47,7 @@
     "configuration": [
       {
         "title": "cargo-appraiser",
+        "type": "object",
         "properties": {
           "cargo-appraiser.decorationColor.light": {
             "type": "object",
@@ -67,6 +68,10 @@
           "cargo-appraiser.decorationFormatter": {
             "type": "object",
             "description": "the format string used by decoration"
+          },
+          "cargo-appraiser.audit": {
+            "type": "object",
+            "description": "audit feature configuration"
           }
         }
       }

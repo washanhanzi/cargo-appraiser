@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::{GotoDefinitionResponse, Location};
+use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Uri};
 
 use crate::{
     entity::{DependencyEntryKind, DependencyKeyKind, EntryKind, KeyKind, NodeKind, TomlNode},
@@ -17,12 +17,11 @@ pub fn goto_definition(
     | NodeKind::Key(KeyKind::Dependency(dep_id, DependencyKeyKind::Workspace)) = &node.kind
     {
         let dep = doc.dependency(dep_id)?;
-        let root_uri = doc.root_manifest.as_ref()?;
-        let root_doc = state.document(root_uri)?;
+        let root_doc = state.root_document()?;
         for d in root_doc.dependencies.values() {
             if d.name == dep.name && d.is_virtual {
                 return Some(GotoDefinitionResponse::Scalar(Location {
-                    uri: root_uri.clone(),
+                    uri: root_doc.uri.clone(),
                     range: d.range,
                 }));
             }

@@ -1,5 +1,6 @@
 use std::collections::{hash_map::Entry, HashMap};
 
+use cargo::core::PackageIdSpec;
 use tower_lsp::lsp_types::Uri;
 
 use crate::entity::{EntryDiff, TomlParsingError};
@@ -8,17 +9,29 @@ use super::document::Document;
 
 pub struct Workspace {
     pub documents: HashMap<Uri, Document>,
+    pub specs: Vec<PackageIdSpec>,
+    pub root_manifest_uri: Option<Uri>,
+    pub member_manifest_uris: Vec<Uri>,
 }
 
 impl Workspace {
     pub fn new() -> Self {
         Self {
             documents: HashMap::new(),
+            specs: Vec::new(),
+            root_manifest_uri: None,
+            member_manifest_uris: Vec::new(),
         }
     }
 
     pub fn document(&self, uri: &Uri) -> Option<&Document> {
         self.documents.get(uri)
+    }
+
+    pub fn root_document(&self) -> Option<&Document> {
+        self.root_manifest_uri
+            .as_ref()
+            .and_then(|uri| self.documents.get(uri))
     }
 
     pub fn check_rev(&self, uri: &Uri, rev: usize) -> bool {

@@ -18602,8 +18602,9 @@ var Config = class {
   }
   init() {
     const formatter = import_vscode.workspace.getConfiguration("cargo-appraiser").get("decorationFormatter");
+    const auditConfig = import_vscode.workspace.getConfiguration("cargo-appraiser").get("audit");
     if (typeof formatter === "object") {
-      this.initializationOptions = { decorationFormatter: formatter };
+      this.initializationOptions = { decorationFormatter: formatter, audit: auditConfig };
     }
   }
   getInitializationOptions() {

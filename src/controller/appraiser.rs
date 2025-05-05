@@ -1,7 +1,4 @@
-use std::{collections::HashMap, str::FromStr};
-
 use cargo::util::VersionExt;
-use semver::Version;
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -13,20 +10,18 @@ use tower_lsp::{
     },
     Client,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::{
-    controller::{
-        audit::into_diagnostic_text, code_action::code_action, completion::completion,
-        read_file::ReadFileParam,
-    },
+    config::GLOBAL_CONFIG,
+    controller::{code_action::code_action, completion::completion, read_file::ReadFileParam},
     decoration::DecorationEvent,
-    entity::{into_file_uri, CargoError, Dependency},
+    entity::CargoError,
     usecase::{Document, Workspace},
 };
 
 use super::{
-    audit::{into_diagnostic_severity, AuditController, AuditReports, AuditResult},
+    audit::{AuditController, AuditReports},
     capabilities::{ClientCapabilities, ClientCapability},
     cargo::{cargo_resolve, CargoResolveOutput},
     debouncer::Debouncer,
@@ -62,7 +57,7 @@ pub enum CargoDocumentEvent {
     //mark dependencies dirty, clear decorations
     Closed(Uri),
     //result from cargo
-    CargoResolved(CargoResolveOutput),
+    CargoResolved(Box<CargoResolveOutput>),
     //cargo.lock change
     //CargoLockCreated,
     CargoLockChanged,
@@ -113,7 +108,7 @@ impl Appraiser {
                 match cargo_resolve(&event).await {
                     Ok(output) => {
                         if let Err(e) = tx_for_cargo
-                            .send(CargoDocumentEvent::CargoResolved(output))
+                            .send(CargoDocumentEvent::CargoResolved(Box::new(output)))
                             .await
                         {
                             error!("error sending cargo resolved event: {}", e);
@@ -154,99 +149,61 @@ impl Appraiser {
             while let Some(event) = rx.recv().await {
                 match event {
                     CargoDocumentEvent::Audited(reports) => {
-                        // //a hashset to record which is already audited
-                        // let mut audited: HashMap<(Uri, String), (Dependency, Vec<AuditResult>)> =
-                        //     HashMap::new();
-                        // for (path, report) in &reports.members {
-                        //     let cargo_path_uri = into_file_uri(path.join("Cargo.toml").as_path());
-                        //     //go to state.document(uri) and then state.document(root_manifest)
-                        //     let doc = match state.document(&cargo_path_uri) {
-                        //         Some(doc) => doc,
-                        //         None => match state.document(&reports.root) {
-                        //             Some(doc) => doc,
-                        //             None => continue,
-                        //         },
-                        //     };
-                        //     //loop dependencies and write the audited with root_manifest
-                        //     for dep in doc.dependencies.values() {
-                        //         //if it has resolved dependency, we can compare the version
-                        //         //if it doesn't(for virtual workspace), we can just compare the version compatibility
-                        //         //first find matching dependency name in resports
-                        //         let Some(reports_map) = report.get(dep.package_name()) else {
-                        //             continue;
-                        //         };
-                        //         //then find matching dependency version in reports_map
-                        //         match dep.resolved.as_ref() {
-                        //             Some(resolved) => {
-                        //                 //then find matching dependency version in rs
-                        //                 let Some(rr) = reports_map
-                        //                     .get(resolved.version().to_string().as_str())
-                        //                 else {
-                        //                     continue;
-                        //                 };
-                        //                 audited.insert(
-                        //                     (cargo_path_uri.clone(), dep.id.to_string()),
-                        //                     (dep.clone(), rr.clone()),
-                        //                 );
-                        //             }
-                        //             None => {
-                        //                 for (v, rr) in reports_map {
-                        //                     match dep.unresolved.as_ref() {
-                        //                         Some(unresolved) => {
-                        //                             if unresolved
-                        //                                 .version_req()
-                        //                                 .matches(&Version::parse(v).unwrap())
-                        //                             {
-                        //                                 audited.insert(
-                        //                                     (
-                        //                                         cargo_path_uri.clone(),
-                        //                                         dep.id.to_string(),
-                        //                                     ),
-                        //                                     (dep.clone(), rr.clone()),
-                        //                                 );
-                        //                             }
-                        //                         }
-                        //                         None => {
-                        //                             if let Some(v) = dep.version.as_ref() {
-                        //                                 let Ok(req)=  cargo_util_schemas::core::PartialVersion::from_str(v.value())else{
-                        //                                     continue;
-                        //                                 };
-                        //                                 if let Ok(v) = Version::parse(v.value()) {
-                        //                                     if req.to_caret_req().matches(&v) {
-                        //                                         audited.insert(
-                        //                                             (
-                        //                                                 cargo_path_uri.clone(),
-                        //                                                 dep.id.to_string(),
-                        //                                             ),
-                        //                                             (dep.clone(), rr.clone()),
-                        //                                         );
-                        //                                     }
-                        //                                 }
-                        //                             }
-                        //                         }
-                        //                     }
-                        //                 }
-                        //             }
-                        //         };
-                        //     }
-                        //     //send to diagnostic
-                        //     for ((uri, _), (dep, rr)) in &audited {
-                        //         let diag = Diagnostic {
-                        //             range: dep.range,
-                        //             severity: Some(into_diagnostic_severity(rr)),
-                        //             code: None,
-                        //             code_description: None,
-                        //             source: Some("cargo-appraiser".to_string()),
-                        //             message: into_diagnostic_text(rr),
-                        //             related_information: None,
-                        //             tags: None,
-                        //             data: None,
-                        //         };
-                        //         diagnostic_controller
-                        //             .add_audit_diagnostic(uri, &dep.id, diag)
-                        //             .await;
-                        //     }
-                        // }
+                        debug!("found audit reports: {:?}", reports.len());
+                        let Some(root_manifest_uri) = state.root_manifest_uri.as_ref() else {
+                            continue;
+                        };
+                        let Some(doc) = state.root_document() else {
+                            continue;
+                        };
+                        for issues in reports.values() {
+                            for issue in issues {
+                                for (crate_name, paths) in &issue.dependency_paths {
+                                    let depenedencies = doc.dependencies_by_crate_name(crate_name);
+                                    if depenedencies.is_empty() {
+                                        continue;
+                                    }
+                                    for dep in depenedencies {
+                                        let Some(resolved) = dep.resolved.as_ref() else {
+                                            continue;
+                                        };
+                                        let required_version = if crate_name == &issue.crate_name {
+                                            issue.version.clone()
+                                        } else {
+                                            let mut splits = paths
+                                                .last()
+                                                .map(|s| s.split(" "))
+                                                .unwrap_or_else(|| "".split(" "));
+                                            splits.nth(1).unwrap_or_default().to_string()
+                                        };
+                                        if required_version.is_empty() {
+                                            continue;
+                                        }
+                                        if required_version == resolved.version().to_string() {
+                                            //send diagnostic
+                                            let diag = Diagnostic {
+                                                range: dep.range,
+                                                severity: Some(issue.severity()),
+                                                code: None,
+                                                code_description: None,
+                                                source: Some("cargo-appraiser".to_string()),
+                                                message: issue.audit_text(Some(crate_name)),
+                                                related_information: None,
+                                                tags: None,
+                                                data: None,
+                                            };
+                                            diagnostic_controller
+                                                .add_audit_diagnostic(
+                                                    root_manifest_uri,
+                                                    &dep.id,
+                                                    diag,
+                                                )
+                                                .await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     CargoDocumentEvent::CargoDiagnostic(uri, err) => {
                         diagnostic_controller.clear_cargo_diagnostics(&uri).await;
@@ -416,9 +373,6 @@ impl Appraiser {
                             //read file with os
                             std::fs::read_to_string(uri.path().as_str()).unwrap()
                         };
-                        if let Err(e) = audit_controller.send(&uri).await {
-                            error!("audit controller send error: {}", e);
-                        };
                         let _ = reconsile_document(
                             &mut state,
                             &mut diagnostic_controller,
@@ -427,9 +381,6 @@ impl Appraiser {
                         .await;
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
-                        if let Err(e) = audit_controller.send(&msg.uri).await {
-                            error!("audit controller send error: {}", e);
-                        };
                         let Some(doc) =
                             reconsile_document(&mut state, &mut diagnostic_controller, &msg).await
                         else {
@@ -447,24 +398,11 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::ReadyToResolve(ctx) => {
-                        //delay audit
-                        if let Err(e) = audit_controller.send(&ctx.uri).await {
-                            error!("audit controller send error: {}", e);
-                        };
                         if state.check_rev(&ctx.uri, ctx.rev) {
-                            start_resolve(
-                                &ctx.uri,
-                                &mut state,
-                                &render_tx,
-                                &cargo_tx,
-                                &inner_tx,
-                                &client,
-                                &client_capabilities,
-                            )
-                            .await;
+                            start_resolve(&ctx.uri, &mut state, &render_tx, &cargo_tx).await;
                         }
                     }
-                    CargoDocumentEvent::CargoResolved(mut output) => {
+                    CargoDocumentEvent::CargoResolved(output) => {
                         //resolve virtual manifest if we haven't
                         let root_manifest_uri = output.root_manifest_uri.clone();
                         if state.document(&root_manifest_uri).is_none() {
@@ -474,6 +412,20 @@ impl Appraiser {
                             {
                                 error!("inner tx send error: {}", e);
                             }
+                        }
+                        state.root_manifest_uri = Some(root_manifest_uri.clone());
+                        state.specs = output.specs;
+                        state.member_manifest_uris = output.member_manifest_uris;
+
+                        //send audit event
+                        if !GLOBAL_CONFIG.read().unwrap().audit.disabled {
+                            debug!("send audit event");
+                            if let Err(e) = audit_controller
+                                .send(&root_manifest_uri, state.specs.clone())
+                                .await
+                            {
+                                error!("audit controller send error: {}", e);
+                            };
                         }
 
                         let Some(doc) =
@@ -485,8 +437,6 @@ impl Appraiser {
                             .clear_cargo_diagnostics(&output.ctx.uri)
                             .await;
 
-                        doc.root_manifest = Some(root_manifest_uri);
-
                         //populate deps
                         for dep in doc.dependencies.values_mut() {
                             let Some(rev) = doc.dirty_dependencies.get(&dep.id) else {
@@ -497,8 +447,7 @@ impl Appraiser {
                             }
 
                             //populate requested
-                            let Some(requested_result) = output.dependencies.remove(&dep.name)
-                            else {
+                            let Some(requested_result) = output.dependencies.get(&dep.name) else {
                                 if let Err(e) = render_tx
                                     .send(DecorationEvent::Dependency(
                                         output.ctx.uri.clone(),
@@ -518,30 +467,25 @@ impl Appraiser {
                                 1 => requested_result.first().unwrap(),
                                 _ => {
                                     let mut matched_requested_dep = None;
-                                    for requested_dep in &requested_result {
+                                    for requested_dep in requested_result {
                                         // For not virtual dependency, they should in same table
                                         if !dep.is_virtual
                                             && dep.table.to_string()
                                                 != requested_dep.1.kind().kind_table()
                                         {
+                                            debug!(
+                                                "not virtual dependency, table not match: {}",
+                                                dep.id
+                                            );
                                             continue;
                                         }
-
-                                        // For virtual dependency, they should in same platform
-                                        if dep.platform().is_none()
-                                            && requested_dep.1.platform().is_none()
-                                        {
-                                            matched_requested_dep = Some(requested_dep);
-                                            break;
-                                        } else if let Some(p) = requested_dep.1.platform() {
-                                            if p.to_string() == dep.platform().unwrap_or_default() {
-                                                matched_requested_dep = Some(requested_dep);
-                                                break;
-                                            }
-                                        }
+                                        //a dependency could specify platform in member Cargo.toml but not in workspace Cargo.toml
+                                        matched_requested_dep = Some(requested_dep);
                                     }
                                     let Some(requested_dep) = matched_requested_dep else {
-                                        error!("matched_requested_dep is None for {}", dep.id);
+                                        error!("Can't find a match for dep {}", dep.id);
+                                        //remove the dirty dependency else we stuck in infinite cargo resolve
+                                        doc.dirty_dependencies.remove(&dep.id);
                                         continue;
                                     };
                                     requested_dep
@@ -549,7 +493,8 @@ impl Appraiser {
                             };
                             dep.requested = Some(requested.1.clone());
 
-                            let mut summaries = output.summaries.remove(&requested.0).unwrap();
+                            let mut summaries =
+                                output.summaries.get(&requested.0).cloned().unwrap();
                             summaries.sort_by(|a, b| b.version().cmp(a.version()));
                             dep.summaries = Some(summaries.clone());
 
@@ -575,7 +520,7 @@ impl Appraiser {
                                 dep.matched_summary = None;
                                 dep.latest_matched_summary = None;
                                 dep.latest_summary = None;
-                                for summary in &summaries {
+                                for summary in summaries {
                                     if dep.matched_summary.is_some()
                                         && dep.latest_matched_summary.is_some()
                                         && dep.latest_summary.is_some()
@@ -614,6 +559,7 @@ impl Appraiser {
                         }
 
                         if doc.is_dependencies_dirty() {
+                            debug!("dependencies still dirty: {:?}", doc.dirty_dependencies);
                             if let Err(e) = debouncer
                                 .send_background(Ctx {
                                     uri: output.ctx.uri,
@@ -637,52 +583,10 @@ async fn start_resolve(
     state: &mut Workspace,
     render_tx: &Sender<DecorationEvent>,
     cargo_tx: &Sender<Ctx>,
-    inner_tx: &Sender<CargoDocumentEvent>,
-    client: &Client,
-    client_capabilities: &ClientCapabilities,
 ) {
     let Some(doc) = state.document_mut(uri) else {
         return;
     };
-    // doc.populate_dependencies();
-
-    // if let Some(root_uri) = doc.root_manifest.as_ref() {
-    //     if root_uri != uri {
-    //         if client_capabilities.can_read_file() {
-    //             let param = ReadFileParam {
-    //                 uri: root_uri.clone(),
-    //             };
-    //             match client.send_request::<ReadFile>(param).await {
-    //                 Ok(content) => {
-    //                     if let Err(e) = inner_tx
-    //                         .send(CargoDocumentEvent::Parse(CargoTomlPayload {
-    //                             uri: root_uri.clone(),
-    //                             text: content.content,
-    //                         }))
-    //                         .await
-    //                     {
-    //                         error!("inner tx send error: {}", e);
-    //                     }
-    //                 }
-    //                 Err(e) => {
-    //                     error!("read file error: {}", e);
-    //                 }
-    //             }
-    //         } else {
-    //             //read file with os
-    //             let content = std::fs::read_to_string(root_uri.path().as_str()).unwrap();
-    //             if let Err(e) = inner_tx
-    //                 .send(CargoDocumentEvent::Parse(CargoTomlPayload {
-    //                     uri: root_uri.clone(),
-    //                     text: content,
-    //                 }))
-    //                 .await
-    //             {
-    //                 error!("inner tx send error: {}", e);
-    //             }
-    //         }
-    //     }
-    // }
 
     //no need to resolve
     if !doc.is_dependencies_dirty() {

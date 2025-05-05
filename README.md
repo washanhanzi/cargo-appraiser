@@ -13,6 +13,16 @@
   - code action on dependency's `version`  ![CleanShot 2025-01-14 at 12 00 57@2x](https://github.com/user-attachments/assets/ad4eab3c-d47c-415c-84c9-cc3253f15306)
   - `cargo update` code action on dependency's `version` and `workspace`
   - goto definition on workspace dependency
+- Audit
+  - To use audit, you need to install `cargo audit` command
+
+# Audit
+
+Audit feature is enabled by default, to disable this feature, check `audit.disabled` config.
+
+The audit feature requires `cargo audit` command, you can install it by running `cargo install cargo-audit --locked`.
+
+Check [cargo-audit](https://crates.io/crates/cargo-audit) for detail.
 
 # Config
 
@@ -60,11 +70,14 @@
 
 To apply these config, you need to restart the lsp.
 
+### Examples
+
 - VSCode
 
 ```jsonc
 {
-  "cargo-appraiser.decorationFormatter": {} //see below
+  "cargo-appraiser.decorationFormatter": {}, //see below
+  "cargo-appraiser.audit": {} //see below
 }
 ```
 
@@ -75,13 +88,16 @@ To apply these config, you need to restart the lsp.
     "lsp": {
         "cargo-appraiser": {
             "initialization_options": {
-                "decorationFormatter": {} //see below
+                "decorationFormatter": {}, //see below
+                "audit": {} //see below
             }
         }
     }
 }
 
 ```
+
+### Default values
 
 ```jsonc
 {
@@ -116,6 +132,12 @@ To apply these config, you need to restart the lsp.
     "noncompatible_latest": "🔒 {{installed}}, {{latest}}",
     "yanked": "❌ yanked {{installed}}, {{latest_matched}}",
     "git": "🐙 {{commit}}"
+  },
+  "audit":{
+    "disabled": false,
+    // "warning" will show warning and vulnerability
+    // "vulnerability" will only show vulnerability
+    "level": "warning"
   }
 }
 ```

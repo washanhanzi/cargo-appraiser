@@ -61,24 +61,3 @@ impl Dependency {
         self.platform = dep.platform;
     }
 }
-
-pub fn cargo_dependency_to_toml_key(dep: &cargo::core::Dependency) -> String {
-    let platform = match dep.platform() {
-        Some(p) => p.to_string(),
-        None => "".to_string(),
-    };
-    format!(
-        "{}:{}:{}",
-        dep.kind().kind_table(),
-        dep.name_in_toml(),
-        platform
-    )
-}
-
-//DependencyId is used to identify a set of packages
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-struct DependencyId {
-    //package name
-    name: String,
-    source_id: SourceId,
-}

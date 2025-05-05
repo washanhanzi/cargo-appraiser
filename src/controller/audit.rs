@@ -1,112 +1,47 @@
 use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
+    collections::{HashMap, HashSet},
     pin::Pin,
     str::FromStr,
+    sync::OnceLock,
     time::Duration,
 };
 
-use petgraph::prelude::NodeIndex;
+use cargo::core::PackageIdSpec;
+use regex::Regex;
 use tokio::{
     sync::mpsc::{self, error::SendError, Sender},
     time::Sleep,
 };
 use tower_lsp::lsp_types::{DiagnosticSeverity, Uri};
-use tracing::{error, info};
+use tracing::{debug, error};
 
-use crate::entity::into_file_uri_str;
+use crate::config::GLOBAL_CONFIG;
 
 use super::CargoDocumentEvent;
 
-//pathBuf is the workspace member Cargo.toml path, the inside hashpmap has dependency Name and Version as key
-#[derive(Debug, Clone)]
-pub struct AuditReports {
-    pub root: Uri,
-    pub members: HashMap<PathBuf, HashMap<String, HashMap<String, Vec<AuditResult>>>>,
+// Static regex patterns using OnceLock
+static TREE_LINE_RE: OnceLock<Regex> = OnceLock::new();
+static ROOT_LINE_RE: OnceLock<Regex> = OnceLock::new();
+
+pub type AuditReports = HashMap<String, Vec<AuditIssue>>;
+
+// Initialize regex patterns
+fn tree_line_re() -> &'static Regex {
+    TREE_LINE_RE.get_or_init(|| Regex::new(r"^([│\s]*)(?:├──|└──)\s*(\S+)\s+(\S+)").unwrap())
+}
+
+fn root_line_re() -> &'static Regex {
+    ROOT_LINE_RE.get_or_init(|| Regex::new(r"^([a-zA-Z0-9_-]+)\s+(\S+)$").unwrap())
+}
+
+pub struct AuditPayload {
+    pub root_manifest_uri: Uri,
+    pub specs: Vec<PackageIdSpec>,
 }
 
 pub struct AuditController {
     tx: Sender<CargoDocumentEvent>,
-    sender: Option<Sender<Uri>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AuditResult {
-    pub warning: Option<rustsec::Warning>,
-    pub vuln: Option<rustsec::Vulnerability>,
-    pub tree: Vec<Vec<String>>,
-}
-
-impl AuditResult {
-    pub fn severity(&self) -> DiagnosticSeverity {
-        if self.vuln.is_some() {
-            return DiagnosticSeverity::ERROR;
-        }
-        if self.warning.is_some() {
-            return DiagnosticSeverity::WARNING;
-        }
-        DiagnosticSeverity::INFORMATION
-    }
-
-    pub fn audit_text(&self) -> String {
-        if let Some(vuln) = &self.vuln {
-            return format!(
-                "# {}\n\n\
-                {}\n\n\
-                * Package: {} {}\n\
-                * ID: {}\n\
-                {}\n\n\
-                ",
-                vuln.advisory.title,
-                vuln.advisory.description,
-                vuln.package.name,
-                vuln.package.version,
-                vuln.advisory.id,
-                vuln.advisory
-                    .url
-                    .as_ref()
-                    .map_or("".to_string(), |url| format!("* Url: {}", url))
-            );
-        }
-        if let Some(warning) = &self.warning {
-            return format!(
-                "# Warning: {} {}\n\
-                {}\n\n\
-                ",
-                warning.package.name, warning.package.version, warning.kind,
-            );
-        }
-        String::new()
-    }
-}
-
-pub fn into_diagnostic_text(reports: &[AuditResult]) -> String {
-    let mut s = String::new();
-    let mut tree = String::new();
-    for r in reports {
-        s.push_str(&r.audit_text());
-        tree.push_str(
-            r.tree
-                .iter()
-                .map(|path| format!("- {}\n", path.join(" -> ")))
-                .collect::<Vec<_>>()
-                .join("\n")
-                .as_str(),
-        );
-    }
-    s.push_str("# Dependency Paths:\n\n");
-    s.push_str(&tree);
-    s
-}
-
-pub fn into_diagnostic_severity(
-    reports: &[AuditResult],
-) -> tower_lsp::lsp_types::DiagnosticSeverity {
-    reports
-        .iter()
-        .map(|r| r.severity())
-        .min()
-        .unwrap_or(DiagnosticSeverity::INFORMATION)
+    sender: Option<Sender<AuditPayload>>,
 }
 
 impl AuditController {
@@ -114,14 +49,26 @@ impl AuditController {
         Self { tx, sender: None }
     }
 
-    pub async fn send(&self, uri: &Uri) -> Result<(), SendError<Uri>> {
-        self.sender.as_ref().unwrap().send(uri.clone()).await
+    pub async fn send(
+        &self,
+        uri: &Uri,
+        specs: Vec<PackageIdSpec>,
+    ) -> Result<(), SendError<AuditPayload>> {
+        self.sender
+            .as_ref()
+            .unwrap()
+            .send(AuditPayload {
+                root_manifest_uri: uri.clone(),
+                specs,
+            })
+            .await
     }
 
     pub fn spawn(&mut self) {
         //create a mpsc channel
         let (internal_tx, mut internal_rx) = mpsc::channel(32);
         let mut received_uri = None;
+        let mut specs = None;
         self.sender = Some(internal_tx);
         let tx = self.tx.clone();
         let mut timer: Option<Pin<Box<Sleep>>> = None;
@@ -129,16 +76,17 @@ impl AuditController {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Some(uri) = internal_rx.recv() => {
+                    Some(payload) = internal_rx.recv() => {
                         if received_uri.is_none() {
-                            if uri.path().as_str().ends_with(".lock") {
+                            if payload.root_manifest_uri.path().as_str().ends_with(".lock") {
                                 received_uri = Some(
-                                    Uri::from_str(&uri.path().as_str().replace(".lock", ".toml").to_string())
+                                    Uri::from_str(&payload.root_manifest_uri.path().as_str().replace(".lock", ".toml").to_string())
                                         .unwrap(),
                                 );
                             } else {
-                                received_uri = Some(uri);
+                                received_uri = Some(payload.root_manifest_uri.clone());
                             }
+                            specs=Some(payload.specs);
                         }
                         timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(60))));
                     }
@@ -150,9 +98,8 @@ impl AuditController {
                         }
                     }, if timer.is_some() => {
                         timer = None;
-                        let mut audited_worksapce=None;
                         let uri = received_uri.take().unwrap();
-                        let reports = match audit_workspace(&uri, &mut audited_worksapce) {
+                        let reports = match audit_workspace(&uri, &specs.take().unwrap()).await {
                             Ok(r) => r,
                             Err(e) => {
                                 error!("Failed to audit workspace {}: {}", uri.path(), e);
@@ -169,227 +116,693 @@ impl AuditController {
     }
 }
 
-//uri should be a Cargo.toml file
-pub fn audit_workspace(
-    uri: &Uri,
-    audited: &mut Option<String>,
-) -> Result<AuditReports, anyhow::Error> {
-    let gctx = cargo::util::context::GlobalContext::default()?;
-    let path = Path::new(uri.path().as_str());
-    let workspace = cargo::core::Workspace::new(path, &gctx)?;
-
-    let root = workspace.lock_root().display().to_string();
-    let root_uri = into_file_uri_str(&(root.to_string() + "/Cargo.toml"));
-    let lock = root + "/Cargo.lock";
-    //if audited is some and eq to lock, return
-    if let Some(audited_lock) = audited {
-        if *audited_lock == lock {
-            return Ok(AuditReports {
-                root: root_uri,
-                members: HashMap::new(),
-            });
-        }
-    }
-    *audited = Some(lock.to_string());
-
-    let mut config = cargo_audit::config::AuditConfig::default();
-    config.database.stale = false;
-    config.output.format = cargo_audit::config::OutputFormat::Json;
-    config.output.quiet = true;
-    config.output.disable_print_report = true;
-    let mut app = cargo_audit::auditor::Auditor::new(&config);
-    let lock_file_path = Path::new(&lock);
-    let report = app.audit_lockfile(lock_file_path)?;
-
-    let lockfile = cargo_lock::Lockfile::load(lock_file_path)?;
-    let tree = lockfile.dependency_tree()?;
-    let graph = tree.graph();
-
-    let mut members_map = HashMap::new();
-    for m in workspace.members() {
-        members_map.insert((m.name().to_string(), m.version().to_string()), m);
-    }
-
-    let mut members_index_map = HashMap::new();
-    let roots = tree.roots();
-    for r in roots {
-        let mut dfs = petgraph::visit::Dfs::new(&graph, r);
-        while let Some(nx) = dfs.next(&graph) {
-            let node = graph.node_weight(nx).unwrap();
-            if members_map.contains_key(&(node.name.to_string(), node.version.to_string())) {
-                members_index_map.insert(
-                    nx,
-                    members_map
-                        .get(&(node.name.to_string(), node.version.to_string()))
-                        .unwrap(),
-                );
-            }
-        }
-    }
-
-    let mut warnings_map: HashMap<NodeIndex, rustsec::Warning> = HashMap::new();
-    let mut vulns_map: HashMap<NodeIndex, rustsec::Vulnerability> = HashMap::new();
-
-    for warnings in report.warnings.values() {
-        for w in warnings {
-            let p = w.package.clone();
-
-            //this is the warning's package node index
-            let package_node_indx = tree.nodes()[&cargo_lock::Dependency::from(&p)];
-            warnings_map.insert(package_node_indx, w.clone());
-        }
-    }
-
-    for vul in &report.vulnerabilities.list {
-        let p = vul.package.clone();
-        let package_node_indx = tree.nodes()[&cargo_lock::Dependency::from(&p)];
-        vulns_map.insert(package_node_indx, vul.clone());
-    }
-
-    //try walk from the warning's package node index to the root node
-    //record the root and the direct dep to the root
-    let mut reports = AuditReports {
-        root: root_uri,
-        members: HashMap::new(),
-    };
-
-    // Iterate over each warning to find paths to workspace members
-    for (warning_node, warning) in warnings_map {
-        let mut tree_map = HashMap::new();
-        // For each workspace member, find all paths from the member to the warning node
-        for (dep_key, member) in &members_index_map {
-            // Find the node index of the workspace member
-            //use dfs to fin the member node
-
-            // Use petgraph's all_simple_paths to find all paths from dep_node to warning_node
-            // Note: Adjust the direction based on the actual edge direction in your graph
-            // Assuming edges point from dependent to dependency
-            let paths = petgraph::algo::all_simple_paths::<Vec<_>, _>(
-                &graph,
-                *dep_key,
-                warning_node,
-                0,        // Start depth
-                Some(10), // Maximum depth to prevent excessive paths
-            );
-
-            for path in paths {
-                // Convert NodeIndex path to package names
-                // remove the first element
-                let mut tree_path: Vec<String> =
-                    path.iter().map(|n| graph[*n].name.to_string()).collect();
-                tree_path.remove(0);
-
-                // The last node is the warning node's direct dependency package
-                // we need to group the same dep_package and make tree a Vec<Vec<String>>
-                let dep_package = graph[path[1]].clone();
-                tree_map
-                    .entry((
-                        member.root().to_path_buf(),
-                        dep_package.name.to_string(),
-                        dep_package.version.to_string(),
-                    ))
-                    .or_insert(vec![])
-                    .push(tree_path);
-            }
-        }
-        for ((path, name, version), tree) in tree_map {
-            reports
-                .members
-                .entry(path)
-                .or_default()
-                .entry(name)
-                .or_default()
-                .entry(version)
-                .or_default()
-                .push(AuditResult {
-                    warning: Some(warning.clone()),
-                    vuln: None,
-                    tree,
-                });
-        }
-    }
-    for (warning_node, vuln) in vulns_map {
-        let mut tree_map = HashMap::new();
-        // For each workspace member, find all paths from the member to the warning node
-        for (dep_key, member) in &members_index_map {
-            // Find the node index of the workspace member
-            //use dfs to fin the member node
-
-            // Use petgraph's all_simple_paths to find all paths from dep_node to warning_node
-            // Note: Adjust the direction based on the actual edge direction in your graph
-            // Assuming edges point from dependent to dependency
-            let paths = petgraph::algo::all_simple_paths::<Vec<_>, _>(
-                &graph,
-                *dep_key,
-                warning_node,
-                0,        // Start depth
-                Some(10), // Maximum depth to prevent excessive paths
-            );
-
-            for path in paths {
-                // Convert NodeIndex path to package names
-                // remove the first element
-                let mut tree_path: Vec<String> =
-                    path.iter().map(|n| graph[*n].name.to_string()).collect();
-                tree_path.remove(0);
-
-                // The last node is the warning node's direct dependency package
-                // we need to group the same dep_package and make tree a Vec<Vec<String>>
-                let dep_package = graph[path[1]].clone();
-                tree_map
-                    .entry((
-                        member.root().to_path_buf(),
-                        dep_package.name.to_string(),
-                        dep_package.version.to_string(),
-                    ))
-                    .or_insert(vec![])
-                    .push(tree_path);
-            }
-        }
-        for ((path, name, version), tree) in tree_map {
-            reports
-                .members
-                .entry(path)
-                .or_default()
-                .entry(name)
-                .or_default()
-                .entry(version)
-                .or_default()
-                .push(AuditResult {
-                    warning: None,
-                    vuln: Some(vuln.clone()),
-                    tree,
-                });
-        }
-    }
-    Ok(reports)
+#[derive(Debug, Clone, Default)]
+pub struct AuditIssue {
+    pub crate_name: String,
+    pub version: String,
+    pub title: String,
+    pub id: String,
+    pub url: Option<String>,
+    pub solution: Option<String>,
+    pub kind: AuditKind,
+    // Map of direct dependencies to their full dependency paths
+    // Key: direct dependency name (what your workspace directly depends on)
+    // Value: full path from workspace member through direct dependency to the vulnerable crate
+    pub dependency_paths: HashMap<String, Vec<String>>,
+    pub severity: Option<String>,
 }
 
+impl AuditIssue {
+    pub fn severity(&self) -> DiagnosticSeverity {
+        match self.kind {
+            AuditKind::Vulnerability => DiagnosticSeverity::ERROR,
+            AuditKind::Warning(_) => DiagnosticSeverity::WARNING,
+        }
+    }
+
+    pub fn audit_text(&self, hint_crate_name: Option<&str>) -> String {
+        match &self.kind {
+            AuditKind::Vulnerability => {
+                let mut text = format!(
+                    "# Crate: {}\n* Version: {}\n* Title: {}\n* ID: {}\n",
+                    self.crate_name, self.version, self.title, self.id
+                );
+                if let Some(url) = &self.url {
+                    text.push_str(&format!("* Url: {}\n", url));
+                }
+                if let Some(solution) = &self.solution {
+                    text.push_str(&format!("* Solution: {}\n", solution));
+                }
+                if !self.dependency_paths.is_empty() {
+                    if let Some(hint_crate_name) = hint_crate_name {
+                        if let Some(dependency_paths) = self.dependency_paths.get(hint_crate_name) {
+                            text.push_str("* Dependency paths:\n");
+                            let reversed = dependency_paths
+                                .clone()
+                                .into_iter()
+                                .rev()
+                                .collect::<Vec<_>>();
+                            text.push_str(reversed.join(" -> ").as_str());
+                        }
+                    }
+                }
+                text
+            }
+            AuditKind::Warning(warning) => {
+                let mut text = format!(
+                    "# Crate: {}\n* Version: {}\n* Warning: {}\n",
+                    self.crate_name, self.version, warning
+                );
+                if !self.title.is_empty() {
+                    text.push_str(&format!("* Title: {}\n", self.title));
+                }
+                if !self.id.is_empty() {
+                    text.push_str(&format!("* ID: {}\n", self.id));
+                }
+                if let Some(url) = self.url.as_ref() {
+                    text.push_str(&format!("* URL: {:?}\n", url));
+                }
+                if !self.dependency_paths.is_empty() {
+                    if let Some(hint_crate_name) = hint_crate_name {
+                        if let Some(dependency_paths) = self.dependency_paths.get(hint_crate_name) {
+                            text.push_str("* Dependency paths:\n");
+                            let reversed = dependency_paths
+                                .clone()
+                                .into_iter()
+                                .rev()
+                                .collect::<Vec<_>>();
+                            text.push_str(reversed.join(" -> ").as_str());
+                        }
+                    }
+                }
+                text
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum AuditKind {
+    #[default]
+    Vulnerability,
+    Warning(String),
+}
+
+#[tracing::instrument(name = "audit_workspace", level = "trace")]
+pub async fn audit_workspace(
+    //the root Cargo.toml path
+    root_manifest_uri: &Uri,
+    specs: &[PackageIdSpec],
+) -> Result<AuditReports, anyhow::Error> {
+    debug!(
+        "Auditing workspace for root manifest: {}",
+        root_manifest_uri.path()
+    );
+
+    let manifest_path = root_manifest_uri.path().to_string();
+    let manifest_path = manifest_path.replace(".toml", ".lock");
+
+    let output = match tokio::process::Command::new("cargo")
+        .arg("audit")
+        .arg("-f")
+        .arg(&manifest_path)
+        .arg("-c")
+        .arg("never")
+        .output()
+        .await
+    {
+        Ok(output) => output,
+        Err(e) => {
+            error!("Failed to spawn cargo audit: {}", e);
+            return Err(anyhow::anyhow!("Failed to spawn cargo audit"));
+        }
+    };
+
+    if output.stdout.is_empty() {
+        error!("cargo output stdout empty");
+        return Err(anyhow::anyhow!("cargo output stdout empty"));
+    }
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+
+    // Parse the text output
+    let workspace_members_refs: Vec<&str> = specs.iter().map(|s| s.name()).collect();
+    let parsed_issues = parse_audit_text_output(&stdout_str, &workspace_members_refs)?;
+
+    Ok(parsed_issues)
+}
+
+// Helper function to parse cargo audit text output
+fn parse_audit_text_output(
+    stdout: &str,
+    workspace_members: &[&str],
+) -> Result<AuditReports, anyhow::Error> {
+    let mut issues = HashMap::new();
+    let mut current_issue: Option<AuditIssue> = None;
+    let mut parsing_tree = false;
+    let mut current_path: Vec<String> = Vec::new(); // (indent, package_str)
+    let pkg_match_set: HashSet<String> =
+        HashSet::from_iter(workspace_members.iter().map(|s| s.to_string()));
+
+    for line in stdout.lines() {
+        // Skip lines that start with whitespace (likely continuation lines)
+        if line.starts_with(" ") && !parsing_tree {
+            continue;
+        }
+
+        // Check if this is a line starting with "Crate:" which indicates a new issue
+        if line.starts_with("Crate:") {
+            parsing_tree = false;
+            save_current_issue(&mut issues, &mut current_issue);
+            current_issue = Some(AuditIssue::default());
+            if let Some((_, value)) = line.split_once(':') {
+                if let Some(issue) = current_issue.as_mut() {
+                    let crate_name = value.trim().to_string();
+                    issue.crate_name = crate_name.clone();
+                }
+            }
+        } else if line.starts_with("Version:")
+            || line.starts_with("Title:")
+            || line.starts_with("ID:")
+            || line.starts_with("URL:")
+            || line.starts_with("Solution:")
+            || line.starts_with("Warning:")
+            || line.starts_with("Severity:")
+        {
+            if let Some(issue) = current_issue.as_mut() {
+                if let Some((key_str, value_str)) = line.split_once(':') {
+                    let key = key_str.trim();
+                    let value_trimmed = value_str.trim();
+                    match key {
+                        "Version" => issue.version = value_trimmed.to_string(),
+                        "Title" => issue.title = value_trimmed.to_string(),
+                        "ID" => issue.id = value_trimmed.to_string(),
+                        "URL" => issue.url = Some(value_trimmed.to_string()),
+                        "Solution" => issue.solution = Some(value_trimmed.to_string()),
+                        "Warning" => issue.kind = AuditKind::Warning(value_trimmed.to_string()),
+                        "Severity" => issue.severity = Some(value_trimmed.to_string()),
+                        _ => { /* This case should ideally not be reached */ }
+                    }
+                }
+            }
+            continue;
+        } else if line.starts_with("Dependency tree:") {
+            parsing_tree = true;
+            current_path.clear();
+            continue;
+        }
+
+        // If we're parsing a dependency tree
+        if parsing_tree {
+            if let Some(caps) = root_line_re().captures(line.trim()) {
+                // Handle the root line of the tree (no indent)
+                let pkg_name = caps.get(1).map_or("", |m| m.as_str());
+                let pkg_version = caps.get(2).map_or("", |m| m.as_str());
+                if !pkg_name.is_empty() {
+                    current_path.push(format!("{} {}", pkg_name, pkg_version));
+                }
+            } else if let Some(caps) = tree_line_re().captures(line) {
+                let indent = caps.get(1).unwrap().as_str().chars().count();
+                let pkg_name = caps.get(2).unwrap().as_str();
+                let pkg_version = caps.get(3).unwrap().as_str();
+
+                current_path.truncate((indent / 4) + 1);
+
+                //workspace member found
+                if pkg_match_set.contains(pkg_name) {
+                    //get the last package from path
+                    let Some(Some(parent_name_from_path)) =
+                        current_path.last().map(|s| s.split_whitespace().next())
+                    else {
+                        error!("Failed to get parent name from path");
+                        continue;
+                    };
+
+                    if !parent_name_from_path.is_empty() {
+                        if let Some(issue) = current_issue.as_mut() {
+                            issue.dependency_paths.insert(
+                                parent_name_from_path.to_string(), // This is the key
+                                current_path.clone(),              // This is the path to the parent
+                            );
+                        }
+                    }
+                }
+                current_path.push(format!("{} {}", pkg_name, pkg_version));
+            }
+            continue;
+        }
+    }
+
+    // Handle the last issue
+    save_current_issue(&mut issues, &mut current_issue);
+
+    Ok(issues)
+}
+
+// Helper function to finalize and save the current issue
+fn save_current_issue(
+    issues: &mut HashMap<String, Vec<AuditIssue>>,
+    issue: &mut Option<AuditIssue>,
+) {
+    let Some(issue) = issue.take() else { return };
+    match (
+        &issue.kind,
+        GLOBAL_CONFIG.read().unwrap().audit.level.as_str(),
+    ) {
+        (_, "warning") => {}
+        (AuditKind::Vulnerability, "vulnerability") => {}
+        _ => return,
+    }
+    // Only add if it's not empty
+    if !issue.crate_name.is_empty() {
+        issues
+            .entry(issue.crate_name.clone())
+            .or_default()
+            .push(issue);
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use crate::entity::into_file_uri;
+    use std::{collections::HashMap, str::FromStr};
 
-    use super::*;
+    use cargo::core::PackageIdSpec;
+    use tower_lsp::lsp_types::Uri;
+
+    use super::audit_workspace;
+
+    #[tokio::test]
+    async fn test_audit_workspace() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_test_writer()
+            .try_init();
+
+        let uri = Uri::from_str("file:///Users/jingyu/Github/cargo-appraiser/Cargo.toml").unwrap();
+        let res = audit_workspace(&uri, &[PackageIdSpec::new("cargo-appraiser".to_string())]).await;
+        assert!(res.is_ok(), "Failed to audit workspace: {:?}", res);
+        let reports = res.unwrap();
+        assert!(!reports.is_empty());
+        for (k, v) in reports {
+            println!("{}", k);
+            for issue in v {
+                println!("{}", issue.id);
+            }
+        }
+    }
+
     #[test]
-    fn test_audit_lockfile() {
-        let path = Path::new("/Users/jingyu/Github/tauri/Cargo.toml");
-        let uri = into_file_uri(path);
-        let mut audited = None;
-        let audit = audit_workspace(&uri, &mut audited).unwrap();
+    fn test_parse_audit_text_output() {
+        let test_cases = vec![
+            (
+                "case 1",
+                r#"    Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+      Loaded 776 security advisories (from /Users/jingyu/.cargo/advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (566 crate dependencies)
+Crate:     crossbeam-channel
+Version:   0.5.13
+Title:     crossbeam-channel: double free on Drop
+Date:      2025-04-08
+ID:        RUSTSEC-2025-0024
+URL:       https://rustsec.org/advisories/RUSTSEC-2025-0024
+Solution:  Upgrade to >=0.5.15
+Dependency tree:
+crossbeam-channel 0.5.13
+├── tame-index 0.14.0
+│   └── rustsec 0.30.0
+│       ├── cargo-audit 0.21.0
+│       │   └── cargo-appraiser 0.0.1
+│       └── cargo-appraiser 0.0.1
+├── gix-features 0.40.0
+│   ├── gix-worktree 0.39.0
+│   │   ├── gix-dir 0.12.0
+│   │   │   └── gix 0.70.0
+│   │   │       └── cargo 0.88.0
+│   │   │           └── cargo-appraiser 0.0.1
+│   │   └── gix 0.70.0
+│   └── gix 0.70.0
+└── gix-features 0.38.2
+    ├── gix-worktree-state 0.13.0
+    │   └── gix 0.66.0
+    │       ├── tame-index 0.14.0
+    │       └── rustsec 0.30.0
+    └── gix 0.66.0
 
-        println!("audit root: {:?}", audit.root);
+Crate:     gix-features
+Version:   0.38.2
+Title:     SHA-1 collision attacks are not detected
+Date:      2025-04-03
+ID:        RUSTSEC-2025-0021
+URL:       https://rustsec.org/advisories/RUSTSEC-2025-0021
+Severity:  6.8 (medium)
+Solution:  Upgrade to >=0.41.0
+Dependency tree:
+gix-features 0.38.2
+├── gix-worktree-state 0.13.0
+│   └── gix 0.66.0
+│       ├── tame-index 0.14.0
+│       │   └── rustsec 0.30.0
+│       │       ├── cargo-audit 0.21.0
+│       │       │   └── cargo-appraiser 0.0.1
+│       │       └── cargo-appraiser 0.0.1
+│       └── rustsec 0.30.0
+└── gix 0.66.0
 
-        for (root, results) in &audit.members {
-            for (name, rs) in results {
-                for (version, rs) in rs {
-                    for r in rs {
-                        println!(
-                            "warning: {} -> {} -> {}: target: {}, path: {}",
-                            root.display(),
-                            name,
-                            version,
-                            r.warning.as_ref().unwrap().package.name,
-                            r.tree.concat().join(" -> ")
-                        );
+Crate:     tokio
+Version:   1.44.1
+Warning:   unsound
+Title:     Broadcast channel calls clone in parallel, but does not require `Sync`
+Date:      2025-04-07
+ID:        RUSTSEC-2025-0023
+URL:       https://rustsec.org/advisories/RUSTSEC-2025-0023
+Dependency tree:
+tokio 1.44.1
+├── tower-lsp 0.20.0
+│   └── cargo-appraiser 0.0.1
+└── cargo-appraiser 0.0.1
+
+Crate:     crossbeam-channel
+Version:   0.5.13
+Warning:   yanked
+
+error: 5 vulnerabilities found!
+warning: 2 allowed warnings found"#,
+                vec!["cargo-appraiser"],
+                HashMap::from([
+                    (
+                        "crossbeam-channel".to_string(),
+                        vec![
+                            super::AuditIssue {
+                            crate_name: "crossbeam-channel".to_string(),
+                            version: "0.5.13".to_string(),
+                            title: "crossbeam-channel: double free on Drop".to_string(),
+                            id: "RUSTSEC-2025-0024".to_string(),
+                            url: Some(
+                                "https://rustsec.org/advisories/RUSTSEC-2025-0024".to_string(),
+                            ),
+                            solution: Some("Upgrade to >=0.5.15".to_string()),
+                            kind: super::AuditKind::Vulnerability,
+                            dependency_paths: HashMap::from([(
+                                "cargo-audit".to_string(),
+                                vec![
+                                "crossbeam-channel 0.5.13".to_string(),
+                                    "tame-index 0.14.0".to_string(),
+                                    "rustsec 0.30.0".to_string(),
+                                    "cargo-audit 0.21.0".to_string(),
+                                ],
+                            ),
+                            (
+                                "cargo".to_string(),
+                                vec![
+                                "crossbeam-channel 0.5.13".to_string(),
+                                    "gix-features 0.40.0".to_string(),
+                                    "gix-worktree 0.39.0".to_string(),
+                                    "gix-dir 0.12.0".to_string(),
+                                    "gix 0.70.0".to_string(),
+                                    "cargo 0.88.0".to_string(),
+                                ],
+                            ),
+                            (
+                                "rustsec".to_string(),
+                                vec![
+                                "crossbeam-channel 0.5.13".to_string(),
+                                    "tame-index 0.14.0".to_string(),
+                                    "rustsec 0.30.0".to_string(),
+                                ],
+                            ),
+
+                            ]),
+                            severity: None, // No severity for this issue
+                        },
+                            super::AuditIssue {
+                            crate_name: "crossbeam-channel".to_string(),
+                            version: "0.5.13".to_string(),
+                            title: "".to_string(),
+                            id: "".to_string(),
+                            url: None,
+                            solution: None,
+                            kind: super::AuditKind::Warning("yanked".to_string()),
+                            dependency_paths: HashMap::new(),
+                            severity: None, // No severity for this issue
+                        },
+                        ],
+                    ),
+                    (
+                        "gix-features".to_string(),
+                        vec![super::AuditIssue {
+                            crate_name: "gix-features".to_string(),
+                            version: "0.38.2".to_string(),
+                            title: "SHA-1 collision attacks are not detected".to_string(),
+                            id: "RUSTSEC-2025-0021".to_string(),
+                            url: Some(
+                                "https://rustsec.org/advisories/RUSTSEC-2025-0021".to_string(),
+                            ),
+                            solution: Some("Upgrade to >=0.41.0".to_string()),
+                            kind: super::AuditKind::Vulnerability,
+                            dependency_paths: HashMap::from([
+                                (
+                                    "rustsec".to_string(),
+                                    vec![
+                                    "gix-features 0.38.2".to_string(),
+                                        "gix-worktree-state 0.13.0".to_string(),
+                                        "gix 0.66.0".to_string(),
+                                        "tame-index 0.14.0".to_string(),
+                                        "rustsec 0.30.0".to_string()
+                                        ],
+                                ),
+                                (
+                                    "cargo-audit".to_string(),
+                                    vec![
+                                    "gix-features 0.38.2".to_string(),
+                                        "gix-worktree-state 0.13.0".to_string(),
+                                        "gix 0.66.0".to_string(),
+                                        "tame-index 0.14.0".to_string(),
+                                        "rustsec 0.30.0".to_string(),
+                                        "cargo-audit 0.21.0".to_string(),
+                                        ],
+                                ),
+                            ]), // Initialize empty for cases we don't test
+                            severity: Some("6.8 (medium)".to_string()),
+                        }],
+                    ),
+                    (
+                    "tokio".to_string(),
+                    vec![super::AuditIssue {
+                        crate_name: "tokio".to_string(),
+                        version: "1.44.1".to_string(),
+                        title: "Broadcast channel calls clone in parallel, but does not require `Sync`"
+                            .to_string(),
+                        id: "RUSTSEC-2025-0023".to_string(),
+                        url: Some("https://rustsec.org/advisories/RUSTSEC-2025-0023".to_string()),
+                        solution: None,
+                        kind: super::AuditKind::Warning("unsound".to_string()),
+                        dependency_paths: HashMap::from([
+                            ("tower-lsp".to_string(),
+                            vec![
+                            "tokio 1.44.1".to_string(),
+                            "tower-lsp 0.20.0".to_string(),
+                        ]),
+                        (
+                            "tokio".to_string(),
+                            vec!["tokio 1.44.1".to_string()],
+                        )]),
+                        severity: None,
+                    }],
+                )
+                ]),
+            ),
+            (
+                "case 2",
+                r#"    Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+      Loaded 776 security advisories (from /Users/jingyu/.cargo/advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (266 crate dependencies)
+Crate:     dotenv
+Version:   0.15.0
+Warning:   unmaintained
+Title:     dotenv is Unmaintained
+Date:      2021-12-24
+ID:        RUSTSEC-2021-0141
+URL:       https://rustsec.org/advisories/RUSTSEC-2021-0141
+Dependency tree:
+dotenv 0.15.0
+└── firecrawl-mcp 0.3.0
+
+Crate:     paste
+Version:   1.0.15
+Warning:   unmaintained
+Title:     paste - no longer maintained
+Date:      2024-10-07
+ID:        RUSTSEC-2024-0436
+URL:       https://rustsec.org/advisories/RUSTSEC-2024-0436
+Dependency tree:
+paste 1.0.15
+├── rmcp 0.1.5
+│   └── firecrawl-mcp 0.3.0
+└── async-claude 0.15.0
+    ├── firecrawl-sdk 0.3.0
+    │   └── firecrawl-mcp 0.3.0
+    └── firecrawl-mcp 0.3.0
+
+warning: 2 allowed warnings found"#,
+                vec!["firecrawl-mcp"],
+                HashMap::from([
+                    (
+                    "dotenv".to_string(),
+                vec![    super::AuditIssue {
+                        crate_name: "dotenv".to_string(),
+                        version: "0.15.0".to_string(),
+                        title: "dotenv is Unmaintained".to_string(),
+                        id: "RUSTSEC-2021-0141".to_string(),
+                        url: Some("https://rustsec.org/advisories/RUSTSEC-2021-0141".to_string()),
+                        solution: None,
+                        kind: super::AuditKind::Warning("unmaintained".to_string()),
+                        dependency_paths: HashMap::from([
+                            (
+                                "dotenv".to_string(),
+                                vec!["dotenv 0.15.0".to_string()]
+                            )
+                        ]), // Matches the empty case
+                        severity:None,
+                    }],
+                    ),
+                    (
+                "paste".to_string(),
+                vec![super::AuditIssue {
+                    crate_name: "paste".to_string(),
+                    version: "1.0.15".to_string(),
+                    title: "paste - no longer maintained".to_string(),
+                    id: "RUSTSEC-2024-0436".to_string(),
+                    url: Some("https://rustsec.org/advisories/RUSTSEC-2024-0436".to_string()),
+                    solution: None,
+                    kind:super::AuditKind::Warning("unmaintained".to_string()),
+                    dependency_paths: HashMap::from([
+                        (
+                        "async-claude".to_string(),
+                         vec![
+                            "paste 1.0.15".to_string(),
+                            "async-claude 0.15.0".to_string(),
+                        ]),
+                        (
+                        "rmcp".to_string(),
+                         vec![
+                            "paste 1.0.15".to_string(),
+                            "rmcp 0.1.5".to_string(),
+                        ]),
+                        (
+                        "firecrawl-sdk".to_string(),
+                         vec![
+                            "paste 1.0.15".to_string(),
+                            "async-claude 0.15.0".to_string(),
+                            "firecrawl-sdk 0.3.0".to_string(),
+                        ]),
+                    ]),
+                    severity: None,
+                }],
+                    )
+                ])
+            ),
+        ];
+
+        for (case_name, sample_output, workspace_members, wanted) in test_cases {
+            let result = super::parse_audit_text_output(sample_output, &workspace_members).unwrap();
+            // Check the total count of crates with issues
+            assert_eq!(
+                result.len(),
+                wanted.len(),
+                "Should parse issues for {} crates from the sample output in {}",
+                wanted.len(),
+                case_name
+            );
+            // Check each expected issue against the actual result
+            for (crate_name, expected) in wanted {
+                let found_issues = result.get(&crate_name).unwrap_or_else(|| {
+                    panic!("Missing issues for crate: {} in {}", crate_name, case_name)
+                });
+
+                // Since we've changed to Vec<AuditIssue>, we expect one issue in the vector for these tests
+                assert_eq!(
+                    found_issues.len(),
+                    expected.len(),
+                    "Expected exactly {} issues for {} in {}",
+                    expected.len(),
+                    crate_name,
+                    case_name
+                );
+
+                for want_issue in expected {
+                    for got_issue in found_issues {
+                        //TODO warning don't have ID
+                        if want_issue.id == got_issue.id {
+                            assert_eq!(
+                                got_issue.crate_name, want_issue.crate_name,
+                                "Crate name mismatch for {} in {}",
+                                crate_name, case_name
+                            );
+                            assert_eq!(
+                                got_issue.version, want_issue.version,
+                                "Version mismatch for {} in {}",
+                                crate_name, case_name
+                            );
+                            assert_eq!(
+                                got_issue.title, want_issue.title,
+                                "Title mismatch for {} in {}",
+                                crate_name, case_name
+                            );
+                            assert_eq!(
+                                got_issue.id, want_issue.id,
+                                "ID mismatch for {} in {}",
+                                crate_name, case_name
+                            );
+                            assert_eq!(
+                                got_issue.url, want_issue.url,
+                                "URL mismatch for {} in {}",
+                                crate_name, case_name
+                            );
+                            assert_eq!(
+                                got_issue.solution, want_issue.solution,
+                                "Solution mismatch for {} in {}",
+                                crate_name, case_name
+                            );
+                            assert_eq!(
+                                got_issue.kind, want_issue.kind,
+                                "Kind mismatch for {} in {}",
+                                crate_name, case_name
+                            );
+                            assert_eq!(
+                                got_issue.severity, want_issue.severity,
+                                "Severity mismatch for {} in {}",
+                                crate_name, case_name
+                            );
+
+                            for (key, value) in got_issue.dependency_paths.clone() {
+                                let want_value =
+                                    want_issue.dependency_paths.get(&key).unwrap_or_else(|| {
+                                        panic!(
+                                            "Missing dependency path for {} in {}",
+                                            crate_name, case_name
+                                        )
+                                    });
+                                // First, check that both vectors have the same length
+                                assert_eq!(
+    value.len(), want_value.len(),
+    "Dependency path length mismatch for key {} in {}: got {:?}, expected {:?}",
+    key, crate_name, value, want_value
+);
+
+                                // Then check each element in order
+                                for (i, (actual, expected)) in
+                                    value.iter().zip(want_value.iter()).enumerate()
+                                {
+                                    assert_eq!(
+        actual, expected,
+        "Dependency path element mismatch at position {} for key {} in {}: got {}, expected {}",
+        i, key, crate_name, actual, expected
+    );
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -54,6 +54,10 @@ type InitializationOptions = {
         noncompatible_latest: string
         yanked: string
         git: string
+    },
+    audit: {
+        disable: boolean
+        level: string
     }
 }
 
@@ -76,8 +80,9 @@ class Config {
 
     init() {
         const formatter = workspace.getConfiguration("cargo-appraiser").get("decorationFormatter")
+        const auditConfig = workspace.getConfiguration("cargo-appraiser").get("audit")
         if (typeof formatter === "object") {
-            this.initializationOptions = { decorationFormatter: formatter as any }
+            this.initializationOptions = { decorationFormatter: formatter as any, audit: auditConfig as any }
         }
     }
 
