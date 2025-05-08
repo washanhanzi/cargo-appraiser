@@ -8,7 +8,7 @@ use tower_lsp::{
 };
 mod vscode;
 
-use crate::entity::{commit_str_short, git_ref_str, Dependency};
+use crate::entity::{commit_str_short, git_ref_str, Dependency, DependencyTable};
 
 pub mod inlay_hint;
 
@@ -96,6 +96,8 @@ pub struct DecorationPayload {
     //(ref,commit)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git: Option<(String, String)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tables: Option<Vec<DependencyTable>>,
 }
 
 pub fn formatted_string(
@@ -132,16 +134,20 @@ pub fn version_decoration(dep: &Dependency) -> DecorationPayload {
             ..Default::default()
         };
     };
+    let mut p = DecorationPayload {
+        tables: (!dep.used_in_tables.is_empty()).then_some(dep.used_in_tables.clone()),
+        ..Default::default()
+    };
     match requested.source_id().kind() {
-        SourceKind::Path => DecorationPayload {
-            kind: VersionDecorationKind::Local,
-            ..Default::default()
-        },
+        SourceKind::Path => {
+            p.kind = VersionDecorationKind::Local;
+            p
+        }
         //TODO idk what's this
-        SourceKind::Directory => DecorationPayload {
-            kind: VersionDecorationKind::Local,
-            ..Default::default()
-        },
+        SourceKind::Directory => {
+            p.kind = VersionDecorationKind::Local;
+            p
+        }
         SourceKind::Git(_) => {
             let mut git = None;
             if resolved.package_id().source_id().is_git() {
@@ -151,11 +157,9 @@ pub fn version_decoration(dep: &Dependency) -> DecorationPayload {
                         .map_or(String::new(), |c| c.to_string()),
                 ));
             };
-            DecorationPayload {
-                kind: VersionDecorationKind::Git,
-                git,
-                ..Default::default()
-            }
+            p.kind = VersionDecorationKind::Git;
+            p.git = git;
+            p
         }
         _ => {
             match (
@@ -165,7 +169,6 @@ pub fn version_decoration(dep: &Dependency) -> DecorationPayload {
             ) {
                 (Some(matched), Some(latest_matched), Some(latest)) => {
                     //latest
-                    let mut p = DecorationPayload::default();
                     if matched.version() == latest_matched.version()
                         && latest_matched.version() == latest.version()
                     {
@@ -186,14 +189,13 @@ pub fn version_decoration(dep: &Dependency) -> DecorationPayload {
                     p.latest_matched = Some(latest_matched.version().clone());
                     p
                 }
-                (None, Some(latest_matched), Some(latest)) => DecorationPayload {
-                    kind: VersionDecorationKind::Yanked,
-                    installed: Some(resolved.version().clone()),
-                    latest_matched: Some(latest_matched.version().clone()),
-                    latest: Some(latest.version().clone()),
-                    ..Default::default()
-                },
-                //TODO any other match arm?
+                (None, Some(latest_matched), Some(latest)) => {
+                    p.kind = VersionDecorationKind::Yanked;
+                    p.installed = Some(resolved.version().clone());
+                    p.latest_matched = Some(latest_matched.version().clone());
+                    p.latest = Some(latest.version().clone());
+                    p
+                }
                 _ => unreachable!(),
             }
         }
@@ -335,6 +337,34 @@ impl CompiledTemplate {
             }
             if self.needs_git_commit {
                 result = result.replace("{{commit}}", commit);
+            }
+        }
+
+        if let Some(tables) = version.tables.as_ref() {
+            let mut table_str = String::with_capacity(15);
+            table_str.push_str(" [");
+            for t in tables {
+                match t {
+                    DependencyTable::Dependencies => {}
+                    DependencyTable::DevDependencies => {
+                        if table_str.len() > 2 {
+                            table_str.push_str(", dev");
+                        } else {
+                            table_str.push_str("dev");
+                        }
+                    }
+                    DependencyTable::BuildDependencies => {
+                        if table_str.len() > 2 {
+                            table_str.push_str(", build");
+                        } else {
+                            table_str.push_str("build");
+                        }
+                    }
+                }
+            }
+            table_str.push(']');
+            if !table_str.is_empty() {
+                result.push_str(&table_str);
             }
         }
 

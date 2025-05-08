@@ -31,3 +31,8 @@ tower-lsp = { git = "https://github.com/washanhanzi/tower-lsp", branch = "master
     "proposed",
 ] }
 regex = "1.11.1"
+openssl = { version = '0.10', optional = true }
+
+[features]
+default = []
+vendored-openssl = ["openssl/vendored"]

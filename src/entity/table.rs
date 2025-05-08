@@ -33,7 +33,6 @@ pub enum DependencyTable {
     Dependencies,
     DevDependencies,
     BuildDependencies,
-    WorkspaceDependencies,
 }
 
 impl Display for DependencyTable {
@@ -45,7 +44,6 @@ impl Display for DependencyTable {
                 DependencyTable::Dependencies => "dependencies",
                 DependencyTable::DevDependencies => "dev-dependencies",
                 DependencyTable::BuildDependencies => "build-dependencies",
-                DependencyTable::WorkspaceDependencies => "dependencies",
             }
         )
     }

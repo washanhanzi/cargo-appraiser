@@ -4,7 +4,6 @@ use tower_lsp::{
     lsp_types::{Diagnostic, Uri},
     Client,
 };
-use tracing::Instrument;
 
 //we need to distinguish between parsing erros and cargo error
 //parsing errors can be cleared on file change

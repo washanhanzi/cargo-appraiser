@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    hash::Hash,
     path::Path,
     task::Poll,
 };
@@ -10,7 +9,7 @@ use cargo::{
         compiler::{CompileKind, RustcTargetData},
         dependency::DepKind,
         resolver::{CliFeatures, ForceAllTargets, HasDevUnits},
-        Dependency, Package, PackageId, PackageIdSpec, SourceId, Summary, Workspace,
+        Dependency, Package, PackageIdSpec, SourceId, Summary,
     },
     ops::{
         tree::{DisplayDepth, EdgeKind, Prefix, Target, TreeOptions},
@@ -24,7 +23,7 @@ use cargo::{
     GlobalContext,
 };
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Uri};
-use tracing::{error, info};
+use tracing::error;
 
 use crate::entity::{
     from_resolve_error, into_file_uri, CargoError, CargoErrorKind, Dependency as EntityDependency,
@@ -83,12 +82,12 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     let mut source_ids = HashMap::new();
 
     for (id_counter, dep) in (0_u32..).zip(deps.into_iter()) {
-        let toml_key = dep.name_in_toml().to_string();
+        let toml_name = dep.name_in_toml().to_string();
         let source_id = dep.source_id();
         let dependency_with_id = DependencyWithId(id_counter, dep);
 
         deps_map
-            .entry(toml_key)
+            .entry(toml_name)
             .or_insert_with(Vec::new)
             .push(dependency_with_id.clone());
 

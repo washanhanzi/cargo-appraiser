@@ -79,13 +79,6 @@ impl InlayHintDecoration {
         }
     }
 
-    pub fn clone(&self) -> Self {
-        Self {
-            client: self.client.clone(),
-            hints: Arc::clone(&self.hints),
-        }
-    }
-
     pub fn initialize(&self) -> Sender<DecorationEvent> {
         let (render_tx, mut render_rx) = mpsc::channel::<DecorationEvent>(64);
         let state = Arc::clone(&self.hints);
@@ -153,14 +146,6 @@ impl InlayHintDecoration {
             }
         });
         render_tx
-    }
-
-    pub fn remove(&mut self, uri: &Uri, id: &str) {
-        inlay_hint_decoration_state::remove(&self.hints, uri, id);
-    }
-
-    pub fn reset(&mut self, uri: &Uri) {
-        inlay_hint_decoration_state::reset(&self.hints, uri);
     }
 }
 

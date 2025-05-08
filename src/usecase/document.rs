@@ -1,14 +1,8 @@
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 
-use cargo::sources::source;
 use tower_lsp::lsp_types::{Position, Uri};
-use tracing_subscriber::field::debug;
 
-use crate::entity::{
-    into_file_uri, Dependency, EntryDiff, Manifest, SymbolTree, TomlNode, TomlParsingError,
-};
-
-use tracing::{debug, error, info};
+use crate::entity::{Dependency, EntryDiff, Manifest, SymbolTree, TomlNode, TomlParsingError};
 
 use super::{diff_dependency_entries, ReverseSymbolTree, Walker};
 

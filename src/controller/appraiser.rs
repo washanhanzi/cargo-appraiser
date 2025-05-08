@@ -1,4 +1,4 @@
-use cargo::util::VersionExt;
+use cargo::{core::dependency::DepKind, util::VersionExt};
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -16,7 +16,7 @@ use crate::{
     config::GLOBAL_CONFIG,
     controller::{code_action::code_action, completion::completion, read_file::ReadFileParam},
     decoration::DecorationEvent,
-    entity::CargoError,
+    entity::{CargoError, DependencyTable},
     usecase::{Document, Workspace},
 };
 
@@ -462,6 +462,23 @@ impl Appraiser {
                                 doc.dirty_dependencies.remove(&dep.id);
                                 continue;
                             };
+
+                            if dep.is_virtual {
+                                let mut tables: Vec<DependencyTable> =
+                                    Vec::with_capacity(requested_result.len());
+                                let mut normal_use = false;
+                                for requested_dep in requested_result {
+                                    if requested_dep.1.kind() == DepKind::Normal {
+                                        normal_use = true;
+                                    } else {
+                                        tables.push(requested_dep.1.kind().into());
+                                    }
+                                }
+                                if !normal_use {
+                                    dep.used_in_tables = tables;
+                                }
+                            }
+
                             let requested = match requested_result.len() {
                                 0 => unreachable!(),
                                 1 => requested_result.first().unwrap(),

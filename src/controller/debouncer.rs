@@ -9,7 +9,7 @@ use std::{
 use tokio::sync::mpsc::{self, error::SendError, Sender};
 use tokio_util::time::{delay_queue, DelayQueue};
 use tower_lsp::lsp_types::Uri;
-use tracing::{error, info};
+use tracing::error;
 
 // Change Timer
 pub struct Debouncer {

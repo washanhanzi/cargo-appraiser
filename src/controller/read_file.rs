@@ -15,7 +15,7 @@ pub struct ReadFileResponse {
 
 pub enum ReadFile {}
 
-//TODO i need a vfs
+//maybe i need a vfs
 impl lsp_types::request::Request for ReadFile {
     type Params = ReadFileParam;
     type Result = ReadFileResponse;

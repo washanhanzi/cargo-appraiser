@@ -1,6 +1,5 @@
-use cargo::core::{SourceId, Summary};
+use cargo::core::Summary;
 use tower_lsp::lsp_types::Range;
-use tracing_subscriber::field::debug;
 
 use super::{DependencyTable, Value};
 
@@ -32,6 +31,7 @@ pub struct Dependency {
     //the latest summary that satisify the version requirement
     pub latest_matched_summary: Option<Summary>,
     pub is_virtual: bool,
+    pub used_in_tables: Vec<DependencyTable>,
 }
 
 impl Dependency {
