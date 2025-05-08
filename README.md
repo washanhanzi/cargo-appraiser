@@ -14,9 +14,9 @@
   - `cargo update` code action on dependency's `version` and `workspace`
   - goto definition on workspace dependency
 - Audit
-  - To use audit, you need to install `cargo audit` command
+  - Show warining and vulnerability on dependencies
 
-# Audit
+# Audit Feature
 
 Audit feature is enabled by default, to disable this feature, check `audit.disabled` config.
 

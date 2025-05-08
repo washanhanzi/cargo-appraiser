@@ -65,7 +65,7 @@ jobs:
       - name: Build with Cross
         env:
           RUSTFLAGS: "-Awarnings"
-        run: cross build --release --target ${{ matrix.target }} --bin ${{ env.APP_NAME }} --features vendored-openssl
+        run: cross build --release --target ${{ matrix.target }} --bin ${{ env.APP_NAME }}
 
       # 7. Upload the build artifact
       - name: Upload Build Artifact
