@@ -84,35 +84,52 @@ impl Document {
         for v in &diff.created {
             self.dirty_dependencies.insert(v.to_string(), self.rev);
             if let Some(dep) = new.dependencies.get(v) {
+                self.crate_name_map
+                    .entry(dep.package_name().to_string())
+                    .or_default()
+                    .push(v.to_string());
                 self.dependencies.insert(v.to_string(), dep.clone());
             }
         }
         for v in &diff.value_updated {
             self.dirty_dependencies.insert(v.to_string(), self.rev);
-            if let Some(new_dep) = new.dependencies.remove(v) {
-                self.dependencies
-                    .entry(v.to_string())
-                    .and_modify(|dep| {
-                        dep.version = new_dep.version.clone();
-                        dep.features = new_dep.features.clone();
-                        dep.registry = new_dep.registry.clone();
-                        dep.git = new_dep.git.clone();
-                        dep.branch = new_dep.branch.clone();
-                        dep.tag = new_dep.tag.clone();
-                        dep.path = new_dep.path.clone();
-                        dep.rev = new_dep.rev.clone();
-                        dep.package = new_dep.package.clone();
-                        dep.workspace = new_dep.workspace.clone();
-                        dep.platform = new_dep.platform.clone();
-                        dep.requested = None;
-                        dep.resolved = None;
-                        dep.latest_summary = None;
-                        dep.latest_matched_summary = None;
-                        dep.range = new_dep.range;
-                        //dep.matched_summary not reset
-                        //dep.summaries not reset
-                    })
-                    .or_insert(new_dep);
+            if let Some(mut new_dep) = new.dependencies.remove(v) {
+                if let Some(old_dep) = self.dependencies.get_mut(v) {
+                    let old_name = old_dep.package_name().to_string();
+                    if let Some(ids) = self.crate_name_map.get_mut(&old_name) {
+                        ids.retain(|id| id != v);
+                        if ids.is_empty() {
+                            self.crate_name_map.remove(&old_name);
+                        }
+                    }
+                    let new_name = new_dep.package_name().to_string();
+                    self.crate_name_map
+                        .entry(new_name)
+                        .or_default()
+                        .push(v.to_string());
+                    old_dep.version = new_dep.version.clone();
+                    old_dep.features = new_dep.features.clone();
+                    old_dep.registry = new_dep.registry.clone();
+                    old_dep.git = new_dep.git.clone();
+                    old_dep.branch = new_dep.branch.clone();
+                    old_dep.tag = new_dep.tag.clone();
+                    old_dep.path = new_dep.path.clone();
+                    old_dep.rev = new_dep.rev.clone();
+                    old_dep.package = new_dep.package.clone();
+                    old_dep.workspace = new_dep.workspace.clone();
+                    old_dep.platform = new_dep.platform.clone();
+                    old_dep.requested = None;
+                    old_dep.resolved = None;
+                    old_dep.latest_summary = None;
+                    old_dep.latest_matched_summary = None;
+                    old_dep.range = new_dep.range;
+                } else {
+                    self.crate_name_map
+                        .entry(new_dep.package_name().to_string())
+                        .or_default()
+                        .push(v.to_string());
+                    self.dependencies.insert(v.to_string(), new_dep);
+                }
             }
         }
         for v in &diff.range_updated {
@@ -124,6 +141,14 @@ impl Document {
         }
         for v in &diff.deleted {
             self.dirty_dependencies.remove(v);
+            if let Some(dep) = self.dependencies.remove(v) {
+                if let Some(ids) = self.crate_name_map.get_mut(dep.package_name()) {
+                    ids.retain(|id| id != v);
+                    if ids.is_empty() {
+                        self.crate_name_map.remove(dep.package_name());
+                    }
+                }
+            }
         }
     }
 
