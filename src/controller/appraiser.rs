@@ -318,6 +318,8 @@ impl Appraiser {
                             }
                         };
                         let doc = state.document(&msg.uri).unwrap();
+
+                        debug!("cargo.toml diff: {:?}", diff);
                         for v in &diff.range_updated {
                             if let Some(node) = doc.entry(v) {
                                 render_tx

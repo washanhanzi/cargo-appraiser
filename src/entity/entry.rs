@@ -3,6 +3,7 @@ use tower_lsp::lsp_types::Range;
 
 use super::CargoTable;
 
+#[derive(Debug)]
 pub struct EntryDiff {
     pub created: Vec<String>,
     pub range_updated: Vec<String>,
