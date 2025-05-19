@@ -93,7 +93,7 @@ impl Document {
         }
         for v in &diff.value_updated {
             self.dirty_dependencies.insert(v.to_string(), self.rev);
-            if let Some(mut new_dep) = new.dependencies.remove(v) {
+            if let Some(new_dep) = new.dependencies.remove(v) {
                 if let Some(old_dep) = self.dependencies.get_mut(v) {
                     let old_name = old_dep.package_name().to_string();
                     if let Some(ids) = self.crate_name_map.get_mut(&old_name) {
