@@ -320,34 +320,40 @@ impl Appraiser {
                         let doc = state.document(&msg.uri).unwrap();
                         for v in &diff.range_updated {
                             if let Some(node) = doc.entry(v) {
-                                render_tx
+                                if let Err(e) = render_tx
                                     .send(DecorationEvent::DependencyRangeUpdate(
                                         msg.uri.clone(),
                                         v.to_string(),
                                         node.range,
                                     ))
                                     .await
-                                    .unwrap();
+                                {
+                                    error!("render tx send error: {}", e);
+                                }
                             }
                         }
                         for v in &diff.value_updated {
-                            render_tx
+                            if let Err(e) = render_tx
                                 .send(DecorationEvent::DependencyRemove(
                                     msg.uri.clone(),
                                     v.to_string(),
                                 ))
                                 .await
-                                .unwrap();
+                            {
+                                error!("render tx send error: {}", e);
+                            }
                         }
 
                         for v in &diff.deleted {
-                            render_tx
+                            if let Err(e) = render_tx
                                 .send(DecorationEvent::DependencyRemove(
                                     msg.uri.clone(),
                                     v.to_string(),
                                 ))
                                 .await
-                                .unwrap();
+                            {
+                                error!("render tx send error: {}", e);
+                            }
                         }
                         if let Err(e) = debouncer
                             .send_background(Ctx {
@@ -612,14 +618,16 @@ async fn start_resolve(
 
     for v in doc.dirty_dependencies.keys() {
         if let Some(n) = doc.entry(v) {
-            render_tx
+            if let Err(e) = render_tx
                 .send(DecorationEvent::DependencyWaiting(
                     uri.clone(),
                     v.to_string(),
                     n.range,
                 ))
                 .await
-                .unwrap();
+            {
+                error!("render tx send error: {}", e);
+            }
         }
     }
 
