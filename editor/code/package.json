@@ -2,7 +2,7 @@
   "name": "cargo-appraiser",
   "displayName": "cargo-appraiser",
   "description": "LSP for Cargo.toml",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "icon": "image/icon.webp",
   "publisher": "washan",
   "license": "SEE LICENSE IN LICENSE",
@@ -72,6 +72,18 @@
           "cargo-appraiser.audit": {
             "type": "object",
             "description": "audit feature configuration"
+          },
+          "cargo-appraiser.extraEnv": {
+            "type": "object",
+            "description": "Additional environment variables to pass to the cargo-appraiser server",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          },
+          "cargo-appraiser.serverPath": {
+            "type": "string",
+            "description": "Custom path to the cargo-appraiser server binary. If set, this will be used instead of downloading from GitHub."
           }
         }
       }

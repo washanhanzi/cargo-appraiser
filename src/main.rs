@@ -7,7 +7,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc::Sender, oneshot};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer, LspService, Server};
+use tower_lsp::{LanguageServer, LspService, Server};
 use tracing::{error, info};
 
 mod config;
@@ -18,7 +18,6 @@ mod usecase;
 
 #[derive(Debug)]
 struct CargoAppraiser {
-    client: Client,
     tx: Sender<CargoDocumentEvent>,
     render: DecorationRenderer,
     cargo_path: Option<String>,
@@ -364,7 +363,6 @@ async fn main() {
             executable_path_finder::find_with_cargo_home("cargo").map(|p| p.to_string());
 
         CargoAppraiser {
-            client,
             tx,
             render,
             cargo_path,

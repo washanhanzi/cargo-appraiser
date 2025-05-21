@@ -58,7 +58,9 @@ type InitializationOptions = {
     audit: {
         disable: boolean
         level: string
-    }
+    },
+    extraEnv: Record<string, string>,
+    serverPath?: string
 }
 
 class Config {
@@ -75,14 +77,25 @@ class Config {
             highContrastLight: defaultLight
         }
         this.updateColor()
-
     }
 
     init() {
         const formatter = workspace.getConfiguration("cargo-appraiser").get("decorationFormatter")
         const auditConfig = workspace.getConfiguration("cargo-appraiser").get("audit")
-        if (typeof formatter === "object") {
-            this.initializationOptions = { decorationFormatter: formatter as any, audit: auditConfig as any }
+        const extraEnv = workspace.getConfiguration("cargo-appraiser").get("extraEnv") || {}
+        const serverPath = workspace.getConfiguration("cargo-appraiser").get("serverPath")
+        
+        if (typeof formatter === "object" && typeof auditConfig === "object") {
+            this.initializationOptions = { 
+                decorationFormatter: formatter as any, 
+                audit: auditConfig as any, 
+                extraEnv: extraEnv as Record<string, string>
+            }
+            
+            // Only add serverPath if it's defined and is a non-empty string
+            if (typeof serverPath === "string" && serverPath.trim() !== "") {
+                this.initializationOptions.serverPath = serverPath.trim()
+            }
         }
     }
 

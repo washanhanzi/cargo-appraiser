@@ -1,3 +1,5 @@
+use std::env;
+
 use cargo::{core::dependency::DepKind, util::VersionExt};
 use tokio::sync::{
     mpsc::{self, Sender},
@@ -10,7 +12,7 @@ use tower_lsp::{
     },
     Client,
 };
-use tracing::{debug, error};
+use tracing::{debug, error, trace, warn};
 
 use crate::{
     config::GLOBAL_CONFIG,
@@ -104,6 +106,11 @@ impl Appraiser {
         let (cargo_tx, mut cargo_rx) = mpsc::channel::<Ctx>(32);
         let tx_for_cargo = tx.clone();
         tokio::spawn(async move {
+            match env::var("PATH") {
+                Ok(path_var) => trace!("Current PATH: {}", path_var),
+                Err(e) => warn!("Failed to read PATH environment variable: {}", e),
+            }
+
             while let Some(event) = cargo_rx.recv().await {
                 match cargo_resolve(&event).await {
                     Ok(output) => {
@@ -115,6 +122,7 @@ impl Appraiser {
                         }
                     }
                     Err(err) => {
+                        error!("error resolving: {}", err);
                         if let Err(e) = tx_for_cargo
                             .send(CargoDocumentEvent::CargoDiagnostic(event.uri.clone(), err))
                             .await
@@ -206,6 +214,10 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::CargoDiagnostic(uri, err) => {
+                        debug!(
+                            "Appraiser Event: CargoDiagnostic for URI: {:?}, Error: {:?}",
+                            uri, err
+                        );
                         diagnostic_controller.clear_cargo_diagnostics(&uri).await;
                         //we need a crate name to find something in toml
                         let Some(crate_name) = err.crate_name() else {
@@ -298,6 +310,7 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::Changed(msg) => {
+                        debug!("Appraiser Event: Changed for URI: {:?}", msg.uri);
                         diagnostic_controller
                             .clear_parse_diagnostics(&msg.uri)
                             .await;
@@ -360,6 +373,7 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::Parse(uri) => {
+                        debug!("Appraiser Event: Parse for URI: {:?}", uri);
                         let content = if client_capabilities.can_read_file() {
                             let param = ReadFileParam { uri: uri.clone() };
                             match client.send_request::<ReadFile>(param).await {
@@ -371,7 +385,13 @@ impl Appraiser {
                             }
                         } else {
                             //read file with os
-                            std::fs::read_to_string(uri.path().as_str()).unwrap()
+                            match std::fs::read_to_string(uri.path().as_str()) {
+                                Ok(content) => content,
+                                Err(e) => {
+                                    error!("read file error: {}", e);
+                                    continue;
+                                }
+                            }
                         };
                         let _ = reconsile_document(
                             &mut state,
@@ -381,6 +401,7 @@ impl Appraiser {
                         .await;
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
+                        debug!("Appraiser Event: Opened/Saved for URI: {:?}", msg.uri);
                         let Some(doc) =
                             reconsile_document(&mut state, &mut diagnostic_controller, &msg).await
                         else {
@@ -398,11 +419,24 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::ReadyToResolve(ctx) => {
+                        debug!(
+                            "Appraiser Event: ReadyToResolve for URI: {:?}, rev: {}",
+                            ctx.uri, ctx.rev
+                        );
                         if state.check_rev(&ctx.uri, ctx.rev) {
                             start_resolve(&ctx.uri, &mut state, &render_tx, &cargo_tx).await;
                         }
                     }
                     CargoDocumentEvent::CargoResolved(output) => {
+                        debug!(
+                            "Appraiser Event: CargoResolved for URI: {:?}, rev: {}. Specs: {}, Dependencies: {}, Packages: {}, Summaries: {}",
+                            output.ctx.uri,
+                            output.ctx.rev,
+                            output.specs.len(),
+                            output.dependencies.len(),
+                            output.packages.len(),
+                            output.summaries.len()
+                        );
                         //resolve virtual manifest if we haven't
                         let root_manifest_uri = output.root_manifest_uri.clone();
                         if state.document(&root_manifest_uri).is_none() {
@@ -601,17 +635,32 @@ async fn start_resolve(
     render_tx: &Sender<DecorationEvent>,
     cargo_tx: &Sender<Ctx>,
 ) {
+    debug!("start_resolve triggered for URI: {:?}", uri);
     let Some(doc) = state.document_mut(uri) else {
+        debug!(
+            "Document not found in workspace state for URI: {:?}. Aborting resolve.",
+            uri
+        );
         return;
     };
 
     //no need to resolve
     if !doc.is_dependencies_dirty() {
+        debug!(
+            "Dependencies are not dirty for URI: {:?}. No resolve needed.",
+            uri
+        );
         return;
     }
 
+    debug!(
+        "Processing {} dirty dependencies for URI: {:?}",
+        doc.dirty_dependencies.len(),
+        uri
+    );
     for v in doc.dirty_dependencies.keys() {
         if let Some(n) = doc.entry(v) {
+            debug!("Marking dependency '{}' as waiting for URI: {:?}", v, uri);
             render_tx
                 .send(DecorationEvent::DependencyWaiting(
                     uri.clone(),
@@ -624,13 +673,15 @@ async fn start_resolve(
     }
 
     //resolve cargo dependencies
-    if let Err(e) = cargo_tx
-        .send(Ctx {
-            uri: uri.clone(),
-            rev: doc.rev,
-        })
-        .await
-    {
+    let resolve_ctx = Ctx {
+        uri: uri.clone(),
+        rev: doc.rev,
+    };
+    debug!(
+        "Sending context to cargo_tx for URI: {:?}, rev: {}",
+        resolve_ctx.uri, resolve_ctx.rev
+    );
+    if let Err(e) = cargo_tx.send(resolve_ctx).await {
         error!("cargo resolve tx error: {}", e);
     }
 }

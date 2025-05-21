@@ -23,7 +23,7 @@ use cargo::{
     GlobalContext,
 };
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Uri};
-use tracing::error;
+use tracing::{debug, error, trace, warn};
 
 use crate::entity::{
     from_resolve_error, into_file_uri, CargoError, CargoErrorKind, Dependency as EntityDependency,
@@ -51,12 +51,22 @@ pub struct DependencyWithId(pub u32, pub Dependency);
 
 #[tracing::instrument(name = "cargo_resolve", level = "trace")]
 pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> {
+    debug!(
+        "Entering cargo_resolve for manifest path: {:?}",
+        ctx.uri.path()
+    );
     let path = Path::new(ctx.uri.path().as_str());
     let gctx = GlobalContext::default().unwrap();
 
     // Create workspace and ensure it's properly configured
     let workspace =
         cargo::core::Workspace::new(path, &gctx).map_err(CargoError::workspace_error)?;
+
+    trace!(
+        "Workspace created successfully for path: {:?}, root: {:?}",
+        path,
+        workspace.root()
+    );
 
     let root_manifest_uri = into_file_uri(&workspace.root().join("Cargo.toml"));
 
@@ -68,14 +78,34 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     let mut deps = HashSet::new();
 
     if let Ok(current) = workspace.current() {
+        trace!(
+            "Processing current workspace package: {:?}",
+            current.package_id()
+        );
         specs.push(current.package_id().to_spec());
         deps.extend(current.dependencies().to_vec());
+        trace!(
+            "Current package: specs_count={}, deps_count={}",
+            specs.len(),
+            deps.len()
+        );
     }
 
     for member in workspace.members() {
+        trace!("Processing member package: {:?}", member.package_id());
         specs.push(member.package_id().to_spec());
         member_manifest_uris.push(into_file_uri(member.manifest_path()));
         deps.extend(member.dependencies().to_vec());
+        trace!(
+            "After member {:?}: specs_count={}, deps_count={}",
+            member.package_id(),
+            specs.len(),
+            deps.len()
+        );
+    }
+
+    if deps.is_empty() {
+        warn!("No dependencies collected from workspace members.");
     }
 
     let mut deps_map = HashMap::new();
@@ -96,6 +126,12 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
             .or_insert_with(Vec::new)
             .push(dependency_with_id);
     }
+
+    trace!(
+        "Initial dependencies map created with {} entries. Keys: {:?}",
+        deps_map.len(),
+        deps_map.keys()
+    );
 
     let mut edge_kinds = HashSet::with_capacity(3);
     edge_kinds.insert(EdgeKind::Dep(DepKind::Normal));
@@ -120,10 +156,12 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
 
     let requested_kinds = CompileKind::from_requested_targets(workspace.gctx(), &[])
         .map_err(CargoError::resolve_error)?;
+
     let mut target_data = RustcTargetData::new(&workspace, &[CompileKind::Host])
         .map_err(CargoError::resolve_error)?;
 
     // Acquire package cache lock to ensure we have access to all registry data
+    trace!("Attempting to acquire package cache lock...");
     let _guard = gctx
         .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
         .map_err(|e| {
@@ -132,8 +170,15 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
                 e
             ))
         })?;
+    trace!("Package cache lock acquired.");
 
     // Convert Result to Option
+    trace!(
+        "Calling resolve_ws_with_opts with {} specs: {:?}",
+        specs.len(),
+        specs
+    );
+
     let ws_resolve = cargo::ops::resolve_ws_with_opts(
         &workspace,
         &mut target_data,
@@ -145,6 +190,15 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         false,
     )
     .map_err(from_resolve_error)?;
+
+    trace!(
+        "resolve_ws_with_opts successful. Package set contains {} packages.",
+        ws_resolve.pkg_set.packages().count()
+    );
+
+    if ws_resolve.pkg_set.packages().count() == 0 {
+        warn!("resolve_ws_with_opts returned an empty package set.");
+    }
 
     let packages: HashMap<String, Vec<Package>> =
         ws_resolve
@@ -158,6 +212,17 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
             });
 
     let summaries = summaries_map(&gctx, source_ids);
+
+    trace!(
+        "Constructed packages map with {} entries. Keys: {:?}",
+        packages.len(),
+        packages.keys()
+    );
+    trace!(
+        "Constructed summaries map with {} entries. Keys: {:?}",
+        summaries.len(),
+        summaries.keys()
+    );
 
     Ok(CargoResolveOutput {
         ctx: ctx.clone(),

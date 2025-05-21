@@ -1,5 +1,9 @@
 # cargo-appraiser
 
+# What's this
+
+`cargo-appraiser` is an LSP server for your `Cargo.toml` files. It helps you understand the relationship between your declared dependencies (the desired state in `Cargo.toml`) and what `cargo` has actually resolved and put into your `Cargo.lock` file (the actual state). This insight allows you to quickly see if your dependencies are up-to-date, identify potential version conflicts, and navigate complex workspaces with greater clarity.
+
 # Features
 
 - Workspace
@@ -14,15 +18,10 @@
   - `cargo update` code action on dependency's `version` and `workspace`
   - goto definition on workspace dependency
 - Audit
-  - Show warining and vulnerability on dependencies
-
-# Audit Feature
-
-Audit feature is enabled by default, to disable this feature, check `audit.disabled` config.
-
-The audit feature requires `cargo audit` command, you can install it by running `cargo install cargo-audit --locked`.
-
-Check [cargo-audit](https://crates.io/crates/cargo-audit) for detail.
+  - Show warning and vulnerability information on dependencies.
+  - This feature is enabled by default. To disable it, check the `audit.disabled` config.
+  - Requires the `cargo audit` command. Install it by running: `cargo install cargo-audit --locked`.
+  - For more details, see [cargo-audit](https://crates.io/crates/cargo-audit).
 
 # Config
 
