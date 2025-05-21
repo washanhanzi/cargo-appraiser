@@ -15,7 +15,7 @@ use tokio::{
 use tower_lsp::lsp_types::{DiagnosticSeverity, Uri};
 use tracing::{debug, error};
 
-use crate::config::GLOBAL_CONFIG;
+use crate::{config::GLOBAL_CONFIG, entity::into_path};
 
 use super::CargoDocumentEvent;
 
@@ -219,8 +219,8 @@ pub async fn audit_workspace(
         root_manifest_uri.path()
     );
 
-    let manifest_path = root_manifest_uri.path().to_string();
-    let manifest_path = manifest_path.replace(".toml", ".lock");
+    let manifest_path = into_path(root_manifest_uri);
+    let manifest_path = manifest_path.to_string_lossy().replace(".toml", ".lock");
 
     let output = match tokio::process::Command::new("cargo")
         .arg("audit")
