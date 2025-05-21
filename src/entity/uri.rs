@@ -14,31 +14,61 @@ pub fn into_file_uri(path: &Path) -> Uri {
 
 /// Convert a path string to a file:// URI, handling Windows paths correctly.
 pub fn into_file_uri_str(path: &str) -> Uri {
-    // On Windows, we need to handle drive letters and backslashes
-    let path = if cfg!(windows) {
-        // Convert backslashes to forward slashes
-        path.replace('\\', "/")
-    } else {
-        path.to_string()
-    };
+    // Skip if path is already a URI
+    if path.starts_with("file://") {
+        return Uri::from_str(path).unwrap_or_else(|_| {
+            tracing::error!("Failed to parse existing URI: {path}");
+            Uri::from_str("file:///").unwrap()
+        });
+    }
 
-    // Ensure the path starts with a single slash
-    let path = if path.starts_with('/') {
-        path
-    } else {
-        format!("/{path}")
-    };
+    // Handle Windows paths by converting backslashes to forward slashes
+    let path = path.replace('\\', "/");
 
     // Handle Windows drive letters (e.g., C:)
-    let path = if cfg!(windows) && path.len() > 1 && path.chars().nth(1) == Some(':') {
-        // Convert C:/path to /c:/path
-        format!("/{}{}", &path[0..1].to_lowercase(), &path[1..])
+    let path = if cfg!(windows) && path.len() >= 2 && path.chars().nth(1) == Some(':') {
+        // Ensure paths with drive letters are properly formatted
+        if path.starts_with('/') {
+            path
+        } else {
+            // Convert C:/path to /C:/path for Windows
+            format!(
+                "/{}",
+                path.chars().next().unwrap().to_lowercase().to_string() + &path[1..]
+            )
+        }
+    } else if !path.starts_with('/') {
+        // Add leading slash if needed
+        format!("/{path}")
     } else {
         path
     };
 
-    // Create the URI with proper encoding
-    let uri_str = format!("file://{path}");
+    // Manually encode spaces and special characters
+    let encoded_path = path
+        .split('/')
+        .map(|part| {
+            if part.is_empty() {
+                String::new()
+            } else if part.contains(' ') || part.contains('#') || part.contains('?') {
+                // Only encode parts with spaces or special characters
+                part.replace(" ", "%20")
+                    .replace("#", "%23")
+                    .replace("?", "%3F")
+                    .replace("=", "%3D")
+                    .replace("&", "%26")
+                    .replace("+", "%2B")
+            } else {
+                part.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+
+    // Create the URI
+    let uri_str = format!("file://{encoded_path}");
+    tracing::debug!("Generated URI: {uri_str}");
+
     Uri::from_str(&uri_str).unwrap_or_else(|_| {
         tracing::error!("Failed to parse URI: {uri_str}");
         Uri::from_str("file:///").unwrap()
@@ -71,6 +101,7 @@ mod tests {
 
     #[test]
     fn test_into_file_uri_str() {
+        // The tower-lsp Uri type handles URL encoding automatically
         let path = "/path/with spaces/file.txt";
         let uri = into_file_uri_str(path);
         assert_eq!(uri.to_string(), "file:///path/with%20spaces/file.txt");
