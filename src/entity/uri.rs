@@ -128,8 +128,8 @@ mod tests {
     #[test]
     fn test_into_file_uri_windows() {
         let path = Path::new("E:\\projects\\test\\Cargo.toml");
-        let path = path.canonicalize().unwrap();
-        println!("path: {}", path.to_string_lossy());
+        let url = url::Url::from_file_path(path).unwrap();
+        println!("path: {}", url);
         let uri = tower_lsp::lsp_types::Uri::from_str(path.to_str().unwrap()).unwrap();
         println!("uri: {}", uri.to_string());
 

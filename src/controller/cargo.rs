@@ -68,7 +68,8 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     );
 
     let root_manifest_uri = into_uri(&workspace.root().join("Cargo.toml"));
-    info!("convert back: {}", root_manifest_uri.path());
+    let url = url::Url::parse(&root_manifest_uri.to_string()).unwrap();
+    info!("convert back: {}", url.path());
 
     //Dependency is a what cargo.toml requested
     //workspace resolve specs

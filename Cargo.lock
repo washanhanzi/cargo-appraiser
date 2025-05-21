@@ -388,6 +388,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-xid",
+ "url",
 ]
 
 [[package]]
