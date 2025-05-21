@@ -367,6 +367,7 @@ dependencies = [
  "anyhow",
  "cargo",
  "clap",
+ "dunce",
  "executable_path_finder",
  "futures",
  "lsp-async-stub",

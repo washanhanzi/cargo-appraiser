@@ -11,6 +11,7 @@ repository = "https://github.com/washanhanzi/cargo-appraiser"
 serde_json = "1"
 taplo = "0.13"
 tokio = { version = "1.44", features = ["full", "macros", "rt-multi-thread"] }
+dunce = "1.0.4"
 lsp-async-stub = "0.6.4"
 serde = { version = "1.0", features = ["derive"] }
 parking_lot = "0.12"
