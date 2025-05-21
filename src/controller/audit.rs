@@ -148,10 +148,10 @@ impl AuditIssue {
                     self.crate_name, self.version, self.title, self.id
                 );
                 if let Some(url) = &self.url {
-                    text.push_str(&format!("* Url: {}\n", url));
+                    text.push_str(&format!("* Url: {url}\n"));
                 }
                 if let Some(solution) = &self.solution {
-                    text.push_str(&format!("* Solution: {}\n", solution));
+                    text.push_str(&format!("* Solution: {solution}\n"));
                 }
                 if !self.dependency_paths.is_empty() {
                     if let Some(hint_crate_name) = hint_crate_name {
@@ -180,7 +180,7 @@ impl AuditIssue {
                     text.push_str(&format!("* ID: {}\n", self.id));
                 }
                 if let Some(url) = self.url.as_ref() {
-                    text.push_str(&format!("* URL: {:?}\n", url));
+                    text.push_str(&format!("* URL: {url}\n"));
                 }
                 if !self.dependency_paths.is_empty() {
                     if let Some(hint_crate_name) = hint_crate_name {

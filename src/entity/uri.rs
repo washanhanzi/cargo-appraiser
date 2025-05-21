@@ -1,5 +1,8 @@
 use dunce::canonicalize;
-use std::{path::Path, str::FromStr};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 use tower_lsp::lsp_types::Uri;
 
 /// Convert a filesystem path to a file:// URI, handling Windows paths correctly.
@@ -12,19 +15,17 @@ pub fn into_uri(path: &Path) -> Uri {
     into_file_uri_str(path_str)
 }
 
-pub fn into_path(uri: &Uri) -> &Path {
+pub fn into_path(uri: &Uri) -> PathBuf {
     #[cfg(windows)]
     {
-        &into_path_win(uri)
+        into_path_win(uri)
     }
     #[cfg(not(windows))]
     {
-        Path::new(uri.path().as_str())
+        Path::new(uri.path().as_str()).to_path_buf()
     }
 }
 
-#[cfg(windows)]
-use std::path::PathBuf;
 #[cfg(windows)]
 fn into_path_win(uri: &Uri) -> PathBuf {
     use percent_encoding::percent_decode_str;
@@ -127,7 +128,12 @@ mod tests {
     #[test]
     fn test_into_file_uri_windows() {
         let path = Path::new("E:\\projects\\test\\Cargo.toml");
-        let uri = into_uri(path);
+        let path = path.canonicalize().unwrap();
+        println!("path: {}", path.to_string_lossy());
+        let uri = tower_lsp::lsp_types::Uri::from_str(path.to_str().unwrap()).unwrap();
+        println!("uri: {}", uri.to_string());
+
+        let uri = into_uri(&path);
         // The actual output will depend on the platform, but it should be a valid URI
         if cfg!(windows) {
             assert!(uri

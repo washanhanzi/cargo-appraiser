@@ -58,7 +58,7 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     let gctx = GlobalContext::default().unwrap();
 
     // Create workspace and ensure it's properly configured
-    let workspace = cargo::core::Workspace::new(into_path(&ctx.uri), &gctx)
+    let workspace = cargo::core::Workspace::new(&into_path(&ctx.uri), &gctx)
         .map_err(CargoError::workspace_error)?;
 
     info!(
