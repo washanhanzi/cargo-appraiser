@@ -1,3 +1,5 @@
+use crate::entity::CanonicalUri;
+
 use super::{appraiser::Ctx, CargoDocumentEvent};
 use futures::{Stream, StreamExt};
 use std::{
@@ -8,7 +10,6 @@ use std::{
 };
 use tokio::sync::mpsc::{self, error::SendError, Sender};
 use tokio_util::time::{delay_queue, DelayQueue};
-use tower_lsp::lsp_types::Uri;
 use tracing::error;
 
 // Change Timer
@@ -25,9 +26,9 @@ pub enum DebouncerEvent {
 }
 
 pub struct Queue {
-    entries: HashMap<Uri, (usize, delay_queue::Key)>,
-    expirations: DelayQueue<Uri>,
-    backoff_factor: HashMap<Uri, u32>,
+    entries: HashMap<CanonicalUri, (usize, delay_queue::Key)>,
+    expirations: DelayQueue<CanonicalUri>,
+    backoff_factor: HashMap<CanonicalUri, u32>,
     background_timeout: u64,
     interactive_timeout: u64,
 }

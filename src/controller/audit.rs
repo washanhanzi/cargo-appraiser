@@ -13,9 +13,9 @@ use tokio::{
     time::Sleep,
 };
 use tower_lsp::lsp_types::{DiagnosticSeverity, Uri};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
-use crate::config::GLOBAL_CONFIG;
+use crate::{config::GLOBAL_CONFIG, entity::CanonicalUri};
 
 use super::CargoDocumentEvent;
 
@@ -35,8 +35,9 @@ fn root_line_re() -> &'static Regex {
 }
 
 pub struct AuditPayload {
-    pub root_manifest_uri: Uri,
+    pub root_manifest_uri: CanonicalUri,
     pub specs: Vec<PackageIdSpec>,
+    pub cargo_path: String,
 }
 
 pub struct AuditController {
@@ -51,15 +52,17 @@ impl AuditController {
 
     pub async fn send(
         &self,
-        uri: &Uri,
+        uri: CanonicalUri,
         specs: Vec<PackageIdSpec>,
+        cargo_path: &str,
     ) -> Result<(), SendError<AuditPayload>> {
         self.sender
             .as_ref()
             .unwrap()
             .send(AuditPayload {
-                root_manifest_uri: uri.clone(),
+                root_manifest_uri: uri,
                 specs,
+                cargo_path: cargo_path.to_string(),
             })
             .await
     }
@@ -71,6 +74,7 @@ impl AuditController {
         let mut specs = None;
         self.sender = Some(internal_tx);
         let tx = self.tx.clone();
+        let mut cargo_path: Option<String> = None;
         let mut timer: Option<Pin<Box<Sleep>>> = None;
         //spawn a task to listen to the channel
         tokio::spawn(async move {
@@ -78,16 +82,13 @@ impl AuditController {
                 tokio::select! {
                     Some(payload) = internal_rx.recv() => {
                         if received_uri.is_none() {
-                            if payload.root_manifest_uri.path().as_str().ends_with(".lock") {
-                                received_uri = Some(
-                                    Uri::from_str(&payload.root_manifest_uri.path().as_str().replace(".lock", ".toml").to_string())
-                                        .unwrap(),
-                                );
-                            } else {
-                                received_uri = Some(payload.root_manifest_uri.clone());
-                            }
+                            received_uri = Some(payload.root_manifest_uri.ensure_lock());
                             specs=Some(payload.specs);
                         }
+                        if cargo_path.is_none() {
+                            cargo_path = Some(payload.cargo_path);
+                        }
+
                         timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(60))));
                     }
                     () = async {
@@ -99,7 +100,7 @@ impl AuditController {
                     }, if timer.is_some() => {
                         timer = None;
                         let uri = received_uri.take().unwrap();
-                        let reports = match audit_workspace(&uri, &specs.take().unwrap()).await {
+                        let reports = match audit_workspace(&uri, &specs.take().unwrap(),cargo_path.as_deref().unwrap_or("cargo")).await {
                             Ok(r) => r,
                             Err(e) => {
                                 error!("Failed to audit workspace {}: {}", uri.path(), e);
@@ -148,10 +149,10 @@ impl AuditIssue {
                     self.crate_name, self.version, self.title, self.id
                 );
                 if let Some(url) = &self.url {
-                    text.push_str(&format!("* Url: {}\n", url));
+                    text.push_str(&format!("* Url: {url}\n"));
                 }
                 if let Some(solution) = &self.solution {
-                    text.push_str(&format!("* Solution: {}\n", solution));
+                    text.push_str(&format!("* Solution: {solution}\n"));
                 }
                 if !self.dependency_paths.is_empty() {
                     if let Some(hint_crate_name) = hint_crate_name {
@@ -180,7 +181,7 @@ impl AuditIssue {
                     text.push_str(&format!("* ID: {}\n", self.id));
                 }
                 if let Some(url) = self.url.as_ref() {
-                    text.push_str(&format!("* URL: {:?}\n", url));
+                    text.push_str(&format!("* URL: {url}\n"));
                 }
                 if !self.dependency_paths.is_empty() {
                     if let Some(hint_crate_name) = hint_crate_name {
@@ -211,18 +212,22 @@ pub enum AuditKind {
 #[tracing::instrument(name = "audit_workspace", level = "trace")]
 pub async fn audit_workspace(
     //the root Cargo.toml path
-    root_manifest_uri: &Uri,
+    root_manifest_uri: &CanonicalUri,
     specs: &[PackageIdSpec],
+    cargo_path: &str,
 ) -> Result<AuditReports, anyhow::Error> {
     debug!(
         "Auditing workspace for root manifest: {}",
-        root_manifest_uri.path()
+        root_manifest_uri.as_str()
     );
 
-    let manifest_path = root_manifest_uri.path().to_string();
-    let manifest_path = manifest_path.replace(".toml", ".lock");
+    let Ok(manifest_path) = root_manifest_uri.to_path_buf() else {
+        error!("Failed to convert URI to path: {:?}", root_manifest_uri);
+        return Err(anyhow::anyhow!("Failed to convert URI to path"));
+    };
+    info!("manifest path {}", manifest_path.to_str().unwrap());
 
-    let output = match tokio::process::Command::new("cargo")
+    let output = match tokio::process::Command::new(cargo_path)
         .arg("audit")
         .arg("-f")
         .arg(&manifest_path)
@@ -389,6 +394,8 @@ mod tests {
     use cargo::core::PackageIdSpec;
     use tower_lsp::lsp_types::Uri;
 
+    use crate::entity::CanonicalUri;
+
     use super::audit_workspace;
 
     #[tokio::test]
@@ -399,7 +406,12 @@ mod tests {
             .try_init();
 
         let uri = Uri::from_str("file:///Users/jingyu/Github/cargo-appraiser/Cargo.toml").unwrap();
-        let res = audit_workspace(&uri, &[PackageIdSpec::new("cargo-appraiser".to_string())]).await;
+        let res = audit_workspace(
+            &CanonicalUri::try_from(uri).unwrap(),
+            &[PackageIdSpec::new("cargo-appraiser".to_string())],
+            "cargo",
+        )
+        .await;
         assert!(res.is_ok(), "Failed to audit workspace: {:?}", res);
         let reports = res.unwrap();
         assert!(!reports.is_empty());

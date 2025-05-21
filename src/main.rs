@@ -349,6 +349,7 @@ async fn main() {
         .with_ansi(false)
         .init();
 
+    let cargo_path = executable_path_finder::find_with_cargo_home("cargo").map(|p| p.to_string());
     let (service, socket) = LspService::new(|client| {
         let render = DecorationRenderer::new(client.clone(), args.renderer);
         let render_tx = render.init();
@@ -357,10 +358,9 @@ async fn main() {
             client.clone(),
             render_tx.clone(),
             args.client_capabilities.as_deref(),
+            cargo_path.clone().unwrap_or("cargo".to_string()),
         );
         let tx = state.initialize();
-        let cargo_path =
-            executable_path_finder::find_with_cargo_home("cargo").map(|p| p.to_string());
 
         CargoAppraiser {
             tx,

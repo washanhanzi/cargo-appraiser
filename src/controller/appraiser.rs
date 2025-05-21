@@ -1,4 +1,4 @@
-use std::env;
+use std::{cmp::max, env, str::FromStr};
 
 use cargo::{core::dependency::DepKind, util::VersionExt};
 use tokio::sync::{
@@ -18,7 +18,7 @@ use crate::{
     config::GLOBAL_CONFIG,
     controller::{code_action::code_action, completion::completion, read_file::ReadFileParam},
     decoration::DecorationEvent,
-    entity::{CargoError, DependencyTable},
+    entity::{CanonicalUri, CargoError, DependencyTable},
     usecase::{Document, Workspace},
 };
 
@@ -35,7 +35,7 @@ use super::{
 
 #[derive(Debug, Clone)]
 pub struct Ctx {
-    pub uri: Uri,
+    pub uri: CanonicalUri,
     pub rev: usize,
 }
 
@@ -47,6 +47,7 @@ pub struct Appraiser {
     client: Client,
     render_tx: Sender<DecorationEvent>,
     client_capabilities: ClientCapabilities,
+    cargo_path: String,
 }
 
 pub enum CargoDocumentEvent {
@@ -74,7 +75,7 @@ pub enum CargoDocumentEvent {
         Position,
         oneshot::Sender<Option<GotoDefinitionResponse>>,
     ),
-    CargoDiagnostic(Uri, CargoError),
+    CargoDiagnostic(CanonicalUri, CargoError),
     Audited(AuditReports),
 }
 
@@ -88,12 +89,14 @@ impl Appraiser {
         client: Client,
         render_tx: Sender<DecorationEvent>,
         client_capabilities: Option<&[ClientCapability]>,
+        cargo_path: String,
     ) -> Self {
         let client_capabilities = ClientCapabilities::new(client_capabilities);
         Self {
             client,
             render_tx,
             client_capabilities,
+            cargo_path,
         }
     }
     pub fn initialize(&self) -> Sender<CargoDocumentEvent> {
@@ -147,6 +150,7 @@ impl Appraiser {
         let render_tx = self.render_tx.clone();
         let client = self.client.clone();
         let client_capabilities = self.client_capabilities.clone();
+        let cargo_path = self.cargo_path.clone();
         tokio::spawn(async move {
             //workspace state
             let mut state = Workspace::new();
@@ -201,11 +205,7 @@ impl Appraiser {
                                                 data: None,
                                             };
                                             diagnostic_controller
-                                                .add_audit_diagnostic(
-                                                    root_manifest_uri,
-                                                    &dep.id,
-                                                    diag,
-                                                )
+                                                .add_audit_diagnostic(&doc.uri, &dep.id, diag)
                                                 .await;
                                         }
                                     }
@@ -218,13 +218,23 @@ impl Appraiser {
                             "Appraiser Event: CargoDiagnostic for URI: {:?}, Error: {:?}",
                             uri, err
                         );
-                        diagnostic_controller.clear_cargo_diagnostics(&uri).await;
+                        let Some(client_uri) = state.uri(&uri) else {
+                            continue;
+                        };
+                        diagnostic_controller
+                            .clear_cargo_diagnostics(&client_uri)
+                            .await;
                         //we need a crate name to find something in toml
                         let Some(crate_name) = err.crate_name() else {
                             continue;
                         };
 
-                        let Some(doc) = state.document(&uri) else {
+                        let Ok(canonical_uri) = uri.clone().try_into() else {
+                            error!("failed to canonicalize uri: {}", uri.as_str());
+                            continue;
+                        };
+
+                        let Some(doc) = state.document(&canonical_uri) else {
                             continue;
                         };
                         let keys = doc.find_keys_by_crate_name(crate_name);
@@ -234,12 +244,16 @@ impl Appraiser {
                         };
                         for (id, diag) in digs {
                             diagnostic_controller
-                                .add_cargo_diagnostic(&uri, id.as_str(), diag)
+                                .add_cargo_diagnostic(&client_uri, id.as_str(), diag)
                                 .await;
                         }
                     }
                     CargoDocumentEvent::Hovered(uri, pos, tx) => {
-                        let Some(doc) = state.document(&uri) else {
+                        let Ok(canonical_uri) = uri.clone().try_into() else {
+                            error!("failed to canonicalize uri: {}", uri.as_str());
+                            continue;
+                        };
+                        let Some(doc) = state.document(&canonical_uri) else {
                             continue;
                         };
                         let Some(node) = doc.precise_match(pos) else {
@@ -253,7 +267,11 @@ impl Appraiser {
                         let _ = tx.send(h);
                     }
                     CargoDocumentEvent::Gded(uri, pos, tx) => {
-                        let Some(doc) = state.document(&uri) else {
+                        let Ok(canonical_uri) = uri.clone().try_into() else {
+                            error!("failed to canonicalize uri: {}", uri.as_str());
+                            continue;
+                        };
+                        let Some(doc) = state.document(&canonical_uri) else {
                             continue;
                         };
                         let Some(node) = doc.precise_match(pos) else {
@@ -263,7 +281,11 @@ impl Appraiser {
                         let _ = tx.send(gd);
                     }
                     CargoDocumentEvent::Completion(uri, pos, tx) => {
-                        let Some(doc) = state.document(&uri) else {
+                        let Ok(canonical_uri) = uri.clone().try_into() else {
+                            error!("failed to canonicalize uri: {}", uri.as_str());
+                            continue;
+                        };
+                        let Some(doc) = state.document(&canonical_uri) else {
                             continue;
                         };
                         let Some(node) = doc.precise_match(pos) else {
@@ -277,7 +299,11 @@ impl Appraiser {
                         let _ = tx.send(completion);
                     }
                     CargoDocumentEvent::CodeAction(uri, range, tx) => {
-                        let Some(doc) = state.document(&uri) else {
+                        let Ok(canonical_uri) = uri.clone().try_into() else {
+                            error!("failed to canonicalize uri: {}", uri.as_str());
+                            continue;
+                        };
+                        let Some(doc) = state.document(&canonical_uri) else {
                             continue;
                         };
                         let Some(node) = doc.precise_match(range.start) else {
@@ -293,7 +319,11 @@ impl Appraiser {
                         let _ = tx.send(action);
                     }
                     CargoDocumentEvent::Closed(uri) => {
-                        if let Some(doc) = state.document_mut(&uri) {
+                        let Ok(canonical_uri) = uri.clone().try_into() else {
+                            error!("failed to canonicalize uri: {}", uri.as_str());
+                            continue;
+                        };
+                        if let Some(doc) = state.document_mut(&canonical_uri) {
                             doc.mark_dirty();
                             if let Err(e) = render_tx.send(DecorationEvent::Reset(uri)).await {
                                 error!("render tx send reset error: {}", e);
@@ -314,9 +344,19 @@ impl Appraiser {
                         diagnostic_controller
                             .clear_parse_diagnostics(&msg.uri)
                             .await;
+
+                        let Ok(canonical_uri) = TryInto::<CanonicalUri>::try_into(msg.uri.clone())
+                        else {
+                            error!("failed to canonicalize uri: {}", msg.uri.as_str());
+                            continue;
+                        };
                         //when Cargo.toml changed, clear audit diagnostics
                         diagnostic_controller.clear_audit_diagnostics().await;
-                        let diff = match state.reconsile(&msg.uri, &msg.text) {
+                        let diff = match state.reconsile(
+                            msg.uri.clone(),
+                            canonical_uri.clone(),
+                            &msg.text,
+                        ) {
                             Ok((_, diff)) => diff,
                             Err(err) => {
                                 for e in err {
@@ -330,12 +370,12 @@ impl Appraiser {
                                 continue;
                             }
                         };
-                        let doc = state.document(&msg.uri).unwrap();
+                        let doc = state.document(&canonical_uri).unwrap();
                         for v in &diff.range_updated {
                             if let Some(node) = doc.entry(v) {
                                 render_tx
                                     .send(DecorationEvent::DependencyRangeUpdate(
-                                        msg.uri.clone(),
+                                        doc.uri.clone(),
                                         v.to_string(),
                                         node.range,
                                     ))
@@ -346,7 +386,7 @@ impl Appraiser {
                         for v in &diff.value_updated {
                             render_tx
                                 .send(DecorationEvent::DependencyRemove(
-                                    msg.uri.clone(),
+                                    doc.uri.clone(),
                                     v.to_string(),
                                 ))
                                 .await
@@ -356,7 +396,7 @@ impl Appraiser {
                         for v in &diff.deleted {
                             render_tx
                                 .send(DecorationEvent::DependencyRemove(
-                                    msg.uri.clone(),
+                                    doc.uri.clone(),
                                     v.to_string(),
                                 ))
                                 .await
@@ -364,7 +404,7 @@ impl Appraiser {
                         }
                         if let Err(e) = debouncer
                             .send_background(Ctx {
-                                uri: msg.uri,
+                                uri: canonical_uri,
                                 rev: doc.rev,
                             })
                             .await
@@ -374,6 +414,11 @@ impl Appraiser {
                     }
                     CargoDocumentEvent::Parse(uri) => {
                         debug!("Appraiser Event: Parse for URI: {:?}", uri);
+                        let Ok(canonical_uri) = TryInto::<CanonicalUri>::try_into(uri.clone())
+                        else {
+                            error!("failed to canonicalize uri: {}", uri.as_str());
+                            continue;
+                        };
                         let content = if client_capabilities.can_read_file() {
                             let param = ReadFileParam { uri: uri.clone() };
                             match client.send_request::<ReadFile>(param).await {
@@ -385,7 +430,11 @@ impl Appraiser {
                             }
                         } else {
                             //read file with os
-                            match std::fs::read_to_string(uri.path().as_str()) {
+                            let Ok(path) = canonical_uri.to_path_buf() else {
+                                error!("failed to convert canonical uri to path: {}", uri.as_str());
+                                continue;
+                            };
+                            match std::fs::read_to_string(path) {
                                 Ok(content) => content,
                                 Err(e) => {
                                     error!("read file error: {}", e);
@@ -397,20 +446,30 @@ impl Appraiser {
                             &mut state,
                             &mut diagnostic_controller,
                             &CargoTomlPayload { uri, text: content },
+                            &canonical_uri,
                         )
                         .await;
                     }
                     CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
                         debug!("Appraiser Event: Opened/Saved for URI: {:?}", msg.uri);
-                        let Some(doc) =
-                            reconsile_document(&mut state, &mut diagnostic_controller, &msg).await
+                        let Ok(canonical_uri) = msg.uri.clone().try_into() else {
+                            error!("failed to canonicalize uri: {}", msg.uri.as_str());
+                            continue;
+                        };
+                        let Some(doc) = reconsile_document(
+                            &mut state,
+                            &mut diagnostic_controller,
+                            &msg,
+                            &canonical_uri,
+                        )
+                        .await
                         else {
                             continue;
                         };
 
                         if let Err(e) = debouncer
                             .send_interactive(Ctx {
-                                uri: msg.uri,
+                                uri: canonical_uri,
                                 rev: doc.rev,
                             })
                             .await
@@ -424,7 +483,10 @@ impl Appraiser {
                             ctx.uri, ctx.rev
                         );
                         if state.check_rev(&ctx.uri, ctx.rev) {
-                            start_resolve(&ctx.uri, &mut state, &render_tx, &cargo_tx).await;
+                            let Some(doc) = state.document(&ctx.uri) else {
+                                continue;
+                            };
+                            start_resolve(doc, &render_tx, &cargo_tx).await;
                         }
                     }
                     CargoDocumentEvent::CargoResolved(output) => {
@@ -440,10 +502,18 @@ impl Appraiser {
                         //resolve virtual manifest if we haven't
                         let root_manifest_uri = output.root_manifest_uri.clone();
                         if state.document(&root_manifest_uri).is_none() {
-                            if let Err(e) = inner_tx
-                                .send(CargoDocumentEvent::Parse(root_manifest_uri.clone()))
-                                .await
-                            {
+                            let Ok(canonical_uri) =
+                                CanonicalUri::try_from(root_manifest_uri.clone())
+                            else {
+                                error!(
+                                    "failed to canonicalize root manifest uri: {}",
+                                    root_manifest_uri.as_str()
+                                );
+                                continue;
+                            };
+                            //TODO
+                            let uri = Uri::from_str(root_manifest_uri.as_str()).unwrap();
+                            if let Err(e) = inner_tx.send(CargoDocumentEvent::Parse(uri)).await {
                                 error!("inner tx send error: {}", e);
                             }
                         }
@@ -455,7 +525,7 @@ impl Appraiser {
                         if !GLOBAL_CONFIG.read().unwrap().audit.disabled {
                             debug!("send audit event");
                             if let Err(e) = audit_controller
-                                .send(&root_manifest_uri, state.specs.clone())
+                                .send(root_manifest_uri, state.specs.clone(), &cargo_path)
                                 .await
                             {
                                 error!("audit controller send error: {}", e);
@@ -468,7 +538,7 @@ impl Appraiser {
                             continue;
                         };
                         diagnostic_controller
-                            .clear_cargo_diagnostics(&output.ctx.uri)
+                            .clear_cargo_diagnostics(&doc.uri)
                             .await;
 
                         //populate deps
@@ -484,7 +554,7 @@ impl Appraiser {
                             let Some(requested_result) = output.dependencies.get(&dep.name) else {
                                 if let Err(e) = render_tx
                                     .send(DecorationEvent::Dependency(
-                                        output.ctx.uri.clone(),
+                                        doc.uri.clone(),
                                         dep.id.clone(),
                                         dep.range,
                                         dep.clone(),
@@ -597,7 +667,7 @@ impl Appraiser {
                             //send to render task
                             if let Err(e) = render_tx
                                 .send(DecorationEvent::Dependency(
-                                    output.ctx.uri.clone(),
+                                    doc.uri.clone(),
                                     dep.id.clone(),
                                     dep.range,
                                     dep.clone(),
@@ -630,40 +700,30 @@ impl Appraiser {
 }
 
 async fn start_resolve(
-    uri: &Uri,
-    state: &mut Workspace,
+    doc: &Document,
     render_tx: &Sender<DecorationEvent>,
     cargo_tx: &Sender<Ctx>,
 ) {
-    debug!("start_resolve triggered for URI: {:?}", uri);
-    let Some(doc) = state.document_mut(uri) else {
-        debug!(
-            "Document not found in workspace state for URI: {:?}. Aborting resolve.",
-            uri
-        );
-        return;
-    };
+    debug!("start_resolve triggered for URI: {:?}", doc.uri);
 
     //no need to resolve
     if !doc.is_dependencies_dirty() {
         debug!(
             "Dependencies are not dirty for URI: {:?}. No resolve needed.",
-            uri
+            doc.uri
         );
         return;
     }
 
-    debug!(
-        "Processing {} dirty dependencies for URI: {:?}",
-        doc.dirty_dependencies.len(),
-        uri
-    );
     for v in doc.dirty_dependencies.keys() {
         if let Some(n) = doc.entry(v) {
-            debug!("Marking dependency '{}' as waiting for URI: {:?}", v, uri);
+            debug!(
+                "Marking dependency '{}' as waiting for URI: {:?}",
+                v, doc.uri
+            );
             render_tx
                 .send(DecorationEvent::DependencyWaiting(
-                    uri.clone(),
+                    doc.uri.clone(),
                     v.to_string(),
                     n.range,
                 ))
@@ -674,7 +734,7 @@ async fn start_resolve(
 
     //resolve cargo dependencies
     let resolve_ctx = Ctx {
-        uri: uri.clone(),
+        uri: doc.canonical_uri.clone(),
         rev: doc.rev,
     };
     debug!(
@@ -690,8 +750,9 @@ async fn reconsile_document<'a>(
     state: &'a mut Workspace,
     diagnostic_controller: &'a mut DiagnosticController,
     msg: &CargoTomlPayload,
+    canonical_uri: &CanonicalUri,
 ) -> Option<&'a Document> {
-    match state.reconsile(&msg.uri, &msg.text) {
+    match state.reconsile(msg.uri.clone(), canonical_uri.clone(), &msg.text) {
         Ok((doc, diff)) => {
             if diff.is_empty() && !doc.is_dependencies_dirty() {
                 None
