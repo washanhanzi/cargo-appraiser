@@ -3,13 +3,39 @@ use std::{path::Path, str::FromStr};
 use tower_lsp::lsp_types::Uri;
 
 /// Convert a filesystem path to a file:// URI, handling Windows paths correctly.
-pub fn into_file_uri(path: &Path) -> Uri {
+pub fn into_uri(path: &Path) -> Uri {
     // Use dunce to handle path canonicalization and UNC path conversion on Windows
     let path = canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
 
     // Convert to string and handle Windows paths
     let path_str = path.to_str().unwrap_or_default();
     into_file_uri_str(path_str)
+}
+
+pub fn into_path(uri: &Uri) -> &Path {
+    #[cfg(windows)]
+    {
+        &into_path_win(uri)
+    }
+    #[cfg(not(windows))]
+    {
+        Path::new(uri.path().as_str())
+    }
+}
+
+#[cfg(windows)]
+use std::path::PathBuf;
+#[cfg(windows)]
+fn into_path_win(uri: &Uri) -> PathBuf {
+    use percent_encoding::percent_decode_str;
+    let path_str = uri.path().as_str();
+    let decoded = percent_decode_str(path_str)
+        .decode_utf8()
+        .unwrap()
+        .to_string();
+    let windows_path = decoded.trim_start_matches('/').replace('/', "\\");
+    let path = Path::new(&windows_path);
+    canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Convert a path string to a file:// URI, handling Windows paths correctly.
@@ -81,16 +107,27 @@ mod tests {
     use std::path::Path;
 
     #[test]
+    fn test_into_path() {
+        let uri = Uri::from_str("file:///home/user/project/Cargo.toml").unwrap();
+        let path = into_path(&uri);
+        assert_eq!(path.to_str().unwrap(), "/home/user/project/Cargo.toml");
+
+        let uri = Uri::from_str("file:///c%3A/Users/project/Cargo.toml").unwrap();
+        let path = into_path(&uri);
+        assert_eq!(path.to_str().unwrap(), "c:/Users/project/Cargo.toml");
+    }
+
+    #[test]
     fn test_into_file_uri_unix() {
         let path = Path::new("/home/user/project/Cargo.toml");
-        let uri = into_file_uri(path);
+        let uri = into_uri(path);
         assert_eq!(uri.to_string(), "file:///home/user/project/Cargo.toml");
     }
 
     #[test]
     fn test_into_file_uri_windows() {
         let path = Path::new("E:\\projects\\test\\Cargo.toml");
-        let uri = into_file_uri(path);
+        let uri = into_uri(path);
         // The actual output will depend on the platform, but it should be a valid URI
         if cfg!(windows) {
             assert!(uri

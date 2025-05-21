@@ -33,6 +33,7 @@ tower-lsp = { git = "https://github.com/washanhanzi/tower-lsp", branch = "master
 ] }
 regex = "1.11.1"
 openssl = { version = '0.10', optional = true }
+percent-encoding = "2.3.1"
 
 [features]
 default = []
