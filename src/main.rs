@@ -5,8 +5,8 @@ use decoration::{DecorationRenderer, Renderer};
 use entity::{supported_commands, CARGO};
 use serde_json::Value;
 use tokio::sync::{mpsc::Sender, oneshot};
-use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
+use tower_lsp::{jsonrpc::Result, lsp_types::canonical_uri::CanonicalUri};
 use tower_lsp::{LanguageServer, LspService, Server};
 use tracing::{error, info};
 

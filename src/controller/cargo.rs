@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::PathBuf,
     task::Poll,
 };
 
@@ -22,7 +22,7 @@ use cargo::{
     util::{cache_lock::CacheLockMode, OptVersionReq},
     GlobalContext,
 };
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Uri};
+use tower_lsp::lsp_types::{canonical_uri::CanonicalUri, Diagnostic, DiagnosticSeverity, Uri};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::entity::{
@@ -35,9 +35,9 @@ use super::appraiser::Ctx;
 #[derive(Debug)]
 pub struct CargoResolveOutput {
     pub ctx: Ctx,
-    pub root_manifest_uri: Uri,
+    pub root_manifest_uri: CanonicalUri,
     pub specs: Vec<PackageIdSpec>,
-    pub member_manifest_uris: Vec<Uri>,
+    pub member_manifest_uris: Vec<CanonicalUri>,
     //toml_name -> Dependency
     pub dependencies: HashMap<String, Vec<DependencyWithId>>,
     //package_name -> Vec<Package>
@@ -56,10 +56,16 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         ctx.uri.path()
     );
     let gctx = GlobalContext::default().unwrap();
+    let Ok(path) = ctx.uri.to_path_buf() else {
+        error!("Failed to convert URI to path: {:?}", ctx.uri);
+        return Err(CargoError::resolve_error(anyhow::anyhow!(
+            "Failed to convert URI to path"
+        )));
+    };
 
     // Create workspace and ensure it's properly configured
-    let workspace = cargo::core::Workspace::new(&into_path(&ctx.uri), &gctx)
-        .map_err(CargoError::workspace_error)?;
+    let workspace =
+        cargo::core::Workspace::new(&path, &gctx).map_err(CargoError::workspace_error)?;
 
     info!(
         "Workspace created successfully for path: {:?}, root: {:?}",
@@ -67,9 +73,9 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         workspace.root()
     );
 
-    let root_manifest_uri = into_uri(&workspace.root().join("Cargo.toml"));
-    let url = url::Url::parse(&root_manifest_uri.to_string()).unwrap();
-    info!("convert back: {}", url.path());
+    let path = workspace.root().join("Cargo.toml");
+    let root_manifest_uri = CanonicalUri::try_from_path(&path)
+        .expect("Failed to convert root manifest path to canonical URI");
 
     //Dependency is a what cargo.toml requested
     //workspace resolve specs
@@ -95,8 +101,15 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     for member in workspace.members() {
         trace!("Processing member package: {:?}", member.package_id());
         specs.push(member.package_id().to_spec());
-        member_manifest_uris.push(into_uri(member.manifest_path()));
         deps.extend(member.dependencies().to_vec());
+        let Ok(manifest_path) = CanonicalUri::try_from_path(member.manifest_path()) else {
+            error!(
+                "Failed to convert member manifest path to canonical URI, member: {:?}",
+                member.manifest_path()
+            );
+            continue;
+        };
+        member_manifest_uris.push(manifest_path);
         trace!(
             "After member {:?}: specs_count={}, deps_count={}",
             member.package_id(),

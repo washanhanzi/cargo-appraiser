@@ -5,6 +5,8 @@ use std::{
 };
 use tower_lsp::lsp_types::Uri;
 
+pub fn uri(uri: &Uri) {}
+
 /// Convert a filesystem path to a file:// URI, handling Windows paths correctly.
 pub fn into_uri(path: &Path) -> Uri {
     // Use dunce to handle path canonicalization and UNC path conversion on Windows
@@ -128,11 +130,21 @@ mod tests {
     #[test]
     fn test_into_file_uri_windows() {
         let path = Path::new("E:\\projects\\test\\Cargo.toml");
-        let url = url::Url::from_file_path(path).unwrap();
-        println!("path: {}", url);
-        let uri = tower_lsp::lsp_types::Uri::from_str(path.to_str().unwrap()).unwrap();
-        println!("uri: {}", uri.to_string());
+        let encoded_path = percent_encoding::percent_encode(
+            path.to_str().unwrap().as_bytes(),
+            percent_encoding::NON_ALPHANUMERIC,
+        )
+        .to_string();
+        let url = url::Url::from_file_path(encoded_path).unwrap();
+        println!("path: {url}");
+        let uri = tower_lsp::lsp_types::Uri::from_str(url.as_str()).unwrap();
+        println!("uri: {uri:?}");
 
+        percent_encoding::percent_encode(
+            path.to_str().unwrap().as_bytes(),
+            percent_encoding::NON_ALPHANUMERIC,
+        )
+        .to_string();
         let uri = into_uri(&path);
         // The actual output will depend on the platform, but it should be a valid URI
         if cfg!(windows) {

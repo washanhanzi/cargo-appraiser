@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::{Position, Uri};
+use tower_lsp::lsp_types::{canonical_uri::CanonicalUri, Position, Uri};
 
 use crate::entity::{Dependency, EntryDiff, Manifest, SymbolTree, TomlNode, TomlParsingError};
 
@@ -9,6 +9,7 @@ use super::{diff_dependency_entries, ReverseSymbolTree, Walker};
 #[derive(Debug, Clone)]
 pub struct Document {
     pub uri: Uri,
+    pub canonical_uri: CanonicalUri,
     pub rev: usize,
     tree: SymbolTree,
     pub reverse_tree: ReverseSymbolTree,
@@ -27,7 +28,7 @@ impl Document {
         &self.tree
     }
 
-    pub fn parse(uri: &Uri, text: &str) -> Self {
+    pub fn parse(uri: Uri, canonical_uri: CanonicalUri, text: &str) -> Self {
         //TODO I'm too stupid to apprehend the rowan tree else I would use incremental patching
         let p = taplo::parser::parse(text);
         let dom = p.into_dom();
@@ -55,8 +56,10 @@ impl Document {
                 .or_insert_with(Vec::new)
                 .push(id.to_string());
         }
+
         Self {
-            uri: uri.clone(),
+            uri,
+            canonical_uri,
             rev: 0,
             tree,
             manifest,
@@ -230,6 +233,7 @@ impl Document {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use std::str::FromStr;
 
@@ -245,8 +249,11 @@ mod tests {
 
     #[test]
     fn test_parse() {
+        let uri = Uri::from_str("file:///C:/Users/test.toml").unwrap();
+        let canonical_uri = uri.clone().try_into().unwrap();
         let doc = Document::parse(
-            &Uri::from_str("file:///C:/Users/test.toml").unwrap(),
+            uri,
+            canonical_uri,
             r#"
             [dependencies]
             a = "0.1.0"
