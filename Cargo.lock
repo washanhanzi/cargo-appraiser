@@ -2705,7 +2705,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.97.0"
-source = "git+https://github.com/washanhanzi/lsp-types?branch=master#6b535a2647a3aef78b0f21b3d3bf8f6b52664b34"
+source = "git+https://github.com/washanhanzi/lsp-types?branch=master#ff6c44bad837e50e3127e9ec7b98df88405a0d8a"
 dependencies = [
  "bitflags 2.9.0",
  "dunce",
@@ -4167,7 +4167,7 @@ checksum = "121c2a6cda46980bb0fcd1647ffaf6cd3fc79a013de288782836f6df9c48780e"
 [[package]]
 name = "tower-lsp"
 version = "0.20.0"
-source = "git+https://github.com/washanhanzi/tower-lsp?branch=master#410daed14076cacf0bf812b0d24dca43f0673934"
+source = "git+https://github.com/washanhanzi/tower-lsp?branch=master#a962b2dd04b3f9f904ad2257bc7cedd771dbb2c2"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -4189,7 +4189,7 @@ dependencies = [
 [[package]]
 name = "tower-lsp-macros"
 version = "0.9.0"
-source = "git+https://github.com/washanhanzi/tower-lsp?branch=master#410daed14076cacf0bf812b0d24dca43f0673934"
+source = "git+https://github.com/washanhanzi/tower-lsp?branch=master#a962b2dd04b3f9f904ad2257bc7cedd771dbb2c2"
 dependencies = [
  "proc-macro2",
  "quote",
