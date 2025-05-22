@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::{canonical_uri::CanonicalUri, Position, Uri};
+use tower_lsp::lsp_types::{Position, Uri};
 
-use crate::entity::{Dependency, EntryDiff, Manifest, SymbolTree, TomlNode, TomlParsingError};
+use crate::entity::{
+    CanonicalUri, Dependency, EntryDiff, Manifest, SymbolTree, TomlNode, TomlParsingError,
+};
 
 use super::{diff_dependency_entries, ReverseSymbolTree, Walker};
 

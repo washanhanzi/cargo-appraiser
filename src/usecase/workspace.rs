@@ -1,9 +1,9 @@
 use std::collections::{hash_map::Entry, HashMap};
 
 use cargo::core::PackageIdSpec;
-use tower_lsp::lsp_types::{canonical_uri::CanonicalUri, Uri};
+use tower_lsp::lsp_types::Uri;
 
-use crate::entity::{EntryDiff, TomlParsingError};
+use crate::entity::{CanonicalUri, EntryDiff, TomlParsingError};
 
 use super::document::Document;
 

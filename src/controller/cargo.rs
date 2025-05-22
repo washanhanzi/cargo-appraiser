@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    fs::canonicalize,
     task::Poll,
 };
 
@@ -22,12 +22,12 @@ use cargo::{
     util::{cache_lock::CacheLockMode, OptVersionReq},
     GlobalContext,
 };
-use tower_lsp::lsp_types::{canonical_uri::CanonicalUri, Diagnostic, DiagnosticSeverity, Uri};
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Uri};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::entity::{
-    from_resolve_error, into_path, into_uri, CargoError, CargoErrorKind,
-    Dependency as EntityDependency, SymbolTree, TomlNode,
+    from_resolve_error, CanonicalUri, CargoError, CargoErrorKind, Dependency as EntityDependency,
+    SymbolTree, TomlNode,
 };
 
 use super::appraiser::Ctx;

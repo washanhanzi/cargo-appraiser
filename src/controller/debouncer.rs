@@ -1,3 +1,5 @@
+use crate::entity::CanonicalUri;
+
 use super::{appraiser::Ctx, CargoDocumentEvent};
 use futures::{Stream, StreamExt};
 use std::{
@@ -8,7 +10,6 @@ use std::{
 };
 use tokio::sync::mpsc::{self, error::SendError, Sender};
 use tokio_util::time::{delay_queue, DelayQueue};
-use tower_lsp::lsp_types::{canonical_uri::CanonicalUri, Uri};
 use tracing::error;
 
 // Change Timer

@@ -7,7 +7,6 @@ use tokio::sync::{
 };
 use tower_lsp::{
     lsp_types::{
-        canonical_uri::{self, CanonicalUri},
         CodeActionResponse, CompletionResponse, Diagnostic, GotoDefinitionResponse, Hover,
         Position, Range, Uri,
     },
@@ -19,7 +18,7 @@ use crate::{
     config::GLOBAL_CONFIG,
     controller::{code_action::code_action, completion::completion, read_file::ReadFileParam},
     decoration::DecorationEvent,
-    entity::{CargoError, DependencyTable},
+    entity::{CanonicalUri, CargoError, DependencyTable},
     usecase::{Document, Workspace},
 };
 
@@ -48,6 +47,7 @@ pub struct Appraiser {
     client: Client,
     render_tx: Sender<DecorationEvent>,
     client_capabilities: ClientCapabilities,
+    cargo_path: String,
 }
 
 pub enum CargoDocumentEvent {
@@ -89,12 +89,14 @@ impl Appraiser {
         client: Client,
         render_tx: Sender<DecorationEvent>,
         client_capabilities: Option<&[ClientCapability]>,
+        cargo_path: String,
     ) -> Self {
         let client_capabilities = ClientCapabilities::new(client_capabilities);
         Self {
             client,
             render_tx,
             client_capabilities,
+            cargo_path,
         }
     }
     pub fn initialize(&self) -> Sender<CargoDocumentEvent> {
@@ -148,6 +150,7 @@ impl Appraiser {
         let render_tx = self.render_tx.clone();
         let client = self.client.clone();
         let client_capabilities = self.client_capabilities.clone();
+        let cargo_path = self.cargo_path.clone();
         tokio::spawn(async move {
             //workspace state
             let mut state = Workspace::new();
@@ -521,9 +524,10 @@ impl Appraiser {
                         //send audit event
                         if !GLOBAL_CONFIG.read().unwrap().audit.disabled {
                             debug!("send audit event");
-                            //TODO
-                            let uri = Uri::from_str(root_manifest_uri.as_str()).unwrap();
-                            if let Err(e) = audit_controller.send(&uri, state.specs.clone()).await {
+                            if let Err(e) = audit_controller
+                                .send(root_manifest_uri, state.specs.clone(), &cargo_path)
+                                .await
+                            {
                                 error!("audit controller send error: {}", e);
                             };
                         }
