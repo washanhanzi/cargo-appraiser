@@ -1,7 +1,7 @@
 [package]
 name = "cargo-appraiser"
 description = "a LSP for Cargo.toml"
-version = "0.1.0"
+version = "0.2.4"
 edition = "2021"
 license = "MIT"
 homepage = "https://github.com/washanhanzi/cargo-appraiser"
