@@ -29,10 +29,8 @@
 
 ```jsonc
 {
-  //vscode decoration color config, for example `cargo-appraiser.decorationColor.light: {latest: "#006400"}`
-  "decorationColor": {
-    //the default for light and highContrastLight
-    "light": {
+  //the default for light and highContrastLight
+  "cargo-appraiser.decorationColor.light": {
       "notParsed": "#808080",
       "latest": "#006400",
       "local": "#00008B",
@@ -42,9 +40,9 @@
       "nonCompatibleLatest": "#B8860B",
       "yanked": "#FF0000",
       "git": "#800080"
-    },
-    //the default for dark and highContrast
-    "dark": {
+  },
+  //the default for dark and highContrast
+  "cargo-appraiser.decorationColor.dark": {
       "notParsed": "#808080",
       "latest": "#006400",
       "local": "#00008B",
@@ -54,14 +52,19 @@
       "nonCompatibleLatest": "#FF8C00",
       "yanked": "#FF0000",
       "git": "#800080"
-    },
-    "highContrast": {
-      //same as dark
-    },
-    "highContrastLight": {
+  },
+  "cargo-appraiser.decorationColor.highContrastLight": {
       //same as light
-    }
-  }
+  },
+  "cargo-appraiser.decorationColor.highContrast": {
+      //same as dark
+  },
+  //extra environment variables to pass to the cargo-appraiser server
+  "cargo-appraiser.extraEnv": {
+    "RUST_LOG": "info"
+  },
+  //custom path to the cargo-appraiser server binary. If set, this will be used instead of downloading from GitHub.
+  "cargo-appraiser.serverPath": ""
 }
 ```
 
