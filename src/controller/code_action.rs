@@ -265,10 +265,10 @@ impl<'a> VersionCodeAction<'a> {
             .push(new_code_action(self.uri.clone(), v, kind, range, title));
     }
 
-    fn add_precies_update_command(&mut self, package_name: &str, v: &Version) {
-        self.actions
-            .push(new_precise_update_command(package_name, v).into());
-    }
+    // fn add_precies_update_command(&mut self, package_name: &str, v: &Version) {
+    //     self.actions
+    //         .push(new_precise_update_command(package_name, v).into());
+    // }
 
     fn add_update_command(&mut self, package_name: &str) {
         self.actions.push(new_update_command(package_name).into());
@@ -297,19 +297,6 @@ fn new_code_action(
         ..Default::default()
     }
     .into()
-}
-
-fn new_precise_update_command(package_name: &str, v: &Version) -> Command {
-    Command::new(
-        format!("cargo update {} --precise {}", package_name, v),
-        CARGO.to_string(),
-        Some(vec![
-            Value::String("update".to_string()),
-            Value::String(package_name.to_string()),
-            Value::String("--precise".to_string()),
-            Value::String(v.to_string()),
-        ]),
-    )
 }
 
 fn new_update_command(package_name: &str) -> Command {

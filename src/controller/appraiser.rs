@@ -1,4 +1,4 @@
-use std::{cmp::max, env, str::FromStr};
+use std::{env, str::FromStr};
 
 use cargo::{core::dependency::DepKind, util::VersionExt};
 use tokio::sync::{
@@ -162,9 +162,6 @@ impl Appraiser {
                 match event {
                     CargoDocumentEvent::Audited(reports) => {
                         debug!("found audit reports: {:?}", reports.len());
-                        let Some(root_manifest_uri) = state.root_manifest_uri.as_ref() else {
-                            continue;
-                        };
                         let Some(doc) = state.root_document() else {
                             continue;
                         };
@@ -222,19 +219,14 @@ impl Appraiser {
                             continue;
                         };
                         diagnostic_controller
-                            .clear_cargo_diagnostics(&client_uri)
+                            .clear_cargo_diagnostics(client_uri)
                             .await;
                         //we need a crate name to find something in toml
                         let Some(crate_name) = err.crate_name() else {
                             continue;
                         };
 
-                        let Ok(canonical_uri) = uri.clone().try_into() else {
-                            error!("failed to canonicalize uri: {}", uri.as_str());
-                            continue;
-                        };
-
-                        let Some(doc) = state.document(&canonical_uri) else {
+                        let Some(doc) = state.document(&uri) else {
                             continue;
                         };
                         let keys = doc.find_keys_by_crate_name(crate_name);
@@ -244,7 +236,7 @@ impl Appraiser {
                         };
                         for (id, diag) in digs {
                             diagnostic_controller
-                                .add_cargo_diagnostic(&client_uri, id.as_str(), diag)
+                                .add_cargo_diagnostic(client_uri, id.as_str(), diag)
                                 .await;
                         }
                     }
@@ -502,16 +494,6 @@ impl Appraiser {
                         //resolve virtual manifest if we haven't
                         let root_manifest_uri = output.root_manifest_uri.clone();
                         if state.document(&root_manifest_uri).is_none() {
-                            let Ok(canonical_uri) =
-                                CanonicalUri::try_from(root_manifest_uri.clone())
-                            else {
-                                error!(
-                                    "failed to canonicalize root manifest uri: {}",
-                                    root_manifest_uri.as_str()
-                                );
-                                continue;
-                            };
-                            //TODO
                             let uri = Uri::from_str(root_manifest_uri.as_str()).unwrap();
                             if let Err(e) = inner_tx.send(CargoDocumentEvent::Parse(uri)).await {
                                 error!("inner tx send error: {}", e);

@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-appraiser"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "cargo",
@@ -381,6 +381,7 @@ dependencies = [
  "serde",
  "serde_json",
  "taplo",
+ "tempfile",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",

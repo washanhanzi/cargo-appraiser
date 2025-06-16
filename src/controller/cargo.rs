@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::canonicalize,
     task::Poll,
 };
 
@@ -22,8 +21,8 @@ use cargo::{
     util::{cache_lock::CacheLockMode, OptVersionReq},
     GlobalContext,
 };
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Uri};
-use tracing::{debug, error, info, trace, warn};
+use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity};
+use tracing::{debug, error, trace, warn};
 
 use crate::entity::{
     from_resolve_error, CanonicalUri, CargoError, CargoErrorKind, Dependency as EntityDependency,

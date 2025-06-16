@@ -237,8 +237,6 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use tower_lsp::lsp_types::Uri;
 
     use crate::{
@@ -251,8 +249,19 @@ mod tests {
 
     #[test]
     fn test_parse() {
-        let uri = Uri::from_str("file:///C:/Users/test.toml").unwrap();
+        // Use a platform-agnostic approach with a temp file
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_cargo_appraiser.toml");
+
+        // Create the temp file so canonicalization works
+        std::fs::write(&temp_file, "").unwrap();
+
+        let uri = Uri::try_from_path(&temp_file).unwrap();
         let canonical_uri = uri.clone().try_into().unwrap();
+
+        // Clean up the temp file
+        std::fs::remove_file(&temp_file).unwrap();
+
         let doc = Document::parse(
             uri,
             canonical_uri,
@@ -264,19 +273,25 @@ mod tests {
         );
         assert_eq!(doc.tree.keys.len(), 2);
         assert_eq!(doc.tree.entries.len(), 1);
+
+        // Check that we have keys for both dependencies "a" and "b"
+        let mut found_keys = vec![];
         for (_, v) in doc.tree.keys.iter() {
             assert_eq!(
                 v.table,
                 CargoTable::Dependencies(DependencyTable::Dependencies)
             );
-            assert_eq!(
-                v.kind,
-                NodeKind::Key(KeyKind::Dependency(
-                    "dependencies.a".to_string(),
-                    DependencyKeyKind::CrateName
-                ))
-            );
+            match &v.kind {
+                NodeKind::Key(KeyKind::Dependency(id, DependencyKeyKind::CrateName)) => {
+                    found_keys.push(id.clone());
+                }
+                _ => panic!("Unexpected key kind: {:?}", v.kind),
+            }
         }
+        found_keys.sort();
+        assert_eq!(found_keys, vec!["dependencies.a", "dependencies.b"]);
+
+        // Check that we have an entry only for dependency "a" (which has a value)
         for (_, v) in doc.tree.entries.iter() {
             assert_eq!(
                 v.table,

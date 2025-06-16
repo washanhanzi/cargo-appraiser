@@ -8,7 +8,7 @@ pub struct Workspace {
 }
 
 #[derive(Default, Debug, Clone)]
-struct Members {
+pub struct Members {
     pub id: String,
     pub text: String,
     pub range: Range,

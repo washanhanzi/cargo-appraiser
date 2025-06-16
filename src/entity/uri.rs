@@ -1,7 +1,6 @@
 use std::{ops::Deref, path::Path, str::FromStr};
 
 use tower_lsp::lsp_types::Uri;
-use tracing::info;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, PartialOrd, Ord)]
 pub struct CanonicalUri(Uri);
