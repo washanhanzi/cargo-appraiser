@@ -27,6 +27,8 @@ function prepareEnv(configOptions?: any): { [key: string]: string | undefined } 
 }
 
 export async function activate(context: ExtensionContext) {
+    config.init()
+
     // Get the binary path
     let serverPath = await languageServerBinaryPath(context)
 
@@ -37,7 +39,6 @@ export async function activate(context: ExtensionContext) {
         return
     }
 
-    config.init()
     // If the extension is launched in debug mode then the debug server options are used
     // Otherwise the run options are used
     // add env rust log level set to debug
