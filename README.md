@@ -1,5 +1,9 @@
 # cargo-appraiser
 
+![lsp release](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fgithub.com%2Fwashanhanzi%2Fcargo-appraiser%2Fraw%2Frelease%2FCargo.toml&query=%24.package.version&prefix=v&label=version&labelColor=orange&color=%2376FF03)
+![vscode extension release](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2Fwashanhanzi%2Fcargo-appraiser%2Fraw%2Fvscode%2Frelease%2Feditor%2Fcode%2Fpackage.json&query=%24.version&prefix=vscode%2Fv&label=vscode%20extension&labelColor=blue&color=%2376FF03)
+
+
 # What's this
 
 `cargo-appraiser` is an LSP server for your `Cargo.toml` files. It helps you understand the relationship between your declared dependencies (the desired state in `Cargo.toml`) and what `cargo` has actually resolved and put into your `Cargo.lock` file (the actual state). This insight allows you to quickly see if your dependencies are up-to-date, identify potential version conflicts, and navigate complex workspaces with greater clarity.
