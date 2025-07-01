@@ -2,7 +2,7 @@
   "name": "cargo-appraiser",
   "displayName": "cargo-appraiser",
   "description": "LSP for Cargo.toml",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "icon": "image/icon.webp",
   "publisher": "washan",
   "license": "SEE LICENSE IN LICENSE",

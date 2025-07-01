@@ -30,9 +30,16 @@ export async function languageServerBinaryPath(context: ExtensionContext): Promi
     const chmod = promisify(fs.chmod)
 
     // Fetch latest release info
-    const releaseInfo = await ky.get('https://api.github.com/repos/washanhanzi/cargo-appraiser/releases/latest', {
-        headers: { 'User-Agent': 'VSCode-Extension' }
-    }).json() as any
+    const releases = await ky.get('https://api.github.com/repos/washanhanzi/cargo-appraiser/releases', {
+        headers: { 'User-Agent': 'VSCode-Extension' },
+        searchParams: { per_page: 5 } // Fetch up to 5 releases
+    }).json() as any[]
+
+    const releaseInfo = releases.find(release => !release.tag_name.startsWith('vscode/'))
+
+    if (!releaseInfo) {
+        throw new Error('No suitable LSP release found on GitHub.')
+    }
 
     // Determine platform and architecture
     const platform = process.platform
