@@ -1,7 +1,7 @@
 [package]
 name = "cargo-appraiser"
 description = "a LSP for Cargo.toml"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 license = "MIT"
 homepage = "https://github.com/washanhanzi/cargo-appraiser"
@@ -9,10 +9,10 @@ repository = "https://github.com/washanhanzi/cargo-appraiser"
 
 [dependencies]
 serde_json = "1"
-taplo = "0.13"
+taplo = "0.14"
 tokio = { version = "1.44", features = ["full", "macros", "rt-multi-thread"] }
 dunce = "1.0.4"
-lsp-async-stub = "0.6.4"
+lsp-async-stub = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 parking_lot = "0.12"
 anyhow = "1.0"

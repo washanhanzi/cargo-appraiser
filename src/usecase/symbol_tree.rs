@@ -97,7 +97,7 @@ impl Walker {
                                             table: crate::entity::DependencyTable::Dependencies,
                                             range: into_lsp_range(
                                                 self.mapper
-                                                    .range(join_ranges(entry.text_ranges()))
+                                                    .range(join_ranges(entry.text_ranges(true)))
                                                     .unwrap(),
                                             ),
                                             is_virtual: true,
@@ -146,7 +146,9 @@ impl Walker {
                                 name: key.value().to_string(),
                                 table: dep_table,
                                 range: into_lsp_range(
-                                    self.mapper.range(join_ranges(entry.text_ranges())).unwrap(),
+                                    self.mapper
+                                        .range(join_ranges(entry.text_ranges(true)))
+                                        .unwrap(),
                                 ),
                                 ..Default::default()
                             };
@@ -183,7 +185,7 @@ impl Walker {
                                                 table: dep_table,
                                                 range: into_lsp_range(
                                                     self.mapper
-                                                        .range(join_ranges(entry.text_ranges()))
+                                                        .range(join_ranges(entry.text_ranges(true)))
                                                         .unwrap(),
                                                 ),
                                                 platform: Some(platform.to_string()),
@@ -239,7 +241,10 @@ impl Walker {
     }
 
     fn insert_entry(&mut self, id: &str, node: &Node, table: CargoTable, kind: EntryKind) {
-        let range = self.mapper.range(join_ranges(node.text_ranges())).unwrap();
+        let range = self
+            .mapper
+            .range(join_ranges(node.text_ranges(true)))
+            .unwrap();
         let lsp_range = into_lsp_range(range);
         let text = serde_json::to_string(&node).unwrap_or_default();
         self.entries_map.insert(
@@ -319,7 +324,7 @@ impl Walker {
                     let mut features = Vec::with_capacity(items.len());
                     for (i, f) in items.iter().enumerate() {
                         let new_id = id.to_string() + "." + &i.to_string();
-                        let range = self.mapper.range(join_ranges(f.text_ranges())).unwrap();
+                        let range = self.mapper.range(join_ranges(f.text_ranges(true))).unwrap();
                         let lsp_range = into_lsp_range(range);
                         if let Node::Str(s) = f {
                             if let Err(e) = validate_feature_name(s.value()) {
@@ -466,7 +471,10 @@ impl Walker {
     }
 
     fn enter_generic(&mut self, id: &str, name: &str, table: CargoTable, node: &Node) {
-        let range = self.mapper.range(join_ranges(node.text_ranges())).unwrap();
+        let range = self
+            .mapper
+            .range(join_ranges(node.text_ranges(true)))
+            .unwrap();
         let lsp_range = into_lsp_range(range);
 
         let text = serde_json::to_string(&node).unwrap_or_default();
