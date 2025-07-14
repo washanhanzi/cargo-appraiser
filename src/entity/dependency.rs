@@ -23,7 +23,7 @@ pub struct Dependency {
     pub platform: Option<String>,
     pub requested: Option<cargo::core::Dependency>,
     pub resolved: Option<cargo::core::package::Package>,
-    pub summaries: Option<Vec<Summary>>,
+    pub available_versions: Option<Vec<String>>,
     //the exact matched summary(the installed version)
     pub matched_summary: Option<Summary>,
     //the latest summary only consider pre-release

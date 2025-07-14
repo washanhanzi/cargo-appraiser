@@ -12,9 +12,9 @@ pub async fn completion(node: &TomlNode, dep: Option<&Dependency>) -> Option<Com
         return crate_name_completion(&name).await;
     }
     let dep = dep?;
-    let summaries = dep.summaries.as_ref()?;
+    let available_versions = dep.available_versions.as_ref()?;
     //TODO dep is never resolved, manually create a dependency
-    if summaries.is_empty() {
+    if available_versions.is_empty() {
         return None;
     }
 
@@ -23,21 +23,16 @@ pub async fn completion(node: &TomlNode, dep: Option<&Dependency>) -> Option<Com
             _,
             DependencyEntryKind::SimpleDependency | DependencyEntryKind::TableDependencyVersion,
         )) => {
-            // Order summaries by version
-            let mut summaries = summaries.clone();
-            // Sort summaries in descending order by version
-            summaries.sort_by(|a, b| b.version().cmp(a.version()));
-
             // Create a vector of CompletionItems for each version
-            let versions: Vec<_> = summaries
+            // available_versions is already sorted by version (descending)
+            let versions: Vec<_> = available_versions
                 .iter()
                 .enumerate()
-                .map(|(index, s)| {
-                    let version = s.version().to_string();
+                .map(|(index, version)| {
                     CompletionItem {
-                        label: version.to_string(),
+                        label: version.clone(),
                         kind: Some(CompletionItemKind::CONSTANT),
-                        detail: Some(version.to_string()),
+                        detail: Some(version.clone()),
                         documentation: None,
                         sort_text: Some(format!("{:04}", index)),
                         text_edit: Some(CompletionTextEdit::Edit(TextEdit {
@@ -48,7 +43,7 @@ pub async fn completion(node: &TomlNode, dep: Option<&Dependency>) -> Option<Com
                                 ),
                                 Position::new(node.range.end.line, node.range.end.character - 1),
                             ),
-                            new_text: version.to_string(),
+                            new_text: version.clone(),
                         })),
                         ..Default::default()
                     }

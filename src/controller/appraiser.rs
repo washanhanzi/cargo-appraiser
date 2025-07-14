@@ -1,6 +1,6 @@
 use std::{env, str::FromStr};
 
-use cargo::{core::dependency::DepKind, util::VersionExt};
+use cargo::core::dependency::DepKind;
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -483,13 +483,14 @@ impl Appraiser {
                     }
                     CargoDocumentEvent::CargoResolved(output) => {
                         debug!(
-                            "Appraiser Event: CargoResolved for URI: {:?}, rev: {}. Specs: {}, Dependencies: {}, Packages: {}, Summaries: {}",
+                            "Appraiser Event: CargoResolved for URI: {:?}, rev: {}. Specs: {}, Dependencies: {}, Packages: {}, Available Versions: {}, Processed Summaries: {}",
                             output.ctx.uri,
                             output.ctx.rev,
                             output.specs.len(),
                             output.dependencies.len(),
                             output.packages.len(),
-                            output.summaries.len()
+                            output.available_versions.len(),
+                            output.processed_summaries.len()
                         );
                         //resolve virtual manifest if we haven't
                         let root_manifest_uri = output.root_manifest_uri.clone();
@@ -596,11 +597,6 @@ impl Appraiser {
                             };
                             dep.requested = Some(requested.1.clone());
 
-                            let mut summaries =
-                                output.summaries.get(&requested.0).cloned().unwrap();
-                            summaries.sort_by(|a, b| b.version().cmp(a.version()));
-                            dep.summaries = Some(summaries.clone());
-
                             if let Some(pkgs) =
                                 output.packages.get(&requested.1.package_name().to_string())
                             {
@@ -612,40 +608,16 @@ impl Appraiser {
                                 }
                             }
 
-                            if let (Some(resolved), Some(requested)) =
-                                (dep.resolved.as_ref(), dep.requested.as_ref())
-                            {
-                                let installed = resolved.version().clone();
-                                let req_version = requested.version_req();
-
-                                //order summaries by version
-                                //clear matched result from previous resolve
-                                dep.matched_summary = None;
-                                dep.latest_matched_summary = None;
-                                dep.latest_summary = None;
-                                for summary in summaries {
-                                    if dep.matched_summary.is_some()
-                                        && dep.latest_matched_summary.is_some()
-                                        && dep.latest_summary.is_some()
-                                    {
-                                        break;
-                                    }
-                                    if &installed == summary.version() {
-                                        dep.matched_summary = Some(summary.clone());
-                                    }
-                                    if dep.latest_summary.is_none()
-                                        && summary.version().is_prerelease()
-                                            == installed.is_prerelease()
-                                    {
-                                        dep.latest_summary = Some(summary.clone());
-                                    }
-                                    if dep.latest_matched_summary.is_none()
-                                        && req_version.matches(summary.version())
-                                    {
-                                        dep.latest_matched_summary = Some(summary.clone());
-                                    }
-                                }
-                            };
+                            // Use pre-processed data from cargo resolve
+                            if let Some(versions) = output.available_versions.get(&requested.0) {
+                                dep.available_versions = Some(versions.clone());
+                            }
+                            
+                            if let Some(processed) = output.processed_summaries.get(&requested.0) {
+                                dep.matched_summary = processed.matched_summary.clone();
+                                dep.latest_summary = processed.latest_summary.clone();
+                                dep.latest_matched_summary = processed.latest_matched_summary.clone();
+                            }
                             //send to render task
                             if let Err(e) = render_tx
                                 .send(DecorationEvent::Dependency(

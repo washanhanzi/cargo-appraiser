@@ -10,6 +10,7 @@ use cargo::{
         resolver::{CliFeatures, ForceAllTargets, HasDevUnits},
         Dependency, Package, PackageIdSpec, SourceId, Summary,
     },
+    util::{OptVersionReq, VersionExt},
     ops::{
         tree::{DisplayDepth, EdgeKind, Prefix, Target, TreeOptions},
         Packages,
@@ -18,11 +19,12 @@ use cargo::{
         source::{QueryKind, Source},
         SourceConfigMap,
     },
-    util::{cache_lock::CacheLockMode, OptVersionReq},
+    util::cache_lock::CacheLockMode,
     GlobalContext,
 };
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity};
 use tracing::{debug, error, trace, warn};
+use semver;
 
 use crate::entity::{
     from_resolve_error, CanonicalUri, CargoError, CargoErrorKind, Dependency as EntityDependency,
@@ -41,12 +43,63 @@ pub struct CargoResolveOutput {
     pub dependencies: HashMap<String, Vec<DependencyWithId>>,
     //package_name -> Vec<Package>
     pub packages: HashMap<String, Vec<Package>>,
-    //DependencyId -> Vec<Summary>
-    pub summaries: HashMap<u32, Vec<Summary>>,
+    //DependencyId -> Vec<String> (sorted version strings for completion/hover)
+    pub available_versions: HashMap<u32, Vec<String>>,
+    //DependencyId -> ProcessedSummaries (pre-processed summaries)
+    pub processed_summaries: HashMap<u32, ProcessedSummaries>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DependencyWithId(pub u32, pub Dependency);
+
+#[derive(Debug, Clone)]
+pub struct ProcessedSummaries {
+    pub matched_summary: Option<Summary>,
+    pub latest_summary: Option<Summary>,
+    pub latest_matched_summary: Option<Summary>,
+}
+
+fn process_summaries(
+    mut summaries: Vec<Summary>,
+    installed_version: &semver::Version,
+    version_req: &semver::VersionReq,
+) -> ProcessedSummaries {
+    // Sort summaries by version (descending)
+    summaries.sort_by(|a, b| b.version().cmp(a.version()));
+    
+    let mut matched_summary = None;
+    let mut latest_summary = None;
+    let mut latest_matched_summary = None;
+    
+    for summary in summaries {
+        // Early exit if all summaries are found
+        if matched_summary.is_some() && latest_summary.is_some() && latest_matched_summary.is_some() {
+            break;
+        }
+        
+        // Find the exact matched summary (installed version)
+        if installed_version == summary.version() {
+            matched_summary = Some(summary.clone());
+        }
+        
+        // Find the latest summary considering prerelease preference
+        if latest_summary.is_none() 
+            && summary.version().is_prerelease() == installed_version.is_prerelease() {
+            latest_summary = Some(summary.clone());
+        }
+        
+        // Find the latest summary that satisfies the version requirement
+        if latest_matched_summary.is_none() && version_req.matches(summary.version()) {
+            latest_matched_summary = Some(summary.clone());
+        }
+    }
+    
+    ProcessedSummaries {
+        matched_summary,
+        latest_summary,
+        latest_matched_summary,
+    }
+}
 
 #[tracing::instrument(name = "cargo_resolve", level = "trace")]
 pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> {
@@ -218,7 +271,7 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
                 acc
             });
 
-    let summaries = summaries_map(&gctx, source_ids);
+    let (available_versions, processed_summaries) = process_summaries_map(&gctx, source_ids, &packages);
 
     trace!(
         "Constructed packages map with {} entries. Keys: {:?}",
@@ -227,8 +280,8 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     );
     trace!(
         "Constructed summaries map with {} entries. Keys: {:?}",
-        summaries.len(),
-        summaries.keys()
+        available_versions.len(),
+        available_versions.keys()
     );
 
     Ok(CargoResolveOutput {
@@ -238,16 +291,19 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         specs,
         dependencies: deps_map,
         packages,
-        summaries,
+        available_versions,
+        processed_summaries,
     })
 }
 
 //TODO the current Vec<Summary> didn't include yanked
-fn summaries_map(
+fn process_summaries_map(
     gctx: &GlobalContext,
     source_ids: HashMap<SourceId, Vec<DependencyWithId>>,
-) -> HashMap<u32, Vec<Summary>> {
-    let mut res = HashMap::new();
+    packages: &HashMap<String, Vec<Package>>,
+) -> (HashMap<u32, Vec<String>>, HashMap<u32, ProcessedSummaries>) {
+    let mut available_versions = HashMap::new();
+    let mut processed_summaries = HashMap::new();
 
     // For each SourceId, create and configure a source
     for (source_id, deps) in source_ids {
@@ -295,13 +351,36 @@ fn summaries_map(
 
             match dep_query {
                 Poll::Ready(Ok(summaries)) => {
-                    res.insert(
-                        dep.0,
-                        summaries
-                            .into_iter()
-                            .map(|s| s.as_summary().clone())
-                            .collect(),
-                    );
+                    let mut summaries_vec: Vec<Summary> = summaries
+                        .into_iter()
+                        .map(|s| s.as_summary().clone())
+                        .collect();
+
+                    // Sort summaries by version (descending)
+                    summaries_vec.sort_by(|a, b| b.version().cmp(a.version()));
+
+                    // Extract version strings for completion/hover
+                    let versions: Vec<String> = summaries_vec
+                        .iter()
+                        .map(|s| s.version().to_string())
+                        .collect();
+                    available_versions.insert(dep.0, versions);
+
+                    // Find the resolved package to get installed version and version requirement
+                    if let Some(pkgs) = packages.get(&dep.1.package_name().to_string()) {
+                        for pkg in pkgs {
+                            if dep.1.matches(pkg.summary()) {
+                                let installed_version = pkg.version();
+                                
+                                // Extract VersionReq from OptVersionReq
+                                if let OptVersionReq::Req(req_version) = dep.1.version_req() {
+                                    let processed = process_summaries(summaries_vec, installed_version, req_version);
+                                    processed_summaries.insert(dep.0, processed);
+                                }
+                                break;
+                            }
+                        }
+                    }
                 }
                 Poll::Ready(Err(e)) => {
                     error!(
@@ -319,7 +398,7 @@ fn summaries_map(
         }
     }
 
-    res
+    (available_versions, processed_summaries)
 }
 
 pub fn resolve_package_with_default_source(

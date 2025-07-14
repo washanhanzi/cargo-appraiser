@@ -17,15 +17,10 @@ pub fn hover(
         | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyVersion))
         | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::SimpleDependency)) => {
             let dep = dep?;
-            let summaries = dep.summaries.as_ref()?;
-            let mut versions = summaries
-                .iter()
-                .map(|s| s.version().clone())
-                .collect::<Vec<_>>();
-
-            versions.sort_by(|a, b| b.cmp(a));
-
-            let formatted_versions = versions
+            let available_versions = dep.available_versions.as_ref()?;
+            
+            // available_versions is already sorted by version (descending)
+            let formatted_versions = available_versions
                 .iter()
                 .map(|v| format!("- {}", v))
                 .collect::<Vec<_>>()
