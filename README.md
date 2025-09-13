@@ -22,7 +22,7 @@
   - `cargo update` code action on dependency's `version` and `workspace`
   - goto definition on workspace dependency
 - Audit
-  - Show warning and vulnerability information on dependencies.
+  - Show warning and vulnerability information on dependencies. <img width="1726" height="562" alt="CleanShot 2025-09-13 at 23 40 54@2x" src="https://github.com/user-attachments/assets/146261d6-9ad3-4e51-a7ed-a52f667d1880" />
   - This feature is enabled by default. To disable it, check the `audit.disabled` config.
   - Requires the `cargo audit` command. Install it by running: `cargo install cargo-audit --locked`.
   - For more details, see [cargo-audit](https://crates.io/crates/cargo-audit).
