@@ -19024,8 +19024,12 @@ async function activate(context) {
     }
   };
   const clientOptions = {
-    // Register the server for TOML documents
-    documentSelector: [{ scheme: "file", language: "toml" }],
+    // Register the server for Cargo.toml files only
+    // Support both with and without TOML extension installed
+    documentSelector: [
+      { pattern: "**/Cargo.toml", language: "toml" },
+      { pattern: "**/Cargo.toml", language: "plaintext" }
+    ],
     synchronize: {
       // Notify the server about file changes to '.clientrc files contained in the workspace
       fileEvents: import_vscode4.workspace.createFileSystemWatcher("**/Cargo.lock")

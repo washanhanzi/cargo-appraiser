@@ -10,7 +10,6 @@ use cargo::{
         resolver::{CliFeatures, ForceAllTargets, HasDevUnits},
         Dependency, Package, PackageIdSpec, SourceId, Summary,
     },
-    util::{OptVersionReq, VersionExt},
     ops::{
         tree::{DisplayDepth, EdgeKind, Prefix, Target, TreeOptions},
         Packages,
@@ -20,11 +19,12 @@ use cargo::{
         SourceConfigMap,
     },
     util::cache_lock::CacheLockMode,
+    util::{OptVersionReq, VersionExt},
     GlobalContext,
 };
+use semver;
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity};
 use tracing::{debug, error, trace, warn};
-use semver;
 
 use crate::entity::{
     from_resolve_error, CanonicalUri, CargoError, CargoErrorKind, Dependency as EntityDependency,
@@ -66,34 +66,36 @@ fn process_summaries(
 ) -> ProcessedSummaries {
     // Sort summaries by version (descending)
     summaries.sort_by(|a, b| b.version().cmp(a.version()));
-    
+
     let mut matched_summary = None;
     let mut latest_summary = None;
     let mut latest_matched_summary = None;
-    
+
     for summary in summaries {
         // Early exit if all summaries are found
-        if matched_summary.is_some() && latest_summary.is_some() && latest_matched_summary.is_some() {
+        if matched_summary.is_some() && latest_summary.is_some() && latest_matched_summary.is_some()
+        {
             break;
         }
-        
+
         // Find the exact matched summary (installed version)
         if installed_version == summary.version() {
             matched_summary = Some(summary.clone());
         }
-        
+
         // Find the latest summary considering prerelease preference
-        if latest_summary.is_none() 
-            && summary.version().is_prerelease() == installed_version.is_prerelease() {
+        if latest_summary.is_none()
+            && summary.version().is_prerelease() == installed_version.is_prerelease()
+        {
             latest_summary = Some(summary.clone());
         }
-        
+
         // Find the latest summary that satisfies the version requirement
         if latest_matched_summary.is_none() && version_req.matches(summary.version()) {
             latest_matched_summary = Some(summary.clone());
         }
     }
-    
+
     ProcessedSummaries {
         matched_summary,
         latest_summary,
@@ -212,6 +214,7 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         graph_features: false,
         display_depth: DisplayDepth::MaxDisplayDepth(1),
         no_proc_macro: false,
+        public: false,
     };
 
     let requested_kinds = CompileKind::from_requested_targets(workspace.gctx(), &[])
@@ -271,7 +274,8 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
                 acc
             });
 
-    let (available_versions, processed_summaries) = process_summaries_map(&gctx, source_ids, &packages);
+    let (available_versions, processed_summaries) =
+        process_summaries_map(&gctx, source_ids, &packages);
 
     trace!(
         "Constructed packages map with {} entries. Keys: {:?}",
@@ -371,10 +375,14 @@ fn process_summaries_map(
                         for pkg in pkgs {
                             if dep.1.matches(pkg.summary()) {
                                 let installed_version = pkg.version();
-                                
+
                                 // Extract VersionReq from OptVersionReq
                                 if let OptVersionReq::Req(req_version) = dep.1.version_req() {
-                                    let processed = process_summaries(summaries_vec, installed_version, req_version);
+                                    let processed = process_summaries(
+                                        summaries_vec,
+                                        installed_version,
+                                        req_version,
+                                    );
                                     processed_summaries.insert(dep.0, processed);
                                 }
                                 break;

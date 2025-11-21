@@ -2,7 +2,7 @@
   "name": "cargo-appraiser",
   "displayName": "cargo-appraiser",
   "description": "LSP for Cargo.toml",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "icon": "image/icon.webp",
   "publisher": "washan",
   "license": "SEE LICENSE IN LICENSE",
@@ -27,6 +27,7 @@
   ],
   "activationEvents": [
     "onLanguage:toml",
+    "onLanguage:plaintext",
     "workspaceContains:*/Cargo.toml"
   ],
   "keywords": [
@@ -123,5 +124,6 @@
     "@washanhanzi/result-enum": "^2.0.3",
     "ky": "^1.8.1",
     "vscode-languageclient": "^9.0.1"
-  }
+  },
+  "packageManager": "pnpm@10.23.0+sha512.21c4e5698002ade97e4efe8b8b4a89a8de3c85a37919f957e7a0f30f38fbc5bbdd05980ffe29179b2fb6e6e691242e098d945d1601772cad0fef5fb6411e2a4b"
 }

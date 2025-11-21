@@ -64,8 +64,12 @@ export async function activate(context: ExtensionContext) {
 
     // Options to control the language client
     const clientOptions: LanguageClientOptions = {
-        // Register the server for TOML documents
-        documentSelector: [{ scheme: 'file', language: 'toml' }],
+        // Register the server for Cargo.toml files only
+        // Support both with and without TOML extension installed
+        documentSelector: [
+            { pattern: '**/Cargo.toml', language: 'toml' },
+            { pattern: '**/Cargo.toml', language: 'plaintext' }
+        ],
         synchronize: {
             // Notify the server about file changes to '.clientrc files contained in the workspace
             fileEvents: workspace.createFileSystemWatcher('**/Cargo.lock')
