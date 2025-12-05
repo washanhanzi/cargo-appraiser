@@ -8,46 +8,29 @@ use tracing::error;
 
 use crate::config::GLOBAL_CONFIG;
 
-use super::{formatted_string, DecorationEvent, VSCodeDecorationRenderer, VersionDecorationKind};
+use super::{
+    formatted_string, DecorationEvent, DecorationState, VSCodeDecorationRenderer,
+    VersionDecorationKind,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct CreateDecorationRequest {
-    pub uri: Uri,
+struct DecorationData {
     pub id: String,
     pub text: String,
     pub kind: VersionDecorationKind,
     pub range: Range,
 }
 
-impl lsp_types::request::Request for CreateDecorationRequest {
-    type Params = CreateDecorationRequest;
-    type Result = ();
-    const METHOD: &'static str = "textDocument/decoration/create";
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct UpdateDecorationRangeRequest {
+struct UpdateDecorationsRequest {
     pub uri: Uri,
-    pub id: String,
-    pub range: Range,
+    pub decorations: Vec<DecorationData>,
 }
 
-impl lsp_types::request::Request for UpdateDecorationRangeRequest {
-    type Params = UpdateDecorationRangeRequest;
+impl lsp_types::request::Request for UpdateDecorationsRequest {
+    type Params = UpdateDecorationsRequest;
     type Result = ();
-    const METHOD: &'static str = "textDocument/decoration/updateRange";
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct DeleteDecorationRequest {
-    pub uri: Uri,
-    pub id: String,
-}
-
-impl lsp_types::request::Request for DeleteDecorationRequest {
-    type Params = DeleteDecorationRequest;
-    type Result = ();
-    const METHOD: &'static str = "textDocument/decoration/delete";
+    const METHOD: &'static str = "textDocument/decoration/replaceAll";
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -77,38 +60,6 @@ impl VSCodeDecoration {
         tokio::spawn(async move {
             while let Some(event) = render_rx.recv().await {
                 match event {
-                    DecorationEvent::DependencyWaiting(uri, id, range) => {
-                        let text = GLOBAL_CONFIG
-                            .read()
-                            .unwrap()
-                            .decoration_formatter
-                            .waiting
-                            .template()
-                            .to_string();
-                        if let Err(err) = client
-                            .send_request::<CreateDecorationRequest>(CreateDecorationRequest {
-                                uri,
-                                id,
-                                text,
-                                kind: VersionDecorationKind::NotParsed,
-                                range,
-                            })
-                            .await
-                        {
-                            error!("create decoration error: {}", err);
-                        }
-                    }
-                    DecorationEvent::DependencyRemove(uri, id) => {
-                        if let Err(err) = client
-                            .send_request::<DeleteDecorationRequest>(DeleteDecorationRequest {
-                                uri,
-                                id,
-                            })
-                            .await
-                        {
-                            error!("delete decoration error: {}", err);
-                        }
-                    }
                     DecorationEvent::Reset(uri) => {
                         if let Err(err) = client
                             .send_request::<ResetDecorationRequest>(ResetDecorationRequest { uri })
@@ -117,35 +68,46 @@ impl VSCodeDecoration {
                             error!("reset decoration error: {}", err);
                         }
                     }
-                    DecorationEvent::DependencyRangeUpdate(uri, id, range) => {
-                        if let Err(err) = client
-                            .send_request::<UpdateDecorationRangeRequest>(
-                                UpdateDecorationRangeRequest { uri, id, range },
-                            )
-                            .await
-                        {
-                            error!("update decoration range error: {}", err);
-                        }
-                    }
-                    DecorationEvent::Dependency(uri, id, range, p) => {
-                        let decoration = {
+                    DecorationEvent::Update(uri, items) => {
+                        let decorations: Vec<DecorationData> = {
                             let config = GLOBAL_CONFIG.read().unwrap();
-                            formatted_string(&p, &config.decoration_formatter)
-                        };
-                        let Some((kind, text)) = decoration else {
-                            continue;
+                            items
+                                .into_iter()
+                                .filter_map(|item| {
+                                    let (kind, text) = match &item.state {
+                                        DecorationState::Waiting => (
+                                            VersionDecorationKind::NotParsed,
+                                            config
+                                                .decoration_formatter
+                                                .waiting
+                                                .template()
+                                                .to_string(),
+                                        ),
+                                        DecorationState::Resolved { dep, resolved } => {
+                                            formatted_string(
+                                                dep,
+                                                resolved.as_ref(),
+                                                &config.decoration_formatter,
+                                            )?
+                                        }
+                                    };
+                                    Some(DecorationData {
+                                        id: item.id,
+                                        text,
+                                        kind,
+                                        range: item.range,
+                                    })
+                                })
+                                .collect()
                         };
                         if let Err(err) = client
-                            .send_request::<CreateDecorationRequest>(CreateDecorationRequest {
+                            .send_request::<UpdateDecorationsRequest>(UpdateDecorationsRequest {
                                 uri,
-                                id,
-                                text,
-                                kind,
-                                range,
+                                decorations,
                             })
                             .await
                         {
-                            error!("reset decoration error: {}", err);
+                            error!("update decorations error: {}", err);
                         }
                     }
                 }

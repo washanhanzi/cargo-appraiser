@@ -1,4 +1,4 @@
-import { ColorThemeKind, Range, TextEditor, TextEditorDecorationType, Uri, window } from "vscode"
+import { Range, TextEditor, TextEditorDecorationType, Uri, window } from "vscode"
 import { LanguageClient } from "vscode-languageclient/node"
 import { config } from "./config"
 
@@ -11,34 +11,41 @@ type Decoration = {
     handle: TextEditorDecorationType
 }
 
+type DecorationData = {
+    id: string
+    text: string
+    kind: string
+    range: Range
+}
+
 export class DecorationCtrl {
     map: Map<string, Map<string, Decoration>> = new Map()
 
     listen(client: LanguageClient) {
-        client.onRequest("textDocument/decoration/create", async (params, next) => {
+        // Old API (single operations) - for backward compatibility
+        client.onRequest("textDocument/decoration/create", async (params: { uri: string, id: string, text: string, range: Range, kind: string }) => {
             this.create(Uri.parse(params.uri), params.id, params.text, params.range, params.kind)
             return
         })
 
-        client.onRequest("textDocument/decoration/updateRange", async (params, next) => {
-            this.updateRange(
-                Uri.parse(params.uri),
-                params.id,
-                params.range,
-            )
+        client.onRequest("textDocument/decoration/updateRange", async (params: { uri: string, id: string, range: Range }) => {
+            this.updateRange(Uri.parse(params.uri), params.id, params.range)
             return
         })
 
-        client.onRequest("textDocument/decoration/delete", async (params, next) => {
-            this.delete(
-                Uri.parse(params.uri),
-                params.id,
-            )
+        client.onRequest("textDocument/decoration/delete", async (params: { uri: string, id: string }) => {
+            this.delete(Uri.parse(params.uri), params.id)
             return
         })
 
-        client.onRequest("textDocument/decoration/reset", async (params, next) => {
+        client.onRequest("textDocument/decoration/reset", async (params: { uri: string }) => {
             this.reset(Uri.parse(params.uri))
+            return
+        })
+
+        // New API (batch operations)
+        client.onRequest("textDocument/decoration/replaceAll", async (params: { uri: string, decorations: DecorationData[] }) => {
+            this.replaceAll(Uri.parse(params.uri), params.decorations)
             return
         })
     }
@@ -57,19 +64,20 @@ export class DecorationCtrl {
         })
     }
 
+    // Old API methods (single operations)
     create(uri: Uri, id: string, text: string, range: Range, kind: string) {
         const color = config.getColor(kind)
 
         const deco: Decoration = {
             text,
             color,
-            margin: '0 0 0 4em', // Add some margin to the left
+            margin: '0 0 0 4em',
             range,
             handle: window.createTextEditorDecorationType({
                 after: {
                     contentText: text,
                     color,
-                    margin: '0 0 0 4em' // Add some margin to the left
+                    margin: '0 0 0 4em'
                 }
             })
         }
@@ -98,18 +106,6 @@ export class DecorationCtrl {
         editor.setDecorations(deco.handle, [range])
     }
 
-    delete(uri: Uri, id: string) {
-        const innerMap = this.map.get(uri.path)
-        if (!innerMap) {
-            return
-        }
-        const d = innerMap.get(id)
-        if (d) {
-            d.handle.dispose()
-            innerMap.delete(id)
-        }
-    }
-
     updateRange(uri: Uri, id: string, range: Range) {
         const innerMap = this.map.get(uri.path)
         if (!innerMap) {
@@ -132,6 +128,18 @@ export class DecorationCtrl {
         editor.setDecorations(deco.handle, [range])
     }
 
+    delete(uri: Uri, id: string) {
+        const innerMap = this.map.get(uri.path)
+        if (!innerMap) {
+            return
+        }
+        const d = innerMap.get(id)
+        if (d) {
+            d.handle.dispose()
+            innerMap.delete(id)
+        }
+    }
+
     reset(uri: Uri) {
         const innerMap = this.map.get(uri.path)
         if (!innerMap) {
@@ -142,4 +150,47 @@ export class DecorationCtrl {
         })
         this.map.delete(uri.path)
     }
+
+    // New API methods (batch operations)
+    replaceAll(uri: Uri, decorations: DecorationData[]) {
+        // First, dispose all existing decorations for this URI
+        const existingMap = this.map.get(uri.path)
+        if (existingMap) {
+            existingMap.forEach((deco) => {
+                deco.handle.dispose()
+            })
+        }
+
+        // Create new map for decorations
+        const innerMap = new Map<string, Decoration>()
+        this.map.set(uri.path, innerMap)
+
+        const editor = window.activeTextEditor
+        const isActiveEditor = editor && editor.document.uri.path === uri.path
+
+        // Create all new decorations
+        for (const data of decorations) {
+            const color = config.getColor(data.kind)
+            const deco: Decoration = {
+                text: data.text,
+                color,
+                margin: '0 0 0 4em',
+                range: data.range,
+                handle: window.createTextEditorDecorationType({
+                    after: {
+                        contentText: data.text,
+                        color,
+                        margin: '0 0 0 4em'
+                    }
+                })
+            }
+            innerMap.set(data.id, deco)
+
+            // Apply decoration if this is the active editor
+            if (isActiveEditor) {
+                editor.setDecorations(deco.handle, [data.range])
+            }
+        }
+    }
+
 }

@@ -148,6 +148,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "audit-parser"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "thiserror 2.0.17",
+ "tokio",
+]
+
+[[package]]
 name = "auto_impl"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -365,10 +374,11 @@ dependencies = [
 
 [[package]]
 name = "cargo-appraiser"
-version = "0.2.7"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "cargo",
+ "cargo-parser",
  "clap",
  "dunce",
  "executable_path_finder",
@@ -383,11 +393,11 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "taplo",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
+ "toml-parser",
  "tower-lsp",
  "tracing",
  "tracing-subscriber",
@@ -435,6 +445,17 @@ source = "git+https://github.com/washanhanzi/cargo.git?branch=master#81f4e7aa470
 dependencies = [
  "cargo-credential",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "cargo-parser"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo",
+ "semver",
+ "toml-parser",
+ "tracing",
 ]
 
 [[package]]
@@ -4341,6 +4362,16 @@ dependencies = [
  "toml_parser",
  "toml_writer",
  "winnow",
+]
+
+[[package]]
+name = "toml-parser"
+version = "0.1.0"
+dependencies = [
+ "lsp-async-stub",
+ "serde",
+ "taplo",
+ "tower-lsp",
 ]
 
 [[package]]

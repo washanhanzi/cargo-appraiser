@@ -12,7 +12,7 @@ use tokio::{
     time::Sleep,
 };
 use tower_lsp::lsp_types::DiagnosticSeverity;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::{config::GLOBAL_CONFIG, entity::CanonicalUri};
 
@@ -87,8 +87,7 @@ impl AuditController {
                         if cargo_path.is_none() {
                             cargo_path = Some(payload.cargo_path);
                         }
-
-                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(60))));
+                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(10))));
                     }
                     () = async {
                         if let Some(ref mut t) = timer {
@@ -99,15 +98,18 @@ impl AuditController {
                     }, if timer.is_some() => {
                         timer = None;
                         let uri = received_uri.take().unwrap();
-                        let reports = match audit_workspace(&uri, &specs.take().unwrap(),cargo_path.as_deref().unwrap_or("cargo")).await {
+                        let specs_to_audit = specs.take().unwrap();
+                        debug!("[AUDIT] Running audit for: {}", uri.as_str());
+                        let reports = match audit_workspace(&uri, &specs_to_audit, cargo_path.as_deref().unwrap_or("cargo")).await {
                             Ok(r) => r,
                             Err(e) => {
-                                error!("Failed to audit workspace {}: {}", uri.path(), e);
+                                error!("[AUDIT] Failed to audit workspace: {}", e);
                                 continue;
                             }
                         };
+                        debug!("[AUDIT] Found {} crates with issues", reports.len());
                         if let Err(e) = tx.send(CargoDocumentEvent::Audited(reports)).await {
-                            error!("failed to send Audited event: {}", e);
+                            error!("[AUDIT] Failed to send Audited event: {}", e);
                         }
                     }
                 }
@@ -214,16 +216,9 @@ pub async fn audit_workspace(
     specs: &[PackageIdSpec],
     cargo_path: &str,
 ) -> Result<AuditReports, anyhow::Error> {
-    debug!(
-        "Auditing workspace for Cargo.lock: {}",
-        cargo_lock_uri.as_str()
-    );
-
     let Ok(manifest_path) = cargo_lock_uri.to_path_buf() else {
-        error!("Failed to convert URI to path: {:?}", cargo_lock_uri);
         return Err(anyhow::anyhow!("Failed to convert URI to path"));
     };
-    info!("manifest path {}", manifest_path.to_str().unwrap());
 
     let output = match tokio::process::Command::new(cargo_path)
         .arg("audit")
@@ -236,19 +231,16 @@ pub async fn audit_workspace(
     {
         Ok(output) => output,
         Err(e) => {
-            error!("Failed to spawn cargo audit: {}", e);
+            error!("[AUDIT] Failed to spawn cargo audit: {}", e);
             return Err(anyhow::anyhow!("Failed to spawn cargo audit"));
         }
     };
 
     if output.stdout.is_empty() {
-        error!("cargo output stdout empty");
-        return Err(anyhow::anyhow!("cargo output stdout empty"));
+        return Err(anyhow::anyhow!("cargo audit stdout empty"));
     }
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
-
-    // Parse the text output
     let workspace_members_refs: Vec<&str> = specs.iter().map(|s| s.name()).collect();
     let parsed_issues = parse_audit_text_output(&stdout_str, &workspace_members_refs)?;
 
@@ -263,25 +255,22 @@ fn parse_audit_text_output(
     let mut issues = HashMap::new();
     let mut current_issue: Option<AuditIssue> = None;
     let mut parsing_tree = false;
-    let mut current_path: Vec<String> = Vec::new(); // (indent, package_str)
+    let mut current_path: Vec<String> = Vec::new();
     let pkg_match_set: HashSet<String> =
         HashSet::from_iter(workspace_members.iter().map(|s| s.to_string()));
 
     for line in stdout.lines() {
-        // Skip lines that start with whitespace (likely continuation lines)
         if line.starts_with(" ") && !parsing_tree {
             continue;
         }
 
-        // Check if this is a line starting with "Crate:" which indicates a new issue
         if line.starts_with("Crate:") {
             parsing_tree = false;
             save_current_issue(&mut issues, &mut current_issue);
             current_issue = Some(AuditIssue::default());
             if let Some((_, value)) = line.split_once(':') {
                 if let Some(issue) = current_issue.as_mut() {
-                    let crate_name = value.trim().to_string();
-                    issue.crate_name = crate_name.clone();
+                    issue.crate_name = value.trim().to_string();
                 }
             }
         } else if line.starts_with("Version:")
@@ -304,7 +293,7 @@ fn parse_audit_text_output(
                         "Solution" => issue.solution = Some(value_trimmed.to_string()),
                         "Warning" => issue.kind = AuditKind::Warning(value_trimmed.to_string()),
                         "Severity" => issue.severity = Some(value_trimmed.to_string()),
-                        _ => { /* This case should ideally not be reached */ }
+                        _ => {}
                     }
                 }
             }
@@ -315,10 +304,8 @@ fn parse_audit_text_output(
             continue;
         }
 
-        // If we're parsing a dependency tree
         if parsing_tree {
             if let Some(caps) = root_line_re().captures(line.trim()) {
-                // Handle the root line of the tree (no indent)
                 let pkg_name = caps.get(1).map_or("", |m| m.as_str());
                 let pkg_version = caps.get(2).map_or("", |m| m.as_str());
                 if !pkg_name.is_empty() {
@@ -331,21 +318,18 @@ fn parse_audit_text_output(
 
                 current_path.truncate((indent / 4) + 1);
 
-                //workspace member found
                 if pkg_match_set.contains(pkg_name) {
-                    //get the last package from path
                     let Some(Some(parent_name_from_path)) =
                         current_path.last().map(|s| s.split_whitespace().next())
                     else {
-                        error!("Failed to get parent name from path");
                         continue;
                     };
 
                     if !parent_name_from_path.is_empty() {
                         if let Some(issue) = current_issue.as_mut() {
                             issue.dependency_paths.insert(
-                                parent_name_from_path.to_string(), // This is the key
-                                current_path.clone(),              // This is the path to the parent
+                                parent_name_from_path.to_string(),
+                                current_path.clone(),
                             );
                         }
                     }
@@ -356,9 +340,7 @@ fn parse_audit_text_output(
         }
     }
 
-    // Handle the last issue
     save_current_issue(&mut issues, &mut current_issue);
-
     Ok(issues)
 }
 
@@ -368,15 +350,14 @@ fn save_current_issue(
     issue: &mut Option<AuditIssue>,
 ) {
     let Some(issue) = issue.take() else { return };
-    match (
-        &issue.kind,
-        GLOBAL_CONFIG.read().unwrap().audit.level.as_str(),
-    ) {
+    let audit_level = GLOBAL_CONFIG.read().unwrap().audit.level.clone();
+
+    match (&issue.kind, audit_level.as_str()) {
         (_, "warning") => {}
         (AuditKind::Vulnerability, "vulnerability") => {}
         _ => return,
     }
-    // Only add if it's not empty
+
     if !issue.crate_name.is_empty() {
         issues
             .entry(issue.crate_name.clone())

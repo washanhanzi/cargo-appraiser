@@ -3,16 +3,16 @@ use std::{collections::HashMap, sync::Arc};
 use parking_lot::RwLock;
 use tokio::sync::mpsc::{self, Sender};
 use tower_lsp::{
-    lsp_types::{InlayHint, InlayHintLabel, InlayHintLabelPart, Position, Uri},
+    lsp_types::{InlayHint, InlayHintLabel, Position, Uri},
     Client,
 };
 use tracing::error;
 
 use crate::config::GLOBAL_CONFIG;
 
-use super::{formatted_string, DecorationEvent, InlayHintDecorationRenderer};
+use super::{formatted_string, DecorationEvent, DecorationState, InlayHintDecorationRenderer};
 
-type InlayHintDecorationState = HashMap<Uri, HashMap<String, InlayHint>>;
+type InlayHintDecorationState = HashMap<Uri, Vec<InlayHint>>;
 
 mod inlay_hint_decoration_state {
     use super::*;
@@ -21,31 +21,9 @@ mod inlay_hint_decoration_state {
         Arc::new(RwLock::new(HashMap::new()))
     }
 
-    pub fn upsert(state: &RwLock<InlayHintDecorationState>, uri: &Uri, id: &str, hint: InlayHint) {
+    pub fn update(state: &RwLock<InlayHintDecorationState>, uri: &Uri, hints: Vec<InlayHint>) {
         let mut state = state.write();
-        let path_map = state.entry(uri.clone()).or_default();
-        path_map.insert(id.to_string(), hint);
-    }
-
-    pub fn update_range(
-        state: &RwLock<InlayHintDecorationState>,
-        uri: &Uri,
-        id: &str,
-        range: tower_lsp::lsp_types::Range,
-    ) {
-        let mut state = state.write();
-        if let Some(path_map) = state.get_mut(uri) {
-            if let Some(hint) = path_map.get_mut(id) {
-                hint.position = Position::new(range.end.line, range.end.character);
-            }
-        }
-    }
-
-    pub fn remove(state: &RwLock<InlayHintDecorationState>, uri: &Uri, id: &str) {
-        let mut state = state.write();
-        if let Some(path_map) = state.get_mut(uri) {
-            path_map.remove(id);
-        }
+        state.insert(uri.clone(), hints);
     }
 
     pub fn reset(state: &RwLock<InlayHintDecorationState>, uri: &Uri) {
@@ -55,13 +33,7 @@ mod inlay_hint_decoration_state {
 
     pub fn list(state: &RwLock<InlayHintDecorationState>, uri: &Uri) -> Vec<InlayHint> {
         let state = state.read();
-        state
-            .get(uri)
-            .cloned()
-            .unwrap_or_default()
-            .values()
-            .cloned()
-            .collect()
+        state.get(uri).cloned().unwrap_or_default()
     }
 }
 
@@ -87,57 +59,44 @@ impl InlayHintDecoration {
         tokio::spawn(async move {
             while let Some(event) = render_rx.recv().await {
                 match event {
-                    DecorationEvent::DependencyWaiting(path, id, range) => {
-                        let hint = InlayHint {
-                            position: Position::new(range.end.line, range.end.character),
-                            label: InlayHintLabel::LabelParts(vec![InlayHintLabelPart {
-                                value: GLOBAL_CONFIG
-                                    .read()
-                                    .unwrap()
-                                    .decoration_formatter
-                                    .waiting
-                                    .template()
-                                    .to_string(),
-                                tooltip: None,
-                                location: None,
-                                command: None,
-                            }]),
-                            kind: None,
-                            text_edits: None,
-                            tooltip: None,
-                            padding_left: None,
-                            padding_right: Some(true),
-                            data: None,
-                        };
-                        inlay_hint_decoration_state::upsert(&state, &path, &id, hint);
-                    }
-                    DecorationEvent::DependencyRemove(path, id) => {
-                        inlay_hint_decoration_state::remove(&state, &path, &id);
-                    }
                     DecorationEvent::Reset(uri) => {
                         inlay_hint_decoration_state::reset(&state, &uri);
                     }
-                    DecorationEvent::Dependency(path, id, range, p) => {
+                    DecorationEvent::Update(uri, items) => {
                         let config = GLOBAL_CONFIG.read().unwrap();
-                        let Some((_, text)) = formatted_string(&p, &config.decoration_formatter)
-                        else {
-                            continue;
-                        };
-
-                        let hint = InlayHint {
-                            position: Position::new(range.end.line, range.end.character),
-                            label: InlayHintLabel::String(text),
-                            kind: None,
-                            text_edits: None,
-                            tooltip: None,
-                            padding_left: Some(true),
-                            padding_right: None,
-                            data: None,
-                        };
-                        inlay_hint_decoration_state::upsert(&state, &path, &id, hint);
-                    }
-                    DecorationEvent::DependencyRangeUpdate(uri, id, range) => {
-                        inlay_hint_decoration_state::update_range(&state, &uri, &id, range);
+                        let hints: Vec<InlayHint> = items
+                            .into_iter()
+                            .filter_map(|item| {
+                                let (text, padding_left) = match &item.state {
+                                    DecorationState::Waiting => (
+                                        config.decoration_formatter.waiting.template().to_string(),
+                                        false,
+                                    ),
+                                    DecorationState::Resolved { dep, resolved } => {
+                                        let (_, text) = formatted_string(
+                                            dep,
+                                            resolved.as_ref(),
+                                            &config.decoration_formatter,
+                                        )?;
+                                        (text, true)
+                                    }
+                                };
+                                Some(InlayHint {
+                                    position: Position::new(
+                                        item.range.end.line,
+                                        item.range.end.character,
+                                    ),
+                                    label: InlayHintLabel::String(text),
+                                    kind: None,
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_left: Some(padding_left),
+                                    padding_right: Some(!padding_left),
+                                    data: None,
+                                })
+                            })
+                            .collect();
+                        inlay_hint_decoration_state::update(&state, &uri, hints);
                     }
                 }
                 if let Err(e) = client.inlay_hint_refresh().await {

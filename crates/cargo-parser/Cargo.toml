@@ -1,0 +1,13 @@
+[package]
+name = "cargo-parser"
+version = "0.1.0"
+edition = "2021"
+description = "Indexed view of cargo resolution output with O(1) multi-key lookups"
+license = "MIT"
+
+[dependencies]
+cargo.workspace = true
+semver = "1.0"
+toml-parser = { path = "../toml-parser" }
+tracing = "0.1"
+anyhow = "1.0"

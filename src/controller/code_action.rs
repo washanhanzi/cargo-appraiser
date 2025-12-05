@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use cargo::util::OptVersionReq;
 use semver::{Op, Version};
 use serde_json::Value;
 use tower_lsp::lsp_types::{
@@ -11,32 +10,34 @@ use tower_lsp::lsp_types::{
 use crate::{
     decoration::{version_decoration, VersionDecorationKind},
     entity::{
-        strip_quotes, Dependency, DependencyEntryKind, DependencyKeyKind, EntryKind, KeyKind,
-        NodeKind, TomlNode, CARGO,
+        DependencyKey, DependencyStyle, DependencyValue, NodeKind, ResolvedDependency,
+        TomlDependency, TomlNode, ValueKind, CARGO,
     },
 };
 
 pub fn code_action(
     uri: Uri,
-    node: TomlNode,
-    dep: Option<&Dependency>,
+    node: &TomlNode,
+    dep: Option<&TomlDependency>,
+    resolved: Option<&ResolvedDependency>,
 ) -> Option<CodeActionResponse> {
-    //only support dependency code action fro now
+    //only support dependency code action for now
     let dep = dep?;
-    code_action_dependency(uri, &node, dep)
+    code_action_dependency(uri, node, dep, resolved)
 }
 
 pub fn code_action_dependency(
     uri: Uri,
     node: &TomlNode,
-    dep: &Dependency,
+    dep: &TomlDependency,
+    resolved: Option<&ResolvedDependency>,
 ) -> Option<CodeActionResponse> {
-    match node.kind {
-        NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::SimpleDependency))
-        | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyVersion)) => {
-            let version = version_decoration(dep);
+    match &node.kind {
+        NodeKind::Value(ValueKind::Dependency(DependencyValue::Simple))
+        | NodeKind::Value(ValueKind::Dependency(DependencyValue::Version)) => {
+            let version = version_decoration(dep, resolved);
             let mut actions = VersionCodeAction::new(uri, node);
-            actions.check_unresolved(dep);
+            actions.check_unresolved(resolved);
             match version.kind {
                 VersionDecorationKind::Latest => {
                     if let Some(v) = version.latest.as_ref() {
@@ -48,7 +49,6 @@ pub fn code_action_dependency(
                 VersionDecorationKind::MixedUpgradeable => {
                     if let Some(v) = version.latest_matched.as_ref() {
                         actions.add_quickfix(v);
-                        // actions.add_precies_update_command(dep.package_name(), v);
                     }
                     if let Some(v) = version.latest.as_ref() {
                         actions.add_quickfix(v);
@@ -59,7 +59,6 @@ pub fn code_action_dependency(
                     let v = version.latest.as_ref()?;
                     actions.add_refactor(v);
                     actions.add_quickfix(v);
-                    // actions.add_precies_update_command(dep.package_name(), v);
                     actions.add_update_command(dep.package_name());
                 }
                 VersionDecorationKind::NonCompatibleLatest => {
@@ -81,19 +80,16 @@ pub fn code_action_dependency(
                 VersionDecorationKind::NotParsed => return None,
             };
             actions.add_eq_refactor();
-            if let Some(p) = dep.resolved.as_ref() {
-                actions.add_precise_eq_refactor(p.version());
+            if let Some(pkg) = resolved.and_then(|r| r.package.as_ref()) {
+                actions.add_precise_eq_refactor(pkg.version());
             }
-            actions.add_simple_table_refactor(dep);
+            actions.add_simple_table_refactor(dep, node);
 
             Some(actions.take())
         }
-        NodeKind::Key(KeyKind::Dependency(_, DependencyKeyKind::Workspace))
-        | NodeKind::Entry(EntryKind::Dependency(
-            _,
-            DependencyEntryKind::TableDependencyWorkspace,
-        )) => {
-            let version = version_decoration(dep);
+        NodeKind::Key(crate::entity::KeyKind::Dependency(DependencyKey::Workspace))
+        | NodeKind::Value(ValueKind::Dependency(DependencyValue::Workspace)) => {
+            let version = version_decoration(dep, resolved);
             let mut actions = VersionCodeAction::new(uri, node);
             match version.kind {
                 VersionDecorationKind::MixedUpgradeable => {
@@ -145,56 +141,52 @@ impl<'a> VersionCodeAction<'a> {
     // if the version req contains minor, provide a code action to refactor version to <major>
     // if the version req contains no minor, provide a code action to refactor version to <major.minor>
     // if the version req contains patch, provide the above two code actions
-    fn check_unresolved(&mut self, dep: &Dependency) {
-        if let Some(unresolved) = dep.requested.as_ref() {
-            if let OptVersionReq::Req(req) = unresolved.version_req() {
-                for r in &req.comparators {
-                    if r.minor.is_some() {
-                        self.major_code_action = true;
-                    }
-                    if r.minor.is_none() {
-                        self.minor_code_action = true;
-                    }
-                    if r.patch.is_some() {
-                        self.major_code_action = true;
-                        self.minor_code_action = true;
-                    }
-                    if r.op == Op::Exact {
-                        self.is_precise = true;
-                    }
+    fn check_unresolved(&mut self, _resolved: Option<&ResolvedDependency>) {
+        // Parse version from node text to determine precision
+        let version_text = strip_quotes(&self.node.text);
+        if let Ok(version) = semver::VersionReq::parse(&version_text) {
+            for r in &version.comparators {
+                if r.minor.is_some() {
+                    self.major_code_action = true;
+                }
+                if r.minor.is_none() {
+                    self.minor_code_action = true;
+                }
+                if r.patch.is_some() {
+                    self.major_code_action = true;
+                    self.minor_code_action = true;
+                }
+                if r.op == Op::Exact {
+                    self.is_precise = true;
                 }
             }
         }
     }
 
-    fn add_simple_table_refactor(&mut self, dep: &Dependency) {
-        if matches!(
-            self.node.kind,
-            NodeKind::Entry(EntryKind::Dependency(
-                _,
-                DependencyEntryKind::SimpleDependency,
-            ))
-        ) {
+    fn add_simple_table_refactor(&mut self, dep: &TomlDependency, node: &TomlNode) {
+        if dep.style == DependencyStyle::Simple {
             self.add_code_action(
-                format!("{{ version = {} }}", self.node.text),
+                format!("{{ version = {} }}", node.text),
                 CodeActionKind::REFACTOR,
-                dep.range,
+                node.range,
                 None,
             );
         }
-        if matches!(
-            self.node.kind,
-            NodeKind::Entry(EntryKind::Dependency(
-                _,
-                DependencyEntryKind::TableDependencyVersion
-            ))
-        ) {
-            self.add_code_action(
-                self.node.text.to_string(),
-                CodeActionKind::REFACTOR,
-                dep.range,
-                Some("Refactor to simple version".to_string()),
-            );
+        if dep.style == DependencyStyle::Table
+            && matches!(
+                node.kind,
+                NodeKind::Value(ValueKind::Dependency(DependencyValue::Version))
+            )
+        {
+            // Only offer if the table has just version key
+            if dep.fields.len() == 1 && dep.version().is_some() {
+                self.add_code_action(
+                    node.text.to_string(),
+                    CodeActionKind::REFACTOR,
+                    node.range,
+                    Some("Refactor to simple version".to_string()),
+                );
+            }
         }
     }
 
@@ -265,11 +257,6 @@ impl<'a> VersionCodeAction<'a> {
             .push(new_code_action(self.uri.clone(), v, kind, range, title));
     }
 
-    // fn add_precies_update_command(&mut self, package_name: &str, v: &Version) {
-    //     self.actions
-    //         .push(new_precise_update_command(package_name, v).into());
-    // }
-
     fn add_update_command(&mut self, package_name: &str) {
         self.actions.push(new_update_command(package_name).into());
     }
@@ -308,4 +295,11 @@ fn new_update_command(package_name: &str) -> Command {
             Value::String(package_name.to_string()),
         ]),
     )
+}
+
+fn strip_quotes(s: &str) -> String {
+    if s.starts_with('"') && s.ends_with('"') {
+        return s[1..s.len() - 1].to_string();
+    }
+    s.to_string()
 }

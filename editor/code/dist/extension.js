@@ -18223,27 +18223,24 @@ var config = new Config();
 var DecorationCtrl = class {
   map = /* @__PURE__ */ new Map();
   listen(client2) {
-    client2.onRequest("textDocument/decoration/create", async (params, next) => {
+    client2.onRequest("textDocument/decoration/create", async (params) => {
       this.create(import_vscode2.Uri.parse(params.uri), params.id, params.text, params.range, params.kind);
       return;
     });
-    client2.onRequest("textDocument/decoration/updateRange", async (params, next) => {
-      this.updateRange(
-        import_vscode2.Uri.parse(params.uri),
-        params.id,
-        params.range
-      );
+    client2.onRequest("textDocument/decoration/updateRange", async (params) => {
+      this.updateRange(import_vscode2.Uri.parse(params.uri), params.id, params.range);
       return;
     });
-    client2.onRequest("textDocument/decoration/delete", async (params, next) => {
-      this.delete(
-        import_vscode2.Uri.parse(params.uri),
-        params.id
-      );
+    client2.onRequest("textDocument/decoration/delete", async (params) => {
+      this.delete(import_vscode2.Uri.parse(params.uri), params.id);
       return;
     });
-    client2.onRequest("textDocument/decoration/reset", async (params, next) => {
+    client2.onRequest("textDocument/decoration/reset", async (params) => {
       this.reset(import_vscode2.Uri.parse(params.uri));
+      return;
+    });
+    client2.onRequest("textDocument/decoration/replaceAll", async (params) => {
+      this.replaceAll(import_vscode2.Uri.parse(params.uri), params.decorations);
       return;
     });
   }
@@ -18260,20 +18257,19 @@ var DecorationCtrl = class {
       editor.setDecorations(deco.handle, [deco.range]);
     });
   }
+  // Old API methods (single operations)
   create(uri, id, text, range, kind) {
     const color = config.getColor(kind);
     const deco = {
       text,
       color,
       margin: "0 0 0 4em",
-      // Add some margin to the left
       range,
       handle: import_vscode2.window.createTextEditorDecorationType({
         after: {
           contentText: text,
           color,
           margin: "0 0 0 4em"
-          // Add some margin to the left
         }
       })
     };
@@ -18297,17 +18293,6 @@ var DecorationCtrl = class {
     }
     editor.setDecorations(deco.handle, [range]);
   }
-  delete(uri, id) {
-    const innerMap = this.map.get(uri.path);
-    if (!innerMap) {
-      return;
-    }
-    const d = innerMap.get(id);
-    if (d) {
-      d.handle.dispose();
-      innerMap.delete(id);
-    }
-  }
   updateRange(uri, id, range) {
     const innerMap = this.map.get(uri.path);
     if (!innerMap) {
@@ -18328,6 +18313,17 @@ var DecorationCtrl = class {
     }
     editor.setDecorations(deco.handle, [range]);
   }
+  delete(uri, id) {
+    const innerMap = this.map.get(uri.path);
+    if (!innerMap) {
+      return;
+    }
+    const d = innerMap.get(id);
+    if (d) {
+      d.handle.dispose();
+      innerMap.delete(id);
+    }
+  }
   reset(uri) {
     const innerMap = this.map.get(uri.path);
     if (!innerMap) {
@@ -18337,6 +18333,39 @@ var DecorationCtrl = class {
       deco.handle.dispose();
     });
     this.map.delete(uri.path);
+  }
+  // New API methods (batch operations)
+  replaceAll(uri, decorations) {
+    const existingMap = this.map.get(uri.path);
+    if (existingMap) {
+      existingMap.forEach((deco) => {
+        deco.handle.dispose();
+      });
+    }
+    const innerMap = /* @__PURE__ */ new Map();
+    this.map.set(uri.path, innerMap);
+    const editor = import_vscode2.window.activeTextEditor;
+    const isActiveEditor = editor && editor.document.uri.path === uri.path;
+    for (const data of decorations) {
+      const color = config.getColor(data.kind);
+      const deco = {
+        text: data.text,
+        color,
+        margin: "0 0 0 4em",
+        range: data.range,
+        handle: import_vscode2.window.createTextEditorDecorationType({
+          after: {
+            contentText: data.text,
+            color,
+            margin: "0 0 0 4em"
+          }
+        })
+      };
+      innerMap.set(data.id, deco);
+      if (isActiveEditor) {
+        editor.setDecorations(deco.handle, [data.range]);
+      }
+    }
   }
 };
 

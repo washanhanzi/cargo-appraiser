@@ -1,9 +1,9 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::HashMap;
 
 use cargo::core::PackageIdSpec;
 use tower_lsp::lsp_types::Uri;
 
-use crate::entity::{CanonicalUri, EntryDiff, TomlParsingError};
+use crate::entity::CanonicalUri;
 
 use super::document::Document;
 
@@ -69,32 +69,34 @@ impl Workspace {
         uris
     }
 
-    pub fn reconsile(
+    /// Parse and store a document. Returns the document if successful.
+    /// The document will have all dependencies marked as dirty.
+    pub fn update(
         &mut self,
         uri: Uri,
         canonical_uri: CanonicalUri,
         text: &str,
-    ) -> Result<(&Document, EntryDiff), Vec<TomlParsingError>> {
+    ) -> Result<&Document, Vec<toml_parser::ParseError>> {
+        // Get next rev from existing document, or start at 1
+        let next_rev = self
+            .documents
+            .get(&canonical_uri)
+            .map(|d| d.rev + 1)
+            .unwrap_or(1);
+
         let mut new_doc = Document::parse(uri.clone(), canonical_uri.clone(), text);
         if !new_doc.parsing_errors.is_empty() {
             return Err(new_doc.parsing_errors);
         }
-        self.uris.insert(canonical_uri.clone(), uri);
-        match self.documents.entry(canonical_uri) {
-            Entry::Occupied(entry) => {
-                let diff = Document::diff(Some(entry.get()), &new_doc);
-                let doc = entry.into_mut();
-                if !diff.is_empty() {
-                    doc.reconsile(new_doc, &diff);
-                }
-                Ok((doc, diff))
-            }
-            Entry::Vacant(entry) => {
-                let diff = Document::diff(None, &new_doc);
-                new_doc.self_reconsile(&diff);
-                let doc = entry.insert(new_doc);
-                Ok((doc, diff))
-            }
+
+        // Set rev and mark all dependencies as dirty
+        new_doc.rev = next_rev;
+        for id in new_doc.dependency_ids().cloned().collect::<Vec<_>>() {
+            new_doc.dirty_dependencies.insert(id, next_rev);
         }
+
+        self.uris.insert(canonical_uri.clone(), uri);
+        self.documents.insert(canonical_uri.clone(), new_doc);
+        Ok(self.documents.get(&canonical_uri).unwrap())
     }
 }

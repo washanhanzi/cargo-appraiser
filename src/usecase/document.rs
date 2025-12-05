@@ -1,237 +1,171 @@
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::{Position, Uri};
+use tower_lsp::lsp_types::{Position, Range, Uri};
 
 use crate::entity::{
-    CanonicalUri, Dependency, EntryDiff, Manifest, SymbolTree, TomlNode, TomlParsingError,
+    CanonicalUri, DependencyLookupKey, ResolvedDependency, TomlDependency, TomlNode, TomlTree,
 };
 
-use super::{diff_dependency_entries, ReverseSymbolTree, Walker};
-
+/// Represents a parsed Cargo.toml document with resolution status.
 #[derive(Debug, Clone)]
 pub struct Document {
     pub uri: Uri,
     pub canonical_uri: CanonicalUri,
     pub rev: usize,
-    tree: SymbolTree,
-    pub reverse_tree: ReverseSymbolTree,
-    //hashmap key is id
-    pub dependencies: HashMap<String, Dependency>,
-    //crate name to Vec<dependency id>
-    pub crate_name_map: HashMap<String, Vec<String>>,
+    /// The parsed TOML tree (from toml-parser)
+    tree: TomlTree,
+    /// Cargo resolution results, keyed by dependency ID
+    pub resolved: HashMap<String, ResolvedDependency>,
+    /// Dependencies that need re-resolution, maps dep_id -> rev when marked dirty
     pub dirty_dependencies: HashMap<String, usize>,
-    pub parsing_errors: Vec<TomlParsingError>,
-    pub manifest: Manifest,
+    /// Parsing errors from toml-parser
+    pub parsing_errors: Vec<toml_parser::ParseError>,
+    /// Workspace members (populated after cargo resolution)
     pub members: Option<Vec<cargo::core::package::Package>>,
 }
 
 impl Document {
-    pub fn tree(&self) -> &SymbolTree {
+    /// Get the underlying TomlTree
+    pub fn tree(&self) -> &TomlTree {
         &self.tree
     }
 
+    /// Parse a Cargo.toml document
     pub fn parse(uri: Uri, canonical_uri: CanonicalUri, text: &str) -> Self {
-        //TODO I'm too stupid to apprehend the rowan tree else I would use incremental patching
-        let p = taplo::parser::parse(text);
-        let dom = p.into_dom();
-        let table = dom.as_table().unwrap();
-        let entries = table.entries().read();
-
-        let mut walker = Walker::new(text, entries.len());
-
-        for (key, entry) in entries.iter() {
-            if key.value().is_empty() {
-                continue;
-            }
-            walker.walk_root(key.value(), key.value(), entry)
-        }
-
-        let (tree, manifest, deps, errs) = walker.consume();
-        let len = entries.len();
-        let reverse_symbols = ReverseSymbolTree::parse(&tree);
-
-        //construct crate_name_map
-        let mut crate_name_map = HashMap::with_capacity(deps.len());
-        for (id, dep) in deps.iter() {
-            crate_name_map
-                .entry(dep.package_name().to_string())
-                .or_insert_with(Vec::new)
-                .push(id.to_string());
-        }
+        let result = toml_parser::parse(text);
 
         Self {
             uri,
             canonical_uri,
             rev: 0,
-            tree,
-            manifest,
-            reverse_tree: reverse_symbols,
-            dependencies: deps,
-            crate_name_map,
-            dirty_dependencies: HashMap::with_capacity(len),
-            parsing_errors: errs,
+            tree: result.tree,
+            resolved: HashMap::new(),
+            dirty_dependencies: HashMap::new(),
+            parsing_errors: result.errors,
             members: None,
         }
     }
 
-    //currently only diff dependency entries
-    pub fn diff(old: Option<&Document>, new: &Document) -> EntryDiff {
-        let old = old.map(|d| &d.tree.entries);
-        diff_dependency_entries(old, &new.tree.entries)
-    }
-
-    pub fn reconsile(&mut self, mut new: Document, diff: &EntryDiff) {
-        self.tree.entries = new.tree.entries;
-        self.tree.keys = new.tree.keys;
-        self.reverse_tree = new.reverse_tree;
-        self.rev += 1;
-        //merge dependencies
-        for v in &diff.created {
-            self.dirty_dependencies.insert(v.to_string(), self.rev);
-            if let Some(dep) = new.dependencies.get(v) {
-                self.crate_name_map
-                    .entry(dep.package_name().to_string())
-                    .or_default()
-                    .push(v.to_string());
-                self.dependencies.insert(v.to_string(), dep.clone());
-            }
-        }
-        for v in &diff.value_updated {
-            self.dirty_dependencies.insert(v.to_string(), self.rev);
-            if let Some(new_dep) = new.dependencies.remove(v) {
-                if let Some(old_dep) = self.dependencies.get_mut(v) {
-                    let old_name = old_dep.package_name().to_string();
-                    if let Some(ids) = self.crate_name_map.get_mut(&old_name) {
-                        ids.retain(|id| id != v);
-                        if ids.is_empty() {
-                            self.crate_name_map.remove(&old_name);
-                        }
-                    }
-                    let new_name = new_dep.package_name().to_string();
-                    self.crate_name_map
-                        .entry(new_name)
-                        .or_default()
-                        .push(v.to_string());
-                    old_dep.version = new_dep.version.clone();
-                    old_dep.features = new_dep.features.clone();
-                    old_dep.registry = new_dep.registry.clone();
-                    old_dep.git = new_dep.git.clone();
-                    old_dep.branch = new_dep.branch.clone();
-                    old_dep.tag = new_dep.tag.clone();
-                    old_dep.path = new_dep.path.clone();
-                    old_dep.rev = new_dep.rev.clone();
-                    old_dep.package = new_dep.package.clone();
-                    old_dep.workspace = new_dep.workspace.clone();
-                    old_dep.platform = new_dep.platform.clone();
-                    old_dep.requested = None;
-                    old_dep.resolved = None;
-                    old_dep.latest_summary = None;
-                    old_dep.latest_matched_summary = None;
-                    old_dep.range = new_dep.range;
-                } else {
-                    self.crate_name_map
-                        .entry(new_dep.package_name().to_string())
-                        .or_default()
-                        .push(v.to_string());
-                    self.dependencies.insert(v.to_string(), new_dep);
-                }
-            }
-        }
-        for v in &diff.range_updated {
-            if let Some(dep) = new.dependencies.remove(v) {
-                if let Some(old_dep) = self.dependencies.get_mut(v) {
-                    old_dep.merge_range(dep);
-                }
-            }
-        }
-        for v in &diff.deleted {
-            self.dirty_dependencies.remove(v);
-            if let Some(dep) = self.dependencies.remove(v) {
-                if let Some(ids) = self.crate_name_map.get_mut(dep.package_name()) {
-                    ids.retain(|id| id != v);
-                    if ids.is_empty() {
-                        self.crate_name_map.remove(dep.package_name());
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn self_reconsile(&mut self, diff: &EntryDiff) {
-        self.rev += 1;
-        //merge dependencies
-        for v in diff
-            .created
-            .iter()
-            .chain(&diff.range_updated)
-            .chain(&diff.value_updated)
-        {
-            self.dirty_dependencies.insert(v.to_string(), self.rev);
-        }
-    }
-
+    /// Check if any dependencies need resolution
     pub fn is_dependencies_dirty(&self) -> bool {
         !self.dirty_dependencies.is_empty()
     }
 
-    pub fn precise_match(&self, pos: Position) -> Option<TomlNode> {
-        match self.precise_match_key(pos) {
-            Some(node) => Some(node),
-            None => self.precise_match_entry(pos),
-        }
+    /// Find the most specific node at the given position
+    pub fn precise_match(&self, pos: Position) -> Option<&TomlNode> {
+        self.tree.find_at_position(pos)
     }
 
-    pub fn precise_match_entry(&self, pos: Position) -> Option<TomlNode> {
-        self.reverse_tree
-            .precise_match_entry(pos, &self.tree.entries)
+    /// Find a key node at the given position
+    pub fn precise_match_key(&self, pos: Position) -> Option<&TomlNode> {
+        self.tree.find_key_at_position(pos)
     }
 
-    pub fn precise_match_key(&self, pos: Position) -> Option<TomlNode> {
-        self.reverse_tree.precise_match_key(pos, &self.tree.keys)
+    /// Find a value node at the given position
+    pub fn precise_match_value(&self, pos: Position) -> Option<&TomlNode> {
+        self.tree.find_value_at_position(pos)
     }
 
-    pub fn dependency(&self, id: &str) -> Option<&Dependency> {
+    /// Get a dependency by its ID (e.g., "dependencies.serde")
+    pub fn dependency(&self, id: &str) -> Option<&TomlDependency> {
         if id.is_empty() {
             return None;
         }
-        self.dependencies.get(id)
+        self.tree.get_dependency(id)
     }
 
-    pub fn dependencies_by_crate_name(&self, crate_name: &str) -> Vec<&Dependency> {
-        self.crate_name_map
-            .get(crate_name)
-            .map(|ids| {
-                ids.iter()
-                    .map(|id| self.dependencies.get(id).unwrap())
-                    .collect()
-            })
-            .unwrap_or_default()
+    /// Get all dependencies with the given crate name
+    pub fn dependencies_by_crate_name(&self, crate_name: &str) -> Vec<&TomlDependency> {
+        self.tree.find_dependencies_by_name(crate_name)
     }
 
-    pub fn entry(&self, id: &str) -> Option<&TomlNode> {
-        self.tree.entries.get(id)
+    /// Get all dependencies with the given package name (considering renames)
+    pub fn dependencies_by_package_name(&self, package_name: &str) -> Vec<&TomlDependency> {
+        self.tree.find_dependencies_by_package_name(package_name)
     }
 
+    /// Get a node by its ID
+    pub fn node(&self, id: &str) -> Option<&TomlNode> {
+        self.tree.get_node(id)
+    }
+
+    /// Get the entry node for a dependency
+    pub fn entry(&self, dep_id: &str) -> Option<&TomlNode> {
+        let dep = self.tree.get_dependency(dep_id)?;
+        self.tree.get_node(&dep.entry_node_id)
+    }
+
+    /// Get the range for a dependency (its entry node range)
+    pub fn dependency_range(&self, dep_id: &str) -> Option<Range> {
+        self.entry(dep_id).map(|n| n.range)
+    }
+
+    /// Find all key nodes with the given crate name text
     pub fn find_keys_by_crate_name(&self, crate_name: &str) -> Vec<&TomlNode> {
         self.tree
-            .keys
-            .values()
-            .filter(|v| v.text == crate_name)
+            .nodes()
+            .filter(|n| n.is_key() && n.text == crate_name)
             .collect()
     }
 
-    pub fn find_deps_by_crate_name(&self, crate_name: &str) -> Vec<&Dependency> {
-        self.dependencies
-            .values()
-            .filter(|v| v.package_name() == crate_name)
+    /// Find all dependencies matching a crate name
+    pub fn find_deps_by_crate_name(&self, crate_name: &str) -> Vec<&TomlDependency> {
+        self.tree
+            .dependencies()
+            .filter(|d| d.package_name() == crate_name)
             .collect()
     }
 
+    /// Get the resolved dependency info for a dependency ID
+    pub fn resolved(&self, dep_id: &str) -> Option<&ResolvedDependency> {
+        self.resolved.get(dep_id)
+    }
+
+    /// Create a lookup key for cargo-parser from a TomlDependency
+    pub fn lookup_key(dep: &TomlDependency) -> DependencyLookupKey {
+        DependencyLookupKey::new(
+            dep.table,
+            dep.platform.clone(),
+            dep.package_name().to_string(),
+        )
+    }
+
+    /// Mark all dependencies as dirty (needing resolution)
     pub fn mark_dirty(&mut self) {
         self.rev += 1;
-        for k in self.dependencies.keys() {
-            self.dirty_dependencies.insert(k.to_string(), self.rev);
+        for dep in self.tree.dependencies() {
+            self.dirty_dependencies.insert(dep.id.clone(), self.rev);
         }
+    }
+
+    /// Mark a specific dependency as resolved (no longer dirty)
+    pub fn mark_resolved(&mut self, dep_id: &str) {
+        self.dirty_dependencies.remove(dep_id);
+    }
+
+    /// Store resolution result for a dependency
+    pub fn set_resolved(&mut self, dep_id: &str, resolved: ResolvedDependency) {
+        self.resolved.insert(dep_id.to_string(), resolved);
+    }
+
+    /// Get all dependency IDs
+    pub fn dependency_ids(&self) -> impl Iterator<Item = &String> {
+        self.tree.dependencies().map(|d| &d.id)
+    }
+
+    /// Get all dependencies
+    pub fn dependencies(&self) -> impl Iterator<Item = &TomlDependency> {
+        self.tree.dependencies()
+    }
+
+    /// Get the dependency count
+    pub fn dependency_count(&self) -> usize {
+        self.tree.dependency_count()
+    }
+
+    /// Check if a dependency is a workspace dependency (declared in workspace.dependencies)
+    pub fn is_workspace_dep(&self, dep: &TomlDependency) -> bool {
+        dep.id.starts_with("workspace.dependencies.")
     }
 }
 
@@ -239,13 +173,8 @@ impl Document {
 mod tests {
     use tower_lsp::lsp_types::Uri;
 
-    use crate::{
-        entity::{
-            CargoTable, DependencyEntryKind, DependencyKeyKind, DependencyTable, EntryKind,
-            KeyKind, NodeKind,
-        },
-        usecase::document::Document,
-    };
+    use super::Document;
+    use crate::entity::{DependencyStyle, DependencyTable};
 
     #[test]
     fn test_parse() {
@@ -268,42 +197,41 @@ mod tests {
             r#"
             [dependencies]
             a = "0.1.0"
-            b
             "#,
         );
-        assert_eq!(doc.tree.keys.len(), 2);
-        assert_eq!(doc.tree.entries.len(), 1);
 
-        // Check that we have keys for both dependencies "a" and "b"
-        let mut found_keys = vec![];
-        for (_, v) in doc.tree.keys.iter() {
-            assert_eq!(
-                v.table,
-                CargoTable::Dependencies(DependencyTable::Dependencies)
-            );
-            match &v.kind {
-                NodeKind::Key(KeyKind::Dependency(id, DependencyKeyKind::CrateName)) => {
-                    found_keys.push(id.clone());
-                }
-                _ => panic!("Unexpected key kind: {:?}", v.kind),
-            }
-        }
-        found_keys.sort();
-        assert_eq!(found_keys, vec!["dependencies.a", "dependencies.b"]);
+        assert_eq!(doc.dependency_count(), 1);
 
-        // Check that we have an entry only for dependency "a" (which has a value)
-        for (_, v) in doc.tree.entries.iter() {
-            assert_eq!(
-                v.table,
-                CargoTable::Dependencies(DependencyTable::Dependencies)
-            );
-            assert_eq!(
-                v.kind,
-                NodeKind::Entry(EntryKind::Dependency(
-                    "dependencies.a".to_string(),
-                    DependencyEntryKind::SimpleDependency
-                ))
-            );
-        }
+        let dep = doc.dependency("dependencies.a").unwrap();
+        assert_eq!(dep.name, "a");
+        assert_eq!(dep.table, DependencyTable::Dependencies);
+        assert_eq!(dep.style, DependencyStyle::Simple);
+        assert_eq!(dep.version().map(|v| v.text.as_str()), Some("0.1.0"));
+    }
+
+    #[test]
+    fn test_find_deps_by_crate_name() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_cargo_appraiser2.toml");
+        std::fs::write(&temp_file, "").unwrap();
+
+        let uri = Uri::try_from_path(&temp_file).unwrap();
+        let canonical_uri = uri.clone().try_into().unwrap();
+        std::fs::remove_file(&temp_file).unwrap();
+
+        let doc = Document::parse(
+            uri,
+            canonical_uri,
+            r#"
+            [dependencies]
+            serde = "1.0"
+
+            [dev-dependencies]
+            serde = "1.0"
+            "#,
+        );
+
+        let deps = doc.find_deps_by_crate_name("serde");
+        assert_eq!(deps.len(), 2);
     }
 }

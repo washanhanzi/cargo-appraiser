@@ -1,0 +1,14 @@
+[package]
+name = "toml-parser"
+version = "0.1.0"
+edition = "2021"
+description = "Parser for Cargo.toml files with LSP position support"
+license = "MIT"
+
+[dependencies]
+taplo.workspace = true
+tower-lsp.workspace = true
+lsp-async-stub.workspace = true
+serde.workspace = true
+
+[dev-dependencies]

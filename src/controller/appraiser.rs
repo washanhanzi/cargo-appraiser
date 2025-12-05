@@ -1,6 +1,6 @@
 use std::{env, str::FromStr};
 
-use cargo::core::dependency::DepKind;
+use cargo::core::PackageIdSpec;
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -17,15 +17,15 @@ use tracing::{debug, error, trace, warn};
 use crate::{
     config::GLOBAL_CONFIG,
     controller::{code_action::code_action, completion::completion, read_file::ReadFileParam},
-    decoration::DecorationEvent,
-    entity::{CanonicalUri, CargoError, DependencyTable},
+    decoration::{DecorationEvent, DecorationItem, DecorationState},
+    entity::{CanonicalUri, CargoError},
     usecase::{Document, Workspace},
 };
 
 use super::{
     audit::{AuditController, AuditReports},
     capabilities::{ClientCapabilities, ClientCapability},
-    cargo::{cargo_resolve, CargoResolveOutput},
+    cargo::{cargo_resolve, make_lookup_key, CargoResolveOutput},
     debouncer::Debouncer,
     diagnostic::DiagnosticController,
     gd::goto_definition,
@@ -60,7 +60,7 @@ pub enum CargoDocumentEvent {
     //mark dependencies dirty, clear decorations
     Closed(Uri),
     //result from cargo
-    CargoResolved(Box<CargoResolveOutput>),
+    CargoResolved(CargoResolveOutput),
     //cargo.lock change
     //CargoLockCreated,
     CargoLockChanged,
@@ -118,7 +118,7 @@ impl Appraiser {
                 match cargo_resolve(&event).await {
                     Ok(output) => {
                         if let Err(e) = tx_for_cargo
-                            .send(CargoDocumentEvent::CargoResolved(Box::new(output)))
+                            .send(CargoDocumentEvent::CargoResolved(output))
                             .await
                         {
                             error!("error sending cargo resolved event: {}", e);
@@ -161,19 +161,22 @@ impl Appraiser {
             while let Some(event) = rx.recv().await {
                 match event {
                     CargoDocumentEvent::Audited(reports) => {
-                        debug!("found audit reports: {:?}", reports.len());
+                        debug!("[AUDIT] Received {} crate reports", reports.len());
                         let Some(doc) = state.root_document() else {
                             continue;
                         };
                         for issues in reports.values() {
                             for issue in issues {
                                 for (crate_name, paths) in &issue.dependency_paths {
-                                    let depenedencies = doc.dependencies_by_crate_name(crate_name);
-                                    if depenedencies.is_empty() {
+                                    let dependencies = doc.dependencies_by_crate_name(crate_name);
+                                    if dependencies.is_empty() {
                                         continue;
                                     }
-                                    for dep in depenedencies {
-                                        let Some(resolved) = dep.resolved.as_ref() else {
+                                    for dep in dependencies {
+                                        let Some(resolved) = doc.resolved(&dep.id) else {
+                                            continue;
+                                        };
+                                        let Some(pkg) = resolved.package.as_ref() else {
                                             continue;
                                         };
                                         let required_version = if crate_name == &issue.crate_name {
@@ -188,10 +191,13 @@ impl Appraiser {
                                         if required_version.is_empty() {
                                             continue;
                                         }
-                                        if required_version == resolved.version().to_string() {
-                                            //send diagnostic
+                                        if required_version == pkg.version().to_string() {
+                                            let Some(entry_node) = doc.entry(&dep.id) else {
+                                                continue;
+                                            };
+                                            debug!("[AUDIT] Adding diagnostic for {}", dep.id);
                                             let diag = Diagnostic {
-                                                range: dep.range,
+                                                range: entry_node.range,
                                                 severity: Some(issue.severity()),
                                                 code: None,
                                                 code_description: None,
@@ -251,11 +257,10 @@ impl Appraiser {
                         let Some(node) = doc.precise_match(pos) else {
                             continue;
                         };
-                        let dep = match node.row_id() {
-                            Some(id) => doc.dependency(&id),
-                            None => None,
-                        };
-                        let h = hover(&node, dep, doc.members.as_deref());
+                        // Find the dependency for this node
+                        let dep = doc.tree().find_dependency_at_position(pos);
+                        let resolved = dep.and_then(|d| doc.resolved(&d.id));
+                        let h = hover(node, dep, resolved, doc.members.as_deref());
                         let _ = tx.send(h);
                     }
                     CargoDocumentEvent::Gded(uri, pos, tx) => {
@@ -269,7 +274,7 @@ impl Appraiser {
                         let Some(node) = doc.precise_match(pos) else {
                             continue;
                         };
-                        let gd = goto_definition(&state, doc, &node);
+                        let gd = goto_definition(&state, doc, node);
                         let _ = tx.send(gd);
                     }
                     CargoDocumentEvent::Completion(uri, pos, tx) => {
@@ -283,11 +288,9 @@ impl Appraiser {
                         let Some(node) = doc.precise_match(pos) else {
                             continue;
                         };
-                        let Some(id) = node.row_id() else {
-                            continue;
-                        };
-                        let dep = doc.dependency(&id);
-                        let completion = completion(&node, dep).await;
+                        let dep = doc.tree().find_dependency_at_position(pos);
+                        let resolved = dep.and_then(|d| doc.resolved(&d.id));
+                        let completion = completion(node, dep, resolved).await;
                         let _ = tx.send(completion);
                     }
                     CargoDocumentEvent::CodeAction(uri, range, tx) => {
@@ -301,11 +304,9 @@ impl Appraiser {
                         let Some(node) = doc.precise_match(range.start) else {
                             continue;
                         };
-                        let Some(id) = node.row_id() else {
-                            continue;
-                        };
-                        let dep = doc.dependency(&id);
-                        let Some(action) = code_action(uri, node, dep) else {
+                        let dep = doc.tree().find_dependency_at_position(range.start);
+                        let resolved = dep.and_then(|d| doc.resolved(&d.id));
+                        let Some(action) = code_action(uri, node, dep, resolved) else {
                             continue;
                         };
                         let _ = tx.send(action);
@@ -344,56 +345,22 @@ impl Appraiser {
                         };
                         //when Cargo.toml changed, clear audit diagnostics
                         diagnostic_controller.clear_audit_diagnostics().await;
-                        let diff = match state.reconsile(
+                        let doc = match state.update(
                             msg.uri.clone(),
                             canonical_uri.clone(),
                             &msg.text,
                         ) {
-                            Ok((_, diff)) => diff,
+                            Ok(doc) => doc,
                             Err(err) => {
                                 for e in err {
-                                    let Some((id, diag)) = e.diagnostic() else {
-                                        continue;
-                                    };
+                                    let diag = parse_error_to_diagnostic(&e);
                                     diagnostic_controller
-                                        .add_parse_diagnostic(&msg.uri, &id, diag)
+                                        .add_parse_diagnostic(&msg.uri, &format!("parse_error_{}", e.message), diag)
                                         .await;
                                 }
                                 continue;
                             }
                         };
-                        let doc = state.document(&canonical_uri).unwrap();
-                        for v in &diff.range_updated {
-                            if let Some(node) = doc.entry(v) {
-                                render_tx
-                                    .send(DecorationEvent::DependencyRangeUpdate(
-                                        doc.uri.clone(),
-                                        v.to_string(),
-                                        node.range,
-                                    ))
-                                    .await
-                                    .unwrap();
-                            }
-                        }
-                        for v in &diff.value_updated {
-                            render_tx
-                                .send(DecorationEvent::DependencyRemove(
-                                    doc.uri.clone(),
-                                    v.to_string(),
-                                ))
-                                .await
-                                .unwrap();
-                        }
-
-                        for v in &diff.deleted {
-                            render_tx
-                                .send(DecorationEvent::DependencyRemove(
-                                    doc.uri.clone(),
-                                    v.to_string(),
-                                ))
-                                .await
-                                .unwrap();
-                        }
                         if let Err(e) = debouncer
                             .send_background(Ctx {
                                 uri: canonical_uri,
@@ -483,14 +450,10 @@ impl Appraiser {
                     }
                     CargoDocumentEvent::CargoResolved(output) => {
                         debug!(
-                            "Appraiser Event: CargoResolved for URI: {:?}, rev: {}. Specs: {}, Dependencies: {}, Packages: {}, Available Versions: {}, Processed Summaries: {}",
+                            "Appraiser Event: CargoResolved for URI: {:?}, rev: {}. Index entries: {}",
                             output.ctx.uri,
                             output.ctx.rev,
-                            output.specs.len(),
-                            output.dependencies.len(),
-                            output.packages.len(),
-                            output.available_versions.len(),
-                            output.processed_summaries.len()
+                            output.index.len()
                         );
                         //resolve virtual manifest if we haven't
                         let root_manifest_uri = output.root_manifest_uri.clone();
@@ -501,12 +464,19 @@ impl Appraiser {
                             }
                         }
                         state.root_manifest_uri = Some(root_manifest_uri.clone());
-                        state.specs = output.specs;
-                        state.member_manifest_uris = output.member_manifest_uris;
+
+                        // Build specs from index for audit
+                        let specs: Vec<PackageIdSpec> = output.index.iter()
+                            .filter_map(|(_, resolved)| {
+                                resolved.package.as_ref().map(|p| p.package_id().to_spec())
+                            })
+                            .collect();
+                        state.specs = specs.clone();
+                        state.member_manifest_uris = output.member_manifest_uris.clone();
 
                         //send audit event
                         if !GLOBAL_CONFIG.read().unwrap().audit.disabled {
-                            debug!("send audit event");
+                            debug!("[AUDIT] Sending audit request");
                             if let Err(e) = audit_controller
                                 .send(root_manifest_uri, state.specs.clone(), &cargo_path)
                                 .await
@@ -524,113 +494,65 @@ impl Appraiser {
                             .clear_cargo_diagnostics(&doc.uri)
                             .await;
 
-                        //populate deps
-                        for dep in doc.dependencies.values_mut() {
-                            let Some(rev) = doc.dirty_dependencies.get(&dep.id) else {
+                        // Track which deps to remove from dirty after processing
+                        let mut resolved_dep_ids: Vec<String> = Vec::new();
+
+                        // Populate resolution info for each dependency
+                        let dep_ids: Vec<String> = doc.dependency_ids().cloned().collect();
+                        for dep_id in dep_ids {
+                            let Some(rev) = doc.dirty_dependencies.get(&dep_id) else {
                                 continue;
                             };
                             if *rev > output.ctx.rev {
                                 continue;
                             }
 
-                            //populate requested
-                            let Some(requested_result) = output.dependencies.get(&dep.name) else {
-                                if let Err(e) = render_tx
-                                    .send(DecorationEvent::Dependency(
-                                        doc.uri.clone(),
-                                        dep.id.clone(),
-                                        dep.range,
-                                        dep.clone(),
-                                    ))
-                                    .await
-                                {
-                                    error!("render tx send error: {}", e);
-                                };
-                                doc.dirty_dependencies.remove(&dep.id);
+                            let Some(dep) = doc.dependency(&dep_id) else {
+                                resolved_dep_ids.push(dep_id.clone());
                                 continue;
                             };
 
-                            if dep.is_virtual {
-                                let mut tables: Vec<DependencyTable> =
-                                    Vec::with_capacity(requested_result.len());
-                                let mut normal_use = false;
-                                for requested_dep in requested_result {
-                                    if requested_dep.1.kind() == DepKind::Normal {
-                                        normal_use = true;
-                                    } else {
-                                        tables.push(requested_dep.1.kind().into());
-                                    }
-                                }
-                                if !normal_use {
-                                    dep.used_in_tables = tables;
-                                }
+                            // Create lookup key and get resolution from index
+                            let lookup_key = make_lookup_key(dep);
+                            if let Some(resolved) = output.index.get(&lookup_key) {
+                                doc.set_resolved(&dep_id, resolved.clone());
                             }
 
-                            let requested = match requested_result.len() {
-                                0 => unreachable!(),
-                                1 => requested_result.first().unwrap(),
-                                _ => {
-                                    let mut matched_requested_dep = None;
-                                    for requested_dep in requested_result {
-                                        // For not virtual dependency, they should in same table
-                                        if !dep.is_virtual
-                                            && dep.table.to_string()
-                                                != requested_dep.1.kind().kind_table()
-                                        {
-                                            debug!(
-                                                "not virtual dependency, table not match: {}",
-                                                dep.id
-                                            );
-                                            continue;
-                                        }
-                                        //a dependency could specify platform in member Cargo.toml but not in workspace Cargo.toml
-                                        matched_requested_dep = Some(requested_dep);
-                                    }
-                                    let Some(requested_dep) = matched_requested_dep else {
-                                        error!("Can't find a match for dep {}", dep.id);
-                                        //remove the dirty dependency else we stuck in infinite cargo resolve
-                                        doc.dirty_dependencies.remove(&dep.id);
-                                        continue;
-                                    };
-                                    requested_dep
-                                }
-                            };
-                            dep.requested = Some(requested.1.clone());
+                            resolved_dep_ids.push(dep_id);
+                        }
 
-                            if let Some(pkgs) =
-                                output.packages.get(&requested.1.package_name().to_string())
-                            {
-                                for pkg in pkgs {
-                                    if requested.1.matches(pkg.summary()) {
-                                        dep.resolved = Some(pkg.clone());
-                                        break;
-                                    }
-                                }
-                            }
+                        // Remove resolved deps from dirty
+                        for id in &resolved_dep_ids {
+                            doc.mark_resolved(id);
+                        }
 
-                            // Use pre-processed data from cargo resolve
-                            if let Some(versions) = output.available_versions.get(&requested.0) {
-                                dep.available_versions = Some(versions.clone());
-                            }
-                            
-                            if let Some(processed) = output.processed_summaries.get(&requested.0) {
-                                dep.matched_summary = processed.matched_summary.clone();
-                                dep.latest_summary = processed.latest_summary.clone();
-                                dep.latest_matched_summary = processed.latest_matched_summary.clone();
-                            }
-                            //send to render task
-                            if let Err(e) = render_tx
-                                .send(DecorationEvent::Dependency(
-                                    doc.uri.clone(),
-                                    dep.id.clone(),
-                                    dep.range,
-                                    dep.clone(),
-                                ))
-                                .await
-                            {
-                                error!("render tx send error: {}", e);
-                            };
-                            doc.dirty_dependencies.remove(&dep.id);
+                        // Build full update with all dependencies
+                        let items: Vec<DecorationItem> = doc
+                            .dependencies()
+                            .filter_map(|dep| {
+                                let entry = doc.entry(&dep.id)?;
+                                let state = if doc.dirty_dependencies.contains_key(&dep.id) {
+                                    DecorationState::Waiting
+                                } else {
+                                    let resolved = doc.resolved(&dep.id);
+                                    DecorationState::Resolved {
+                                        dep: dep.clone(),
+                                        resolved: resolved.cloned(),
+                                    }
+                                };
+                                Some(DecorationItem {
+                                    id: dep.id.clone(),
+                                    range: entry.range,
+                                    state,
+                                })
+                            })
+                            .collect();
+
+                        if let Err(e) = render_tx
+                            .send(DecorationEvent::Update(doc.uri.clone(), items))
+                            .await
+                        {
+                            error!("render tx send error: {}", e);
                         }
 
                         if doc.is_dependencies_dirty() {
@@ -669,21 +591,37 @@ async fn start_resolve(
         return;
     }
 
-    for v in doc.dirty_dependencies.keys() {
-        if let Some(n) = doc.entry(v) {
-            debug!(
-                "Marking dependency '{}' as waiting for URI: {:?}",
-                v, doc.uri
-            );
-            render_tx
-                .send(DecorationEvent::DependencyWaiting(
-                    doc.uri.clone(),
-                    v.to_string(),
-                    n.range,
-                ))
-                .await
-                .unwrap();
-        }
+    // Build a full update with waiting states for dirty deps and resolved states for clean deps
+    let items: Vec<DecorationItem> = doc
+        .dependencies()
+        .filter_map(|dep| {
+            let entry = doc.entry(&dep.id)?;
+            let state = if doc.dirty_dependencies.contains_key(&dep.id) {
+                debug!(
+                    "Marking dependency '{}' as waiting for URI: {:?}",
+                    dep.id, doc.uri
+                );
+                DecorationState::Waiting
+            } else {
+                let resolved = doc.resolved(&dep.id);
+                DecorationState::Resolved {
+                    dep: dep.clone(),
+                    resolved: resolved.cloned(),
+                }
+            };
+            Some(DecorationItem {
+                id: dep.id.clone(),
+                range: entry.range,
+                state,
+            })
+        })
+        .collect();
+
+    if let Err(e) = render_tx
+        .send(DecorationEvent::Update(doc.uri.clone(), items))
+        .await
+    {
+        error!("render tx send error: {}", e);
     }
 
     //resolve cargo dependencies
@@ -706,9 +644,9 @@ async fn reconsile_document<'a>(
     msg: &CargoTomlPayload,
     canonical_uri: &CanonicalUri,
 ) -> Option<&'a Document> {
-    match state.reconsile(msg.uri.clone(), canonical_uri.clone(), &msg.text) {
-        Ok((doc, diff)) => {
-            if diff.is_empty() && !doc.is_dependencies_dirty() {
+    match state.update(msg.uri.clone(), canonical_uri.clone(), &msg.text) {
+        Ok(doc) => {
+            if !doc.is_dependencies_dirty() {
                 None
             } else {
                 Some(doc)
@@ -716,14 +654,26 @@ async fn reconsile_document<'a>(
         }
         Err(err) => {
             for e in err {
-                let Some((id, diag)) = e.diagnostic() else {
-                    continue;
-                };
+                let diag = parse_error_to_diagnostic(&e);
                 diagnostic_controller
-                    .add_parse_diagnostic(&msg.uri, &id, diag)
+                    .add_parse_diagnostic(&msg.uri, &format!("parse_error_{}", e.message), diag)
                     .await;
             }
             None
         }
+    }
+}
+
+fn parse_error_to_diagnostic(e: &toml_parser::ParseError) -> Diagnostic {
+    Diagnostic {
+        range: e.range,
+        severity: Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR),
+        code: None,
+        code_description: None,
+        source: Some("cargo-appraiser".to_string()),
+        message: e.message.clone(),
+        related_information: None,
+        tags: None,
+        data: None,
     }
 }

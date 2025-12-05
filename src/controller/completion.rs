@@ -4,25 +4,27 @@ use tower_lsp::lsp_types::{
     TextEdit,
 };
 
-use crate::entity::{Dependency, DependencyEntryKind, EntryKind, NodeKind, TomlNode};
+use crate::entity::{DependencyValue, NodeKind, ResolvedDependency, TomlDependency, TomlNode, ValueKind};
 
-pub async fn completion(node: &TomlNode, dep: Option<&Dependency>) -> Option<CompletionResponse> {
+pub async fn completion(
+    node: &TomlNode,
+    _dep: Option<&TomlDependency>,
+    resolved: Option<&ResolvedDependency>,
+) -> Option<CompletionResponse> {
     if let Some(name) = node.crate_name() {
         //crate name completion
-        return crate_name_completion(&name).await;
+        return crate_name_completion(name).await;
     }
-    let dep = dep?;
-    let available_versions = dep.available_versions.as_ref()?;
-    //TODO dep is never resolved, manually create a dependency
+
+    let resolved = resolved?;
+    let available_versions = &resolved.available_versions;
     if available_versions.is_empty() {
         return None;
     }
 
     match &node.kind {
-        NodeKind::Entry(EntryKind::Dependency(
-            _,
-            DependencyEntryKind::SimpleDependency | DependencyEntryKind::TableDependencyVersion,
-        )) => {
+        NodeKind::Value(ValueKind::Dependency(DependencyValue::Simple))
+        | NodeKind::Value(ValueKind::Dependency(DependencyValue::Version)) => {
             // Create a vector of CompletionItems for each version
             // available_versions is already sorted by version (descending)
             let versions: Vec<_> = available_versions
@@ -51,9 +53,11 @@ pub async fn completion(node: &TomlNode, dep: Option<&Dependency>) -> Option<Com
                 .collect();
             Some(CompletionResponse::Array(versions))
         }
-        NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyFeature)) => {
-            let summary = dep.matched_summary.as_ref()?;
-            let versions: Vec<_> = summary
+        NodeKind::Value(ValueKind::Dependency(DependencyValue::Feature)) => {
+            let pkg = resolved.package.as_ref()?;
+            let features: Vec<_> = pkg
+                .manifest()
+                .summary()
                 .features()
                 .keys()
                 .map(|s| CompletionItem {
@@ -61,7 +65,6 @@ pub async fn completion(node: &TomlNode, dep: Option<&Dependency>) -> Option<Com
                     kind: Some(CompletionItemKind::CONSTANT),
                     detail: Some(s.to_string()),
                     documentation: None,
-                    // sort_text: Some(format!("{:04}", index)),
                     text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                         range: Range::new(
                             Position::new(node.range.start.line, node.range.start.character + 1),
@@ -72,7 +75,7 @@ pub async fn completion(node: &TomlNode, dep: Option<&Dependency>) -> Option<Com
                     ..Default::default()
                 })
                 .collect();
-            Some(CompletionResponse::Array(versions))
+            Some(CompletionResponse::Array(features))
         }
         _ => None,
     }

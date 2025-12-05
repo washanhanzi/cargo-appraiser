@@ -3,22 +3,26 @@ use std::collections::HashMap;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
 use crate::entity::{
-    commit_str, git_ref_str, Dependency, DependencyEntryKind, DependencyKeyKind, EntryKind,
-    KeyKind, NodeKind, TomlNode, WorkspaceKeyKind,
+    commit_str, git_ref_str, DependencyKey, DependencyValue, NodeKind, ResolvedDependency,
+    TomlDependency, TomlNode, ValueKind,
 };
 
 pub fn hover(
     node: &TomlNode,
-    dep: Option<&Dependency>,
+    _dep: Option<&TomlDependency>,
+    resolved: Option<&ResolvedDependency>,
     members: Option<&[cargo::core::package::Package]>,
 ) -> Option<Hover> {
-    match node.kind {
-        NodeKind::Key(KeyKind::Dependency(_, DependencyKeyKind::Version))
-        | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyVersion))
-        | NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::SimpleDependency)) => {
-            let dep = dep?;
-            let available_versions = dep.available_versions.as_ref()?;
-            
+    match &node.kind {
+        // Version hover - show available versions
+        NodeKind::Value(ValueKind::Dependency(DependencyValue::Version))
+        | NodeKind::Value(ValueKind::Dependency(DependencyValue::Simple)) => {
+            let resolved = resolved?;
+            let available_versions = &resolved.available_versions;
+            if available_versions.is_empty() {
+                return None;
+            }
+
             // available_versions is already sorted by version (descending)
             let formatted_versions = available_versions
                 .iter()
@@ -34,11 +38,17 @@ pub fn hover(
                 range: Some(node.range),
             })
         }
-        NodeKind::Key(KeyKind::Dependency(_, DependencyKeyKind::Features)) => {
-            let dep = dep?;
-            let resolved = dep.resolved.as_ref()?;
+        // Features hover - show all features
+        NodeKind::Key(key_kind)
+            if matches!(
+                key_kind,
+                crate::entity::KeyKind::Dependency(DependencyKey::Features)
+            ) =>
+        {
+            let resolved = resolved?;
+            let pkg = resolved.package.as_ref()?;
 
-            let features: HashMap<_, Vec<_>> = resolved
+            let features: HashMap<_, Vec<_>> = pkg
                 .manifest()
                 .summary()
                 .features()
@@ -66,10 +76,11 @@ pub fn hover(
                 range: Some(node.range),
             })
         }
-        NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyFeature)) => {
-            let dep = dep?;
-            let resolved = dep.resolved.as_ref()?;
-            let feature = resolved
+        // Single feature hover - show what it enables
+        NodeKind::Value(ValueKind::Dependency(DependencyValue::Feature)) => {
+            let resolved = resolved?;
+            let pkg = resolved.package.as_ref()?;
+            let feature = pkg
                 .manifest()
                 .summary()
                 .features()
@@ -93,7 +104,13 @@ pub fn hover(
                 range: Some(node.range),
             })
         }
-        NodeKind::Key(KeyKind::Workspace(WorkspaceKeyKind::Members)) => {
+        // Workspace members hover
+        NodeKind::Key(key_kind)
+            if matches!(
+                key_kind,
+                crate::entity::KeyKind::Workspace(crate::entity::WorkspaceKey::Members)
+            ) =>
+        {
             let members = members?;
             let member_list = members
                 .iter()
@@ -108,12 +125,13 @@ pub fn hover(
                 range: Some(node.range),
             })
         }
-        NodeKind::Entry(EntryKind::Dependency(_, DependencyEntryKind::TableDependencyGit)) => {
-            let source_id = dep?.resolved.as_ref()?.package_id().source_id();
+        // Git dependency hover - show ref and commit
+        NodeKind::Value(ValueKind::Dependency(DependencyValue::Git)) => {
+            let resolved = resolved?;
+            let pkg = resolved.package.as_ref()?;
+            let source_id = pkg.package_id().source_id();
             let git_ref = git_ref_str(&source_id);
             let commit = commit_str(&source_id);
-            //make a new string of markdown list "- <git_ref>\n - <commit>\n"
-            //if git_ref is some and commit is some
             let mut s = String::new();
             if let Some(git_ref) = git_ref {
                 s.push_str(&format!("- {}\n", git_ref));
