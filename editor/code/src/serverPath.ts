@@ -1,6 +1,9 @@
 import ky from 'ky'
+import * as semver from 'semver'
 import { workspace, ExtensionContext, window, Uri, StatusBarAlignment } from 'vscode'
 import { config } from './config'
+
+const DEFAULT_SERVER_VERSION = "^0.2.0"
 
 // Function to download and get the path of the language server binary
 export async function languageServerBinaryPath(context: ExtensionContext): Promise<string> {
@@ -29,16 +32,14 @@ export async function languageServerBinaryPath(context: ExtensionContext): Promi
     const { promisify } = require('util')
     const chmod = promisify(fs.chmod)
 
-    // Fetch latest release info
-    const releases = await ky.get('https://api.github.com/repos/washanhanzi/cargo-appraiser/releases', {
-        headers: { 'User-Agent': 'VSCode-Extension' },
-        searchParams: { per_page: 5 } // Fetch up to 5 releases
-    }).json() as any[]
+    // Get required server version from config
+    const serverVersion = config.getInitializationOptions()?.serverVersion || DEFAULT_SERVER_VERSION
 
-    const releaseInfo = releases.find(release => !release.tag_name.startsWith('vscode/'))
+    // Fetch release based on version type (fixed vs semver range)
+    const releaseInfo = await fetchRelease(serverVersion)
 
     if (!releaseInfo) {
-        throw new Error('No suitable LSP release found on GitHub.')
+        throw new Error(`No release found matching version ${serverVersion}`)
     }
 
     // Determine platform and architecture
@@ -88,4 +89,40 @@ export async function languageServerBinaryPath(context: ExtensionContext): Promi
     statusBarItem.dispose()
 
     return binaryPath.fsPath
+}
+
+async function fetchRelease(version: string): Promise<any> {
+    const isFixedVersion = semver.valid(version) !== null
+
+    if (isFixedVersion) {
+        // Fixed version: fetch directly by tag
+        try {
+            return await ky.get(
+                `https://api.github.com/repos/washanhanzi/cargo-appraiser/releases/tags/${version}`,
+                { headers: { 'User-Agent': 'VSCode-Extension' } }
+            ).json()
+        } catch (e) {
+            // Try with 'v' prefix if direct tag fails
+            return await ky.get(
+                `https://api.github.com/repos/washanhanzi/cargo-appraiser/releases/tags/v${version}`,
+                { headers: { 'User-Agent': 'VSCode-Extension' } }
+            ).json()
+        }
+    } else {
+        // Semver range: fetch releases and find matching one
+        const releases = await ky.get(
+            'https://api.github.com/repos/washanhanzi/cargo-appraiser/releases',
+            {
+                headers: { 'User-Agent': 'VSCode-Extension' },
+                searchParams: { per_page: 100 }
+            }
+        ).json() as any[]
+
+        // Find first release matching semver range (newest first)
+        return releases.find(release => {
+            if (release.tag_name.startsWith('vscode/')) return false
+            const tagVersion = release.tag_name.replace(/^v/, '')
+            return semver.satisfies(tagVersion, version)
+        })
+    }
 }

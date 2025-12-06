@@ -85,13 +85,18 @@
           "cargo-appraiser.serverPath": {
             "type": "string",
             "description": "Custom path to the cargo-appraiser server binary. If set, this will be used instead of downloading from GitHub."
+          },
+          "cargo-appraiser.serverVersion": {
+            "type": "string",
+            "description": "LSP server version to download. Can be a fixed version (e.g., '0.3.0') or a semver range (e.g., '^0.3.0'). Ignored if serverPath is set.",
+            "default": "^0.3.0"
           }
         }
       }
     ]
   },
   "scripts": {
-    "build": "pnpm run package && vsce package --no-dependencies",
+    "build": "pnpm run package && npx @vscode/vsce package --no-dependencies",
     "vscode:prepublish": "pnpm run package",
     "compile": "pnpm run check-types && pnpm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
@@ -123,6 +128,7 @@
   "dependencies": {
     "@washanhanzi/result-enum": "^2.0.3",
     "ky": "^1.8.1",
+    "semver": "^7.6.3",
     "vscode-languageclient": "^9.0.1"
   },
   "packageManager": "pnpm@10.23.0+sha512.21c4e5698002ade97e4efe8b8b4a89a8de3c85a37919f957e7a0f30f38fbc5bbdd05980ffe29179b2fb6e6e691242e098d945d1601772cad0fef5fb6411e2a4b"

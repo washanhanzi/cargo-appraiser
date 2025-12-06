@@ -60,7 +60,8 @@ type InitializationOptions = {
         level: string
     },
     extraEnv: Record<string, string>,
-    serverPath?: string
+    serverPath?: string,
+    serverVersion: string
 }
 
 class Config {
@@ -84,14 +85,16 @@ class Config {
         const auditConfig = workspace.getConfiguration("cargo-appraiser").get("audit")
         const extraEnv = workspace.getConfiguration("cargo-appraiser").get("extraEnv") || {}
         const serverPath = workspace.getConfiguration("cargo-appraiser").get("serverPath")
-        
+        const serverVersion = workspace.getConfiguration("cargo-appraiser").get("serverVersion") || "^0.3.0"
+
         if (typeof formatter === "object" && typeof auditConfig === "object") {
-            this.initializationOptions = { 
-                decorationFormatter: formatter as any, 
-                audit: auditConfig as any, 
-                extraEnv: extraEnv as Record<string, string>
+            this.initializationOptions = {
+                decorationFormatter: formatter as any,
+                audit: auditConfig as any,
+                extraEnv: extraEnv as Record<string, string>,
+                serverVersion: serverVersion as string
             }
-            
+
             // Only add serverPath if it's defined and is a non-empty string
             if (typeof serverPath === "string" && serverPath.trim() !== "") {
                 this.initializationOptions.serverPath = serverPath.trim()
