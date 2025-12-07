@@ -5,3 +5,5 @@
 editor/code/node_modules/
 
 *.vsix
+
+editor/code/dist
