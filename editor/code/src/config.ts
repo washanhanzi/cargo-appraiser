@@ -85,7 +85,7 @@ class Config {
         const auditConfig = workspace.getConfiguration("cargo-appraiser").get("audit")
         const extraEnv = workspace.getConfiguration("cargo-appraiser").get("extraEnv") || {}
         const serverPath = workspace.getConfiguration("cargo-appraiser").get("serverPath")
-        const serverVersion = workspace.getConfiguration("cargo-appraiser").get("serverVersion") || "^0.3.0"
+        const serverVersion = workspace.getConfiguration("cargo-appraiser").get("serverVersion")
 
         if (typeof formatter === "object" && typeof auditConfig === "object") {
             this.initializationOptions = {

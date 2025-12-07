@@ -2,7 +2,7 @@
   "name": "cargo-appraiser",
   "displayName": "cargo-appraiser",
   "description": "LSP for Cargo.toml",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "icon": "image/icon.webp",
   "publisher": "washan",
   "license": "SEE LICENSE IN LICENSE",
@@ -89,7 +89,7 @@
           "cargo-appraiser.serverVersion": {
             "type": "string",
             "description": "LSP server version to download. Can be a fixed version (e.g., '0.3.0') or a semver range (e.g., '^0.3.0'). Ignored if serverPath is set.",
-            "default": "^0.3.0"
+            "default": "^0.2.0"
           }
         }
       }

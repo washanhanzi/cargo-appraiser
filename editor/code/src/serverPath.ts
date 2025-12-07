@@ -3,8 +3,6 @@ import * as semver from 'semver'
 import { workspace, ExtensionContext, window, Uri, StatusBarAlignment } from 'vscode'
 import { config } from './config'
 
-const DEFAULT_SERVER_VERSION = "^0.2.0"
-
 // Function to download and get the path of the language server binary
 export async function languageServerBinaryPath(context: ExtensionContext): Promise<string> {
     // First, check if user has configured a custom server path in settings
@@ -32,8 +30,11 @@ export async function languageServerBinaryPath(context: ExtensionContext): Promi
     const { promisify } = require('util')
     const chmod = promisify(fs.chmod)
 
-    // Get required server version from config
-    const serverVersion = config.getInitializationOptions()?.serverVersion || DEFAULT_SERVER_VERSION
+    // Get required server version from config (default is set in package.json)
+    const serverVersion = config.getInitializationOptions()?.serverVersion
+    if (!serverVersion) {
+        throw new Error('Server version not configured')
+    }
 
     // Fetch release based on version type (fixed vs semver range)
     const releaseInfo = await fetchRelease(serverVersion)
