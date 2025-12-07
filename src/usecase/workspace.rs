@@ -46,10 +46,6 @@ impl Workspace {
             .unwrap_or(false)
     }
 
-    pub fn document_mut(&mut self, uri: &CanonicalUri) -> Option<&mut Document> {
-        self.documents.get_mut(uri)
-    }
-
     pub fn document_mut_with_rev(
         &mut self,
         uri: &CanonicalUri,
@@ -67,6 +63,20 @@ impl Workspace {
             uris.push((doc.canonical_uri.clone(), doc.rev));
         }
         uris
+    }
+
+    /// Remove a document from the workspace.
+    /// Clears workspace-level state when all documents are closed.
+    pub fn remove(&mut self, uri: &CanonicalUri) {
+        self.documents.remove(uri);
+        self.uris.remove(uri);
+
+        // Clear workspace-level state when all documents are closed
+        if self.documents.is_empty() {
+            self.specs.clear();
+            self.root_manifest_uri = None;
+            self.member_manifest_uris.clear();
+        }
     }
 
     /// Parse and store a document. Returns the document if successful.

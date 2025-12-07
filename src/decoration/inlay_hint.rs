@@ -1,6 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
-use parking_lot::RwLock;
+use dashmap::DashMap;
 use tokio::sync::mpsc::{self, Sender};
 use tower_lsp::{
     lsp_types::{InlayHint, InlayHintLabel, Position, Uri},
@@ -12,35 +12,32 @@ use crate::config::GLOBAL_CONFIG;
 
 use super::{formatted_string, DecorationEvent, DecorationState, InlayHintDecorationRenderer};
 
-type InlayHintDecorationState = HashMap<Uri, Vec<InlayHint>>;
+type InlayHintDecorationState = DashMap<Uri, Vec<InlayHint>>;
 
 mod inlay_hint_decoration_state {
     use super::*;
 
-    pub fn new() -> Arc<RwLock<InlayHintDecorationState>> {
-        Arc::new(RwLock::new(HashMap::new()))
+    pub fn new() -> Arc<InlayHintDecorationState> {
+        Arc::new(DashMap::new())
     }
 
-    pub fn update(state: &RwLock<InlayHintDecorationState>, uri: &Uri, hints: Vec<InlayHint>) {
-        let mut state = state.write();
+    pub fn update(state: &InlayHintDecorationState, uri: &Uri, hints: Vec<InlayHint>) {
         state.insert(uri.clone(), hints);
     }
 
-    pub fn reset(state: &RwLock<InlayHintDecorationState>, uri: &Uri) {
-        let mut state = state.write();
+    pub fn reset(state: &InlayHintDecorationState, uri: &Uri) {
         state.remove(uri);
     }
 
-    pub fn list(state: &RwLock<InlayHintDecorationState>, uri: &Uri) -> Vec<InlayHint> {
-        let state = state.read();
-        state.get(uri).cloned().unwrap_or_default()
+    pub fn list(state: &InlayHintDecorationState, uri: &Uri) -> Vec<InlayHint> {
+        state.get(uri).map(|v| v.clone()).unwrap_or_default()
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct InlayHintDecoration {
     client: Client,
-    hints: Arc<RwLock<InlayHintDecorationState>>,
+    hints: Arc<InlayHintDecorationState>,
 }
 
 impl InlayHintDecoration {

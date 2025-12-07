@@ -161,7 +161,7 @@ impl Appraiser {
             while let Some(event) = rx.recv().await {
                 match event {
                     CargoDocumentEvent::Audited(reports) => {
-                        debug!("[AUDIT] Received {} crate reports", reports.len());
+                        trace!("[AUDIT] Received {} crate reports", reports.len());
                         let Some(doc) = state.root_document() else {
                             continue;
                         };
@@ -195,7 +195,7 @@ impl Appraiser {
                                             let Some(entry_node) = doc.entry(&dep.id) else {
                                                 continue;
                                             };
-                                            debug!("[AUDIT] Adding diagnostic for {}", dep.id);
+                                            trace!("[AUDIT] Adding diagnostic for {}", dep.id);
                                             let diag = Diagnostic {
                                                 range: entry_node.range,
                                                 severity: Some(issue.severity()),
@@ -312,15 +312,19 @@ impl Appraiser {
                         let _ = tx.send(action);
                     }
                     CargoDocumentEvent::Closed(uri) => {
+                        debug!("Appraiser Event: Closed for URI: {:?}", uri);
                         let Ok(canonical_uri) = uri.clone().try_into() else {
                             error!("failed to canonicalize uri: {}", uri.as_str());
                             continue;
                         };
-                        if let Some(doc) = state.document_mut(&canonical_uri) {
-                            doc.mark_dirty();
-                            if let Err(e) = render_tx.send(DecorationEvent::Reset(uri)).await {
-                                error!("render tx send reset error: {}", e);
-                            }
+                        state.remove(&canonical_uri);
+                        debug!(
+                            "Document removed. Workspace now has {} documents",
+                            state.documents.len()
+                        );
+                        // Keep diagnostics - user may still view them in Problems panel
+                        if let Err(e) = render_tx.send(DecorationEvent::Reset(uri)).await {
+                            error!("render tx send reset error: {}", e);
                         }
                     }
                     CargoDocumentEvent::CargoLockChanged => {
@@ -455,7 +459,18 @@ impl Appraiser {
                             output.ctx.rev,
                             output.index.len()
                         );
-                        //resolve virtual manifest if we haven't
+
+                        // Check if originating document still exists and has matching rev
+                        // Skip processing if document was closed
+                        if state.document(&output.ctx.uri).is_none() {
+                            debug!(
+                                "Skipping CargoResolved - document was closed: {:?}",
+                                output.ctx.uri
+                            );
+                            continue;
+                        }
+
+                        // Resolve virtual manifest if we haven't
                         let root_manifest_uri = output.root_manifest_uri.clone();
                         if state.document(&root_manifest_uri).is_none() {
                             let uri = Uri::from_str(root_manifest_uri.as_str()).unwrap();
@@ -474,9 +489,9 @@ impl Appraiser {
                         state.specs = specs.clone();
                         state.member_manifest_uris = output.member_manifest_uris.clone();
 
-                        //send audit event
+                        // Send audit event
                         if !GLOBAL_CONFIG.read().unwrap().audit.disabled {
-                            debug!("[AUDIT] Sending audit request");
+                            trace!("[AUDIT] Sending audit request");
                             if let Err(e) = audit_controller
                                 .send(root_manifest_uri, state.specs.clone(), &cargo_path)
                                 .await

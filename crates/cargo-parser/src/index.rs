@@ -15,7 +15,7 @@ use cargo::sources::SourceConfigMap;
 use cargo::util::cache_lock::CacheLockMode;
 use cargo::util::{OptVersionReq, VersionExt};
 use cargo::GlobalContext;
-use tracing::{debug, error, trace, warn};
+use tracing::{error, trace, warn};
 
 use crate::error::CargoResolveError;
 use crate::query::{dep_kind_to_table, DependencyLookupKey, ResolvedDependency};
@@ -37,7 +37,7 @@ impl CargoIndex {
     /// This runs cargo's resolution process and builds an index for fast lookups.
     #[tracing::instrument(name = "cargo_resolve", level = "trace")]
     pub fn resolve(manifest_path: &Path) -> Result<Self, CargoResolveError> {
-        debug!("Entering cargo_resolve for manifest path: {:?}", manifest_path);
+        trace!("Entering cargo_resolve for manifest path: {:?}", manifest_path);
 
         let gctx = GlobalContext::default().map_err(CargoResolveError::global_context)?;
 
@@ -107,12 +107,32 @@ impl CargoIndex {
         let mut target_data = RustcTargetData::new(&workspace, &[CompileKind::Host])
             .map_err(CargoResolveError::resolve)?;
 
-        // Acquire package cache lock
-        trace!("Attempting to acquire package cache lock...");
-        let _guard = gctx
-            .acquire_package_cache_lock(CacheLockMode::DownloadExclusive)
-            .map_err(CargoResolveError::cache_lock)?;
-        trace!("Package cache lock acquired.");
+        // Acquire package cache lock with retry to avoid deadlock with rust-analyzer
+        const MAX_RETRIES: u32 = 6;
+        const RETRY_INTERVAL_SECS: u64 = 5;
+
+        let mut attempts = 0;
+        let _guard = loop {
+            attempts += 1;
+            trace!("Attempting to acquire package cache lock (attempt {}/{})", attempts, MAX_RETRIES);
+
+            match gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive) {
+                Ok(guard) => {
+                    trace!("Package cache lock acquired on attempt {}", attempts);
+                    break guard;
+                }
+                Err(e) => {
+                    if attempts >= MAX_RETRIES {
+                        return Err(CargoResolveError::cache_lock(e));
+                    }
+                    warn!(
+                        "Failed to acquire package cache lock (attempt {}): {}, retrying in {}s",
+                        attempts, e, RETRY_INTERVAL_SECS
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(RETRY_INTERVAL_SECS));
+                }
+            }
+        };
 
         // Resolve workspace
         trace!("Calling resolve_ws_with_opts with {} specs", specs.len());

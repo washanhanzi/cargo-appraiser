@@ -12,7 +12,7 @@ use tokio::{
     time::Sleep,
 };
 use tower_lsp::lsp_types::DiagnosticSeverity;
-use tracing::{debug, error};
+use tracing::{error, trace};
 
 use crate::{config::GLOBAL_CONFIG, entity::CanonicalUri};
 
@@ -80,14 +80,13 @@ impl AuditController {
             loop {
                 tokio::select! {
                     Some(payload) = internal_rx.recv() => {
-                        if received_uri.is_none() {
-                            received_uri = Some(payload.root_manifest_uri.ensure_lock());
-                            specs=Some(payload.specs);
-                        }
+                        // Always update with latest data (clears old state)
+                        received_uri = Some(payload.root_manifest_uri.ensure_lock());
+                        specs = Some(payload.specs);
                         if cargo_path.is_none() {
                             cargo_path = Some(payload.cargo_path);
                         }
-                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(10))));
+                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(30))));
                     }
                     () = async {
                         if let Some(ref mut t) = timer {
@@ -99,7 +98,7 @@ impl AuditController {
                         timer = None;
                         let uri = received_uri.take().unwrap();
                         let specs_to_audit = specs.take().unwrap();
-                        debug!("[AUDIT] Running audit for: {}", uri.as_str());
+                        trace!("[AUDIT] Running audit for: {}", uri.as_str());
                         let reports = match audit_workspace(&uri, &specs_to_audit, cargo_path.as_deref().unwrap_or("cargo")).await {
                             Ok(r) => r,
                             Err(e) => {
@@ -107,7 +106,7 @@ impl AuditController {
                                 continue;
                             }
                         };
-                        debug!("[AUDIT] Found {} crates with issues", reports.len());
+                        trace!("[AUDIT] Found {} crates with issues", reports.len());
                         if let Err(e) = tx.send(CargoDocumentEvent::Audited(reports)).await {
                             error!("[AUDIT] Failed to send Audited event: {}", e);
                         }
@@ -327,10 +326,9 @@ fn parse_audit_text_output(
 
                     if !parent_name_from_path.is_empty() {
                         if let Some(issue) = current_issue.as_mut() {
-                            issue.dependency_paths.insert(
-                                parent_name_from_path.to_string(),
-                                current_path.clone(),
-                            );
+                            issue
+                                .dependency_paths
+                                .insert(parent_name_from_path.to_string(), current_path.clone());
                         }
                     }
                 }
@@ -420,8 +418,11 @@ users = "0.11.0"
 
         // Verify Cargo.lock was created
         let cargo_lock_path = workspace_path.join("Cargo.lock");
-        assert!(cargo_lock_path.exists(), "Cargo.lock should exist after generate-lockfile");
-        
+        assert!(
+            cargo_lock_path.exists(),
+            "Cargo.lock should exist after generate-lockfile"
+        );
+
         // Now test the audit functionality - audit_workspace expects a Cargo.lock URI
         let uri = Uri::try_from_path(&cargo_lock_path).unwrap();
         let canonical_uri = CanonicalUri::try_from(uri).unwrap();

@@ -380,6 +380,7 @@ dependencies = [
  "cargo",
  "cargo-parser",
  "clap",
+ "dashmap 6.1.0",
  "dunce",
  "executable_path_finder",
  "futures",

@@ -96,6 +96,12 @@ To apply these config, you need to restart the lsp.
             "initialization_options": {
                 "decorationFormatter": {}, //see below
                 "audit": {} //see below
+            },
+             "binary": {
+               "path": "/path/to/cargo-appraiser" //path take precedence over settings.version
+            },
+            "settings":{
+              "version": "=0.3.0" //specify the version of cargo-appraiser server to use
             }
         }
     }
