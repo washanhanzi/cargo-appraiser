@@ -46,6 +46,9 @@ impl Queue {
 
     pub fn insert_interactive(&mut self, ctx: Ctx) {
         self.backoff_factor.remove(&ctx.uri);
+        if let Some((_, old_key)) = self.entries.remove(&ctx.uri) {
+            self.expirations.remove(&old_key);
+        }
         let key = self.expirations.insert(
             ctx.uri.clone(),
             Duration::from_millis(self.interactive_timeout),
@@ -57,6 +60,9 @@ impl Queue {
         let factor = self.backoff_factor.entry(ctx.uri.clone()).or_insert(0);
         *factor += 1;
         let timeout = calculate_backoff_timeout(self.background_timeout, *factor);
+        if let Some((_, old_key)) = self.entries.remove(&ctx.uri) {
+            self.expirations.remove(&old_key);
+        }
         let key = self
             .expirations
             .insert(ctx.uri.clone(), Duration::from_millis(timeout));
