@@ -247,10 +247,18 @@ impl<'a> VersionCodeAction<'a> {
                 None,
             );
         } else if v.minor != 0 {
-            // Quickfix is major.minor, so offer major and patch as refactors
+            // Quickfix is major.minor, so offer major, major.minor and patch as refactors
             if self.major_code_action {
                 self.add_code_action(
                     format!("\"{}\"", v.major),
+                    CodeActionKind::REFACTOR,
+                    self.node.range,
+                    None,
+                );
+            }
+            if self.minor_code_action {
+                self.add_code_action(
+                    format!("\"{}.{}\"", v.major, v.minor),
                     CodeActionKind::REFACTOR,
                     self.node.range,
                     None,
