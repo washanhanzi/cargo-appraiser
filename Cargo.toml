@@ -13,7 +13,7 @@ tracing = "0.1.41"
 
 [package]
 name = "cargo-appraiser"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "a LSP for Cargo.toml"
 homepage = "https://github.com/washanhanzi/cargo-appraiser"

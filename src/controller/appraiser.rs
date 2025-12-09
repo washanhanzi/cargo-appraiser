@@ -328,6 +328,12 @@ impl Appraiser {
                         }
                     }
                     CargoDocumentEvent::CargoLockChanged => {
+                        debug!("Appraiser Event: CargoLockChanged");
+                        // Clear audit diagnostics and reset audit timer since lock file changed
+                        diagnostic_controller.clear_audit_diagnostics().await;
+                        if let Err(e) = audit_controller.reset().await {
+                            error!("audit controller reset error: {}", e);
+                        }
                         //clear state except the "current" uri
                         let uris = state.mark_all_dirty();
                         for (uri, rev) in uris {

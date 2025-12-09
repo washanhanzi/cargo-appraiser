@@ -39,9 +39,14 @@ pub struct AuditPayload {
     pub cargo_path: String,
 }
 
+pub(super) enum AuditCommand {
+    Audit(AuditPayload),
+    Reset,
+}
+
 pub struct AuditController {
     tx: Sender<CargoDocumentEvent>,
-    sender: Option<Sender<AuditPayload>>,
+    sender: Option<Sender<AuditCommand>>,
 }
 
 impl AuditController {
@@ -54,15 +59,23 @@ impl AuditController {
         uri: CanonicalUri,
         specs: Vec<PackageIdSpec>,
         cargo_path: &str,
-    ) -> Result<(), SendError<AuditPayload>> {
+    ) -> Result<(), SendError<AuditCommand>> {
         self.sender
             .as_ref()
             .unwrap()
-            .send(AuditPayload {
+            .send(AuditCommand::Audit(AuditPayload {
                 root_manifest_uri: uri,
                 specs,
                 cargo_path: cargo_path.to_string(),
-            })
+            }))
+            .await
+    }
+
+    pub async fn reset(&self) -> Result<(), SendError<AuditCommand>> {
+        self.sender
+            .as_ref()
+            .unwrap()
+            .send(AuditCommand::Reset)
             .await
     }
 
@@ -79,14 +92,25 @@ impl AuditController {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Some(payload) = internal_rx.recv() => {
-                        // Always update with latest data (clears old state)
-                        received_uri = Some(payload.root_manifest_uri.ensure_lock());
-                        specs = Some(payload.specs);
-                        if cargo_path.is_none() {
-                            cargo_path = Some(payload.cargo_path);
+                    Some(cmd) = internal_rx.recv() => {
+                        match cmd {
+                            AuditCommand::Audit(payload) => {
+                                // Always update with latest data (clears old state)
+                                received_uri = Some(payload.root_manifest_uri.ensure_lock());
+                                specs = Some(payload.specs);
+                                if cargo_path.is_none() {
+                                    cargo_path = Some(payload.cargo_path);
+                                }
+                                timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(30))));
+                            }
+                            AuditCommand::Reset => {
+                                // Clear pending audit state and timer
+                                trace!("[AUDIT] Resetting audit timer");
+                                received_uri = None;
+                                specs = None;
+                                timer = None;
+                            }
                         }
-                        timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(30))));
                     }
                     () = async {
                         if let Some(ref mut t) = timer {
