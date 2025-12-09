@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
 use crate::entity::{
-    commit_str, git_ref_str, DependencyKey, DependencyValue, NodeKind, ResolvedDependency,
-    TomlDependency, TomlNode, ValueKind,
+    commit_str, git_ref_str, DependencyKey, DependencyValue, KeyKind, NodeKind, ResolvedDependency,
+    TomlDependency, TomlNode, ValueKind, WorkspaceKey,
 };
 
 pub fn hover(
@@ -39,12 +39,7 @@ pub fn hover(
             })
         }
         // Features hover - show all features
-        NodeKind::Key(key_kind)
-            if matches!(
-                key_kind,
-                crate::entity::KeyKind::Dependency(DependencyKey::Features)
-            ) =>
-        {
+        NodeKind::Key(KeyKind::Dependency(DependencyKey::Features)) => {
             let resolved = resolved?;
             let pkg = resolved.package.as_ref()?;
 
@@ -105,12 +100,7 @@ pub fn hover(
             })
         }
         // Workspace members hover
-        NodeKind::Key(key_kind)
-            if matches!(
-                key_kind,
-                crate::entity::KeyKind::Workspace(crate::entity::WorkspaceKey::Members)
-            ) =>
-        {
+        NodeKind::Key(KeyKind::Workspace(WorkspaceKey::Members)) => {
             let members = members?;
             let member_list = members
                 .iter()

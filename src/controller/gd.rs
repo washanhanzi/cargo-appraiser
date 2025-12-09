@@ -1,7 +1,9 @@
-use tower_lsp::lsp_types::{GotoDefinitionResponse, Location};
+use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Uri};
 
 use crate::{
-    entity::{DependencyKey, DependencyValue, KeyKind, NodeKind, TomlNode, ValueKind},
+    entity::{
+        DependencyKey, DependencyValue, KeyKind, NodeKind, TomlNode, ValueKind, WorkspaceValue,
+    },
     usecase::{Document, Workspace},
 };
 
@@ -10,6 +12,11 @@ pub fn goto_definition(
     doc: &Document,
     node: &TomlNode,
 ) -> Option<GotoDefinitionResponse> {
+    // Check if the node is a workspace member path
+    if let NodeKind::Value(ValueKind::Workspace(WorkspaceValue::Member)) = &node.kind {
+        return goto_workspace_member(doc, node);
+    }
+
     // Check if the node is a workspace = true declaration
     let is_workspace_ref = matches!(
         &node.kind,
@@ -41,4 +48,43 @@ pub fn goto_definition(
     }
 
     None
+}
+
+/// Go to definition for a workspace member path (non-glob)
+fn goto_workspace_member(doc: &Document, node: &TomlNode) -> Option<GotoDefinitionResponse> {
+    let member_path = &node.text;
+
+    // Skip glob patterns
+    if member_path.contains('*') || member_path.contains('?') {
+        return None;
+    }
+
+    // Get the workspace root directory from the document URI
+    let doc_path = doc.canonical_uri.to_path_buf().ok()?;
+    let workspace_root = doc_path.parent()?;
+
+    // Resolve the member path relative to workspace root
+    let member_dir = workspace_root.join(member_path);
+    let cargo_toml = member_dir.join("Cargo.toml");
+
+    // Check if the Cargo.toml exists
+    if !cargo_toml.exists() {
+        return None;
+    }
+
+    let uri = Uri::try_from_path(&cargo_toml).ok()?;
+
+    Some(GotoDefinitionResponse::Scalar(Location {
+        uri,
+        range: Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+    }))
 }

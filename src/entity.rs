@@ -12,6 +12,7 @@ pub use uri::*;
 pub use toml_parser::{
     Dependency as TomlDependency, DependencyKey, DependencyStyle, DependencyTable,
     DependencyValue, KeyKind, NodeKind, TomlNode, TomlTree, ValueKind, WorkspaceKey,
+    WorkspaceValue,
 };
 
 // Re-export types from cargo-parser

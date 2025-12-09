@@ -505,6 +505,10 @@ impl Appraiser {
                         else {
                             continue;
                         };
+
+                        // Set workspace members for hover support
+                        doc.members = Some(output.member_packages.clone());
+
                         diagnostic_controller
                             .clear_cargo_diagnostics(&doc.uri)
                             .await;

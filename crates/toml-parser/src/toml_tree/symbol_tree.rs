@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::Position;
-
 use super::node::TomlNode;
+use tower_lsp::lsp_types::Position;
 
 /// The parsed TOML structure with efficient lookup capabilities.
 ///
@@ -120,9 +119,7 @@ impl SymbolTree {
             let id = &self.position_index[i];
             if let Some(node) = self.nodes.get(id) {
                 // Check if position is before this node's start
-                if (node.range.start.line, node.range.start.character)
-                    > (pos.line, pos.character)
-                {
+                if (node.range.start.line, node.range.start.character) > (pos.line, pos.character) {
                     continue;
                 }
 
@@ -183,9 +180,7 @@ impl SymbolTree {
             }
             let id = &self.position_index[i];
             if let Some(node) = self.nodes.get(id) {
-                if (node.range.start.line, node.range.start.character)
-                    > (pos.line, pos.character)
-                {
+                if (node.range.start.line, node.range.start.character) > (pos.line, pos.character) {
                     continue;
                 }
 

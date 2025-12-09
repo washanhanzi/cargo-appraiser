@@ -27,6 +27,8 @@ pub struct CargoIndex {
     root_manifest: std::path::PathBuf,
     /// Member manifest paths (for workspaces)
     member_manifests: Vec<std::path::PathBuf>,
+    /// Member packages (for workspaces)
+    member_packages: Vec<Package>,
     /// Primary index: lookup by (table, platform, name)
     index: HashMap<DependencyLookupKey, ResolvedDependency>,
 }
@@ -50,6 +52,7 @@ impl CargoIndex {
         // Collect specs and dependencies from workspace members
         let mut specs = Vec::with_capacity(5);
         let mut member_manifests = Vec::with_capacity(5);
+        let mut member_packages = Vec::with_capacity(5);
         let mut deps = HashSet::new();
 
         if let Ok(current) = workspace.current() {
@@ -63,6 +66,7 @@ impl CargoIndex {
             specs.push(member.package_id().to_spec());
             deps.extend(member.dependencies().to_vec());
             member_manifests.push(member.manifest_path().to_path_buf());
+            member_packages.push(member.clone());
         }
 
         if deps.is_empty() {
@@ -172,6 +176,7 @@ impl CargoIndex {
         Ok(Self {
             root_manifest,
             member_manifests,
+            member_packages,
             index,
         })
     }
@@ -356,5 +361,10 @@ impl CargoIndex {
     /// Get member manifest paths.
     pub fn member_manifests(&self) -> &[std::path::PathBuf] {
         &self.member_manifests
+    }
+
+    /// Get member packages.
+    pub fn member_packages(&self) -> &[Package] {
+        &self.member_packages
     }
 }

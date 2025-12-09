@@ -10,5 +10,6 @@ taplo.workspace = true
 tower-lsp.workspace = true
 lsp-async-stub.workspace = true
 serde.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]

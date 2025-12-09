@@ -12,6 +12,7 @@
 
 - Workspace
   - hover on members will show the list of members
+  - go to definition on single non-glob member
 - Dependencies
   - version decorations ![CleanShot 2025-01-14 at 11 55 18@2x](https://github.com/user-attachments/assets/bad3f5ae-6242-4998-9d14-6aed0ebd9845)
   - hover on version will show the available versions ![CleanShot 2025-01-14 at 11 56 04@2x](https://github.com/user-attachments/assets/d04c73f3-9010-4ca4-b2d9-85af6afe4b59)

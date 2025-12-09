@@ -294,7 +294,11 @@ pub enum PackageValue {
 /// Values specific to [workspace] table
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkspaceValue {
+    /// The members array value
     Members,
+    /// A single member path within the members array
+    Member,
+    /// The exclude array value
     Exclude,
     Other,
 }

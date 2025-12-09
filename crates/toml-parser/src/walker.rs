@@ -7,7 +7,7 @@ use tower_lsp::lsp_types::{Position, Range};
 
 use crate::toml_tree::{
     Dependency, DependencyKey, DependencyStyle, DependencyTable, DependencyValue, FeatureEntry,
-    FieldValue, KeyKind, NodeKind, TomlNode, TomlTree, ValueKind,
+    FieldValue, KeyKind, NodeKind, TomlNode, TomlTree, ValueKind, WorkspaceKey, WorkspaceValue,
 };
 
 /// Result of parsing a Cargo.toml file
@@ -154,6 +154,7 @@ impl Walker {
         for (key, value) in entries.iter() {
             let key_name = key.value();
             let entry_id = format!("{}.{}", id, key_name);
+            let key_id = format!("{}.key", entry_id);
 
             match key_name {
                 "dependencies" => {
@@ -165,13 +166,66 @@ impl Walker {
                         None,
                     );
                 }
-                "members" | "exclude" => {
-                    // Array values - just record as generic
+                "members" => {
+                    // Insert key node with WorkspaceKey::Members
+                    let key_range = self.key_to_range(key);
+                    self.tree.insert_node(TomlNode::new(
+                        key_id,
+                        key_range,
+                        key_name.to_string(),
+                        NodeKind::Key(KeyKind::Workspace(WorkspaceKey::Members)),
+                    ));
+
+                    // Walk the members array
+                    self.walk_workspace_members_array(&entry_id, value);
+                }
+                "exclude" => {
+                    // Insert key node with WorkspaceKey::Exclude
+                    let key_range = self.key_to_range(key);
+                    self.tree.insert_node(TomlNode::new(
+                        key_id,
+                        key_range,
+                        key_name.to_string(),
+                        NodeKind::Key(KeyKind::Workspace(WorkspaceKey::Exclude)),
+                    ));
+
+                    // Array values - record as generic for now
                     self.insert_node(&entry_id, value, NodeKind::Value(ValueKind::Array));
                 }
                 _ => {
                     self.insert_node(&entry_id, value, NodeKind::Value(ValueKind::Other));
                 }
+            }
+        }
+    }
+
+    fn walk_workspace_members_array(&mut self, id: &str, node: &Node) {
+        let range = self.to_range(node);
+
+        // Insert the members array node
+        self.tree.insert_node(TomlNode::new(
+            id.to_string(),
+            range,
+            String::new(),
+            NodeKind::Value(ValueKind::Workspace(WorkspaceValue::Members)),
+        ));
+
+        let Node::Array(arr) = node else { return };
+
+        let items = arr.items().read();
+        for (i, item) in items.iter().enumerate() {
+            let member_id = format!("{}.{}", id, i);
+
+            if let Node::Str(s) = item {
+                let member_path = s.value().to_string();
+                let member_range = self.to_range(item);
+
+                self.tree.insert_node(TomlNode::new(
+                    member_id,
+                    member_range,
+                    member_path,
+                    NodeKind::Value(ValueKind::Workspace(WorkspaceValue::Member)),
+                ));
             }
         }
     }
@@ -574,5 +628,50 @@ shared = { workspace = true }
 
         let dep = result.tree.get_dependency("dependencies.shared").unwrap();
         assert!(dep.is_workspace());
+    }
+
+    #[test]
+    fn test_workspace_members() {
+        let toml = r#"
+[workspace]
+members = ["crates/foo", "crates/bar", "tools/*"]
+"#;
+        let result = parse(toml);
+
+        // Check the members key node
+        let members_key = result.tree.get_node("workspace.members.key");
+        assert!(members_key.is_some());
+        let members_key = members_key.unwrap();
+        assert_eq!(
+            members_key.kind,
+            NodeKind::Key(KeyKind::Workspace(WorkspaceKey::Members))
+        );
+
+        // Check the members array value node
+        let members_value = result.tree.get_node("workspace.members");
+        assert!(members_value.is_some());
+        let members_value = members_value.unwrap();
+        assert_eq!(
+            members_value.kind,
+            NodeKind::Value(ValueKind::Workspace(WorkspaceValue::Members))
+        );
+
+        // Check individual member nodes
+        let member0 = result.tree.get_node("workspace.members.0");
+        assert!(member0.is_some());
+        let member0 = member0.unwrap();
+        assert_eq!(member0.text, "crates/foo");
+        assert_eq!(
+            member0.kind,
+            NodeKind::Value(ValueKind::Workspace(WorkspaceValue::Member))
+        );
+
+        let member1 = result.tree.get_node("workspace.members.1");
+        assert!(member1.is_some());
+        assert_eq!(member1.unwrap().text, "crates/bar");
+
+        let member2 = result.tree.get_node("workspace.members.2");
+        assert!(member2.is_some());
+        assert_eq!(member2.unwrap().text, "tools/*");
     }
 }
