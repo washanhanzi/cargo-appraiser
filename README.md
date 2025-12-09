@@ -34,7 +34,7 @@
 
 ```jsonc
 {
-  //the default for light and highContrastLight
+  // the default for light and highContrastLight
   "cargo-appraiser.decorationColor.light": {
       "notParsed": "#808080",
       "latest": "#006400",
@@ -46,7 +46,7 @@
       "yanked": "#FF0000",
       "git": "#800080"
   },
-  //the default for dark and highContrast
+  // the default for dark and highContrast
   "cargo-appraiser.decorationColor.dark": {
       "notParsed": "#808080",
       "latest": "#006400",
@@ -64,12 +64,14 @@
   "cargo-appraiser.decorationColor.highContrast": {
       //same as dark
   },
-  //extra environment variables to pass to the cargo-appraiser server
+  // extra environment variables to pass to the cargo-appraiser server
   "cargo-appraiser.extraEnv": {
     "RUST_LOG": "info"
   },
-  //custom path to the cargo-appraiser server binary. If set, this will be used instead of downloading from GitHub.
+  // custom path to the cargo-appraiser server binary. If set, this will be used instead of downloading from GitHub.
   "cargo-appraiser.serverPath": ""
+  // specific version of cargo-appraiser server to use. Ignored if serverPath is set.
+  "cargo-appraiser.serverVersion": ""
 }
 ```
 
