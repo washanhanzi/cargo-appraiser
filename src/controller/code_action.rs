@@ -38,6 +38,23 @@ pub fn code_action_dependency(
             let version = version_decoration(dep, resolved);
             let mut actions = VersionCodeAction::new(uri, node);
             actions.check_unresolved(resolved);
+
+            // Add cargo update command first (at top) if applicable
+            match version.kind {
+                VersionDecorationKind::MixedUpgradeable
+                | VersionDecorationKind::CompatibleLatest
+                | VersionDecorationKind::Yanked
+                | VersionDecorationKind::Git => {
+                    actions.add_update_command(dep.package_name());
+                }
+                _ => {}
+            }
+
+            // Add simple-to-table refactor second if applicable
+            if dep.style == DependencyStyle::Simple {
+                actions.add_simple_table_refactor(dep, node);
+            }
+
             match version.kind {
                 VersionDecorationKind::Latest => {
                     if let Some(v) = version.latest.as_ref() {
@@ -48,42 +65,40 @@ pub fn code_action_dependency(
                 VersionDecorationKind::NotInstalled => return None,
                 VersionDecorationKind::MixedUpgradeable => {
                     if let Some(v) = version.latest_matched.as_ref() {
-                        actions.add_quickfix(v);
+                        actions.add_upgrade(v);
                     }
                     if let Some(v) = version.latest.as_ref() {
-                        actions.add_quickfix(v);
+                        actions.add_upgrade(v);
                     }
-                    actions.add_update_command(dep.package_name());
                 }
                 VersionDecorationKind::CompatibleLatest => {
                     let v = version.latest.as_ref()?;
                     actions.add_refactor(v);
-                    actions.add_quickfix(v);
-                    actions.add_update_command(dep.package_name());
+                    actions.add_upgrade(v);
                 }
                 VersionDecorationKind::NonCompatibleLatest => {
                     let v = version.latest.as_ref()?;
-                    actions.add_quickfix(v);
+                    actions.add_upgrade(v);
                 }
                 VersionDecorationKind::Yanked => {
                     if let Some(v) = version.latest.as_ref() {
-                        actions.add_quickfix(v);
+                        actions.add_upgrade(v);
                     }
                     if let Some(v) = version.latest_matched.as_ref() {
-                        actions.add_quickfix(v);
+                        actions.add_upgrade(v);
                     }
-                    actions.add_update_command(dep.package_name());
                 }
-                VersionDecorationKind::Git => {
-                    actions.add_update_command(dep.package_name());
-                }
+                VersionDecorationKind::Git => {}
                 VersionDecorationKind::NotParsed => return None,
             };
             actions.add_eq_refactor();
             if let Some(pkg) = resolved.and_then(|r| r.package.as_ref()) {
                 actions.add_precise_eq_refactor(pkg.version());
             }
-            actions.add_simple_table_refactor(dep, node);
+            // Add table-to-simple refactor at the end if applicable
+            if dep.style == DependencyStyle::Table {
+                actions.add_simple_table_refactor(dep, node);
+            }
 
             Some(actions.take())
         }
@@ -203,47 +218,99 @@ impl<'a> VersionCodeAction<'a> {
 
     fn add_precise_eq_refactor(&mut self, v: &Version) {
         if !self.is_precise {
-            self.add_code_action(
-                format!("\"={}\"", v),
-                CodeActionKind::REFACTOR,
-                self.node.range,
-                None,
-            );
+            // Avoid duplicate if the precise version matches the current version text
+            let precise = format!("\"={}\"", v);
+            let current_eq = format!("\"={}\"", strip_quotes(&self.node.text));
+            if precise != current_eq {
+                self.add_code_action(precise, CodeActionKind::REFACTOR, self.node.range, None);
+            }
         }
     }
 
     fn add_refactor(&mut self, v: &Version) {
-        if self.major_code_action {
+        // Add alternative version formats as refactor options
+        // Skip the format that's already offered as quickfix
+        if v.major >= 1 {
+            // Quickfix is major, so offer minor and patch as refactors
+            if self.minor_code_action {
+                self.add_code_action(
+                    format!("\"{}.{}\"", v.major, v.minor),
+                    CodeActionKind::REFACTOR,
+                    self.node.range,
+                    None,
+                );
+            }
+            self.add_code_action(
+                format!("\"{}\"", v),
+                CodeActionKind::REFACTOR,
+                self.node.range,
+                None,
+            );
+        } else if v.minor != 0 {
+            // Quickfix is major.minor, so offer major and patch as refactors
+            if self.major_code_action {
+                self.add_code_action(
+                    format!("\"{}\"", v.major),
+                    CodeActionKind::REFACTOR,
+                    self.node.range,
+                    None,
+                );
+            }
+            self.add_code_action(
+                format!("\"{}\"", v),
+                CodeActionKind::REFACTOR,
+                self.node.range,
+                None,
+            );
+        } else {
+            // v.major == 0 && v.minor == 0: quickfix is full version
+            // Offer major and major.minor as refactors
+            if self.major_code_action {
+                self.add_code_action(
+                    format!("\"{}\"", v.major),
+                    CodeActionKind::REFACTOR,
+                    self.node.range,
+                    None,
+                );
+            }
+            if self.minor_code_action {
+                self.add_code_action(
+                    format!("\"{}.{}\"", v.major, v.minor),
+                    CodeActionKind::REFACTOR,
+                    self.node.range,
+                    None,
+                );
+            }
+        }
+    }
+
+    fn add_upgrade(&mut self, v: &Version) {
+        // Offer the recommended compatible version format based on semver conventions
+        if v.major >= 1 {
+            // For major >= 1, major version is compatible
             self.add_code_action(
                 format!("\"{}\"", v.major),
                 CodeActionKind::REFACTOR,
                 self.node.range,
                 None,
             );
-        }
-        if self.minor_code_action {
+        } else if v.minor != 0 {
+            // For 0.x.y where x != 0, major.minor is compatible
             self.add_code_action(
                 format!("\"{}.{}\"", v.major, v.minor),
                 CodeActionKind::REFACTOR,
                 self.node.range,
                 None,
             );
+        } else {
+            // For 0.0.x, full version is needed
+            self.add_code_action(
+                format!("\"{}\"", v),
+                CodeActionKind::REFACTOR,
+                self.node.range,
+                None,
+            );
         }
-    }
-
-    fn add_quickfix(&mut self, v: &Version) {
-        self.add_code_action(
-            format!("\"{}.{}\"", v.major, v.minor),
-            CodeActionKind::QUICKFIX,
-            self.node.range,
-            None,
-        );
-        self.add_code_action(
-            format!("\"{}\"", v),
-            CodeActionKind::QUICKFIX,
-            self.node.range,
-            None,
-        );
     }
 
     fn add_code_action(
