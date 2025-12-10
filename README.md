@@ -69,7 +69,7 @@
     "RUST_LOG": "info"
   },
   // custom path to the cargo-appraiser server binary. If set, this will be used instead of downloading from GitHub.
-  "cargo-appraiser.serverPath": ""
+  "cargo-appraiser.serverPath": "",
   // specific version of cargo-appraiser server to use. Ignored if serverPath is set.
   "cargo-appraiser.serverVersion": ""
 }
