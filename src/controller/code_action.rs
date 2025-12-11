@@ -92,8 +92,8 @@ pub fn code_action_dependency(
                 VersionDecorationKind::NotParsed => return None,
             };
             actions.add_eq_refactor();
-            if let Some(pkg) = resolved.and_then(|r| r.package.as_ref()) {
-                actions.add_precise_eq_refactor(pkg.version());
+            if let Some(version) = resolved.and_then(|r| r.installed_version()) {
+                actions.add_precise_eq_refactor(&version);
             }
             // Add table-to-simple refactor at the end if applicable
             if dep.style == DependencyStyle::Table {

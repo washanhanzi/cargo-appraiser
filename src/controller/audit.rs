@@ -5,7 +5,6 @@ use std::{
     time::Duration,
 };
 
-use cargo::core::PackageIdSpec;
 use regex::Regex;
 use tokio::{
     sync::mpsc::{self, error::SendError, Sender},
@@ -35,7 +34,8 @@ fn root_line_re() -> &'static Regex {
 
 pub struct AuditPayload {
     pub root_manifest_uri: CanonicalUri,
-    pub specs: Vec<PackageIdSpec>,
+    /// Workspace member package names
+    pub member_names: Vec<String>,
     pub cargo_path: String,
 }
 
@@ -57,7 +57,7 @@ impl AuditController {
     pub async fn send(
         &self,
         uri: CanonicalUri,
-        specs: Vec<PackageIdSpec>,
+        member_names: Vec<String>,
         cargo_path: &str,
     ) -> Result<(), SendError<AuditCommand>> {
         self.sender
@@ -65,7 +65,7 @@ impl AuditController {
             .unwrap()
             .send(AuditCommand::Audit(AuditPayload {
                 root_manifest_uri: uri,
-                specs,
+                member_names,
                 cargo_path: cargo_path.to_string(),
             }))
             .await
@@ -83,7 +83,7 @@ impl AuditController {
         //create a mpsc channel
         let (internal_tx, mut internal_rx) = mpsc::channel(32);
         let mut received_uri = None;
-        let mut specs = None;
+        let mut member_names: Option<Vec<String>> = None;
         self.sender = Some(internal_tx);
         let tx = self.tx.clone();
         let mut cargo_path: Option<String> = None;
@@ -97,7 +97,7 @@ impl AuditController {
                             AuditCommand::Audit(payload) => {
                                 // Always update with latest data (clears old state)
                                 received_uri = Some(payload.root_manifest_uri.ensure_lock());
-                                specs = Some(payload.specs);
+                                member_names = Some(payload.member_names);
                                 if cargo_path.is_none() {
                                     cargo_path = Some(payload.cargo_path);
                                 }
@@ -107,7 +107,7 @@ impl AuditController {
                                 // Clear pending audit state and timer
                                 trace!("[AUDIT] Resetting audit timer");
                                 received_uri = None;
-                                specs = None;
+                                member_names = None;
                                 timer = None;
                             }
                         }
@@ -121,9 +121,9 @@ impl AuditController {
                     }, if timer.is_some() => {
                         timer = None;
                         let uri = received_uri.take().unwrap();
-                        let specs_to_audit = specs.take().unwrap();
+                        let names_to_audit = member_names.take().unwrap();
                         trace!("[AUDIT] Running audit for: {}", uri.as_str());
-                        let reports = match audit_workspace(&uri, &specs_to_audit, cargo_path.as_deref().unwrap_or("cargo")).await {
+                        let reports = match audit_workspace(&uri, &names_to_audit, cargo_path.as_deref().unwrap_or("cargo")).await {
                             Ok(r) => r,
                             Err(e) => {
                                 error!("[AUDIT] Failed to audit workspace: {}", e);
@@ -236,7 +236,7 @@ pub enum AuditKind {
 #[tracing::instrument(name = "audit_workspace", level = "trace")]
 pub async fn audit_workspace(
     cargo_lock_uri: &CanonicalUri,
-    specs: &[PackageIdSpec],
+    member_names: &[String],
     cargo_path: &str,
 ) -> Result<AuditReports, anyhow::Error> {
     let Ok(manifest_path) = cargo_lock_uri.to_path_buf() else {
@@ -264,7 +264,7 @@ pub async fn audit_workspace(
     }
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
-    let workspace_members_refs: Vec<&str> = specs.iter().map(|s| s.name()).collect();
+    let workspace_members_refs: Vec<&str> = member_names.iter().map(|s| s.as_str()).collect();
     let parsed_issues = parse_audit_text_output(&stdout_str, &workspace_members_refs)?;
 
     Ok(parsed_issues)
@@ -392,7 +392,6 @@ fn save_current_issue(
 mod tests {
     use std::collections::HashMap;
 
-    use cargo::core::PackageIdSpec;
     use tower_lsp::lsp_types::Uri;
 
     use crate::entity::CanonicalUri;
@@ -453,7 +452,7 @@ users = "0.11.0"
 
         let res = audit_workspace(
             &canonical_uri,
-            &[PackageIdSpec::new("test-package".to_string())],
+            &["test-package".to_string()],
             "cargo",
         )
         .await;

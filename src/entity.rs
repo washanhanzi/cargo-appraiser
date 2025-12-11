@@ -1,11 +1,9 @@
 mod cargo_error;
 mod command;
-mod package;
 mod uri;
 
 pub use cargo_error::*;
 pub use command::*;
-pub use package::*;
 pub use uri::*;
 
 // Re-export types from toml-parser
@@ -16,4 +14,6 @@ pub use toml_parser::{
 };
 
 // Re-export types from cargo-parser
-pub use cargo_parser::{CargoIndex, DependencyLookupKey, ResolvedDependency};
+pub use cargo_parser::{
+    CargoIndex, DependencyLookupKey, ResolvedDependency, SourceKind, WorkspaceMember,
+};

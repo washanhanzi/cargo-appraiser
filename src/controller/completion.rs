@@ -4,7 +4,9 @@ use tower_lsp::lsp_types::{
     TextEdit,
 };
 
-use crate::entity::{DependencyValue, NodeKind, ResolvedDependency, TomlDependency, TomlNode, ValueKind};
+use crate::entity::{
+    DependencyValue, NodeKind, ResolvedDependency, TomlDependency, TomlNode, ValueKind,
+};
 
 pub async fn completion(
     node: &TomlNode,
@@ -30,52 +32,44 @@ pub async fn completion(
             let versions: Vec<_> = available_versions
                 .iter()
                 .enumerate()
-                .map(|(index, version)| {
-                    CompletionItem {
-                        label: version.clone(),
-                        kind: Some(CompletionItemKind::CONSTANT),
-                        detail: Some(version.clone()),
-                        documentation: None,
-                        sort_text: Some(format!("{:04}", index)),
-                        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                            range: Range::new(
-                                Position::new(
-                                    node.range.start.line,
-                                    node.range.start.character + 1,
-                                ),
-                                Position::new(node.range.end.line, node.range.end.character - 1),
-                            ),
-                            new_text: version.clone(),
-                        })),
-                        ..Default::default()
-                    }
+                .map(|(index, version)| CompletionItem {
+                    label: version.clone(),
+                    kind: Some(CompletionItemKind::CONSTANT),
+                    detail: Some(version.clone()),
+                    documentation: None,
+                    sort_text: Some(format!("{:04}", index)),
+                    text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                        range: Range::new(
+                            Position::new(node.range.start.line, node.range.start.character + 1),
+                            Position::new(node.range.end.line, node.range.end.character - 1),
+                        ),
+                        new_text: version.clone(),
+                    })),
+                    ..Default::default()
                 })
                 .collect();
             Some(CompletionResponse::Array(versions))
         }
         NodeKind::Value(ValueKind::Dependency(DependencyValue::Feature)) => {
-            let pkg = resolved.package.as_ref()?;
-            let features: Vec<_> = pkg
-                .manifest()
-                .summary()
-                .features()
+            let features = resolved.features()?;
+            let feature_items: Vec<_> = features
                 .keys()
                 .map(|s| CompletionItem {
-                    label: s.to_string(),
+                    label: s.clone(),
                     kind: Some(CompletionItemKind::CONSTANT),
-                    detail: Some(s.to_string()),
+                    detail: Some(s.clone()),
                     documentation: None,
                     text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                         range: Range::new(
                             Position::new(node.range.start.line, node.range.start.character + 1),
                             Position::new(node.range.end.line, node.range.end.character - 1),
                         ),
-                        new_text: s.to_string(),
+                        new_text: s.clone(),
                     })),
                     ..Default::default()
                 })
                 .collect();
-            Some(CompletionResponse::Array(features))
+            Some(CompletionResponse::Array(feature_items))
         }
         _ => None,
     }

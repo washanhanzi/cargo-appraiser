@@ -119,7 +119,7 @@ To apply these config, you need to restart the lsp.
   /// the formatter has 7 fields:
   /// latest: the dependency has the latest version installed
   /// local: the dependency is a local path dependency
-  /// not_installed: the dependency is not installed maybe because of platform mismatch
+  /// not_resolved: the dependency is not resolved (platform mismatch or not used by any member)
   /// loading: the dependency is loading
   /// mixed_upgradeable: the installed version has an compatible upgrade, but the latest version is not compatible with the current version requirement
   /// compatible_latest: the installed version can update to latest version
@@ -140,7 +140,7 @@ To apply these config, you need to restart the lsp.
   "decorationFormatter": {
     "latest": "✅ {{installed}}",
     "local": "Local",
-    "not_installed": "Not installed",
+    "not_resolved": "Not Resolved",
     "waiting": "Waiting...",
     "mixed_upgradeable": "🚀🔒 {{installed}} -> {{latest_matched}},  {{latest}}",
     "compatible_latest": "🚀 {{installed}} -> {{latest}}",

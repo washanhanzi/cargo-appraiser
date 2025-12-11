@@ -16,10 +16,10 @@
 //! ## Data Model
 //!
 //! For each dependency declared in Cargo.toml, `CargoIndex` provides:
-//! - `package`: The resolved/installed Package (if installed)
+//! - `package`: The resolved/installed ResolvedPackage (if installed)
 //! - `available_versions`: All versions from registry (for completion/hover)
-//! - `latest_matched_summary`: Latest version compatible with version requirement
-//! - `latest_summary`: Absolute latest version (may be incompatible)
+//! - `latest_matched_version`: Latest version compatible with version requirement
+//! - `latest_version`: Absolute latest version (may be incompatible)
 //!
 //! ## Example
 //!
@@ -34,7 +34,7 @@
 //! let key = DependencyLookupKey::new(DependencyTable::Dependencies, None, "serde");
 //! if let Some(resolved) = index.get(&key) {
 //!     if let Some(pkg) = &resolved.package {
-//!         println!("Installed: {}", pkg.version());
+//!         println!("Installed: {}", pkg.version);
 //!     }
 //!     if resolved.has_compatible_upgrade() {
 //!         println!("Upgrade available!");
@@ -50,13 +50,18 @@
 //! | `get()` by key | O(1) |
 //! | `iter()` | O(n) |
 
+pub mod entity;
 mod error;
 mod index;
 mod query;
 
+pub use entity::{
+    FeatureMap, ResolvedPackage, SerializableCargoIndex, SourceKind, VersionSummary,
+    WorkspaceMember,
+};
 pub use error::CargoResolveError;
 pub use index::CargoIndex;
 pub use query::{dep_kind_to_table, DependencyLookupKey, DependencyTable, ResolvedDependency};
 
-// Re-export cargo types for convenience
-pub use cargo::core::{Package, Summary};
+// Re-export cargo Package for workspace member access (still needed for member_packages)
+pub use cargo::core::Package;

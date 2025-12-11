@@ -4,6 +4,7 @@ use tower_lsp::lsp_types::{Position, Range, Uri};
 
 use crate::entity::{
     CanonicalUri, DependencyLookupKey, ResolvedDependency, TomlDependency, TomlNode, TomlTree,
+    WorkspaceMember,
 };
 
 /// Represents a parsed Cargo.toml document with resolution status.
@@ -21,7 +22,7 @@ pub struct Document {
     /// Parsing errors from toml-parser
     pub parsing_errors: Vec<toml_parser::ParseError>,
     /// Workspace members (populated after cargo resolution)
-    pub members: Option<Vec<cargo::core::package::Package>>,
+    pub members: Option<Vec<WorkspaceMember>>,
 }
 
 impl Document {

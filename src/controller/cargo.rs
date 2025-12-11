@@ -9,7 +9,7 @@ use tracing::error;
 
 use crate::entity::{
     CargoError, CargoErrorKind, CargoIndex, CanonicalUri, DependencyLookupKey, TomlDependency,
-    TomlNode, TomlTree,
+    TomlNode, TomlTree, WorkspaceMember,
 };
 
 use super::appraiser::Ctx;
@@ -20,7 +20,7 @@ pub struct CargoResolveOutput {
     pub ctx: Ctx,
     pub root_manifest_uri: CanonicalUri,
     pub member_manifest_uris: Vec<CanonicalUri>,
-    pub member_packages: Vec<cargo::core::Package>,
+    pub members: Vec<WorkspaceMember>,
     pub index: CargoIndex,
 }
 
@@ -46,13 +46,13 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         .filter_map(|p| CanonicalUri::try_from_path(p).ok())
         .collect();
 
-    let member_packages = index.member_packages().to_vec();
+    let members = index.members().to_vec();
 
     Ok(CargoResolveOutput {
         ctx: ctx.clone(),
         root_manifest_uri,
         member_manifest_uris,
-        member_packages,
+        members,
         index,
     })
 }

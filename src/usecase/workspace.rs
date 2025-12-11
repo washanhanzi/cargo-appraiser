@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use cargo::core::PackageIdSpec;
 use tower_lsp::lsp_types::Uri;
 
 use crate::entity::CanonicalUri;
@@ -9,7 +8,8 @@ use super::document::Document;
 
 pub struct Workspace {
     pub documents: HashMap<CanonicalUri, Document>,
-    pub specs: Vec<PackageIdSpec>,
+    /// Workspace member package names (for audit)
+    pub member_names: Vec<String>,
     pub root_manifest_uri: Option<CanonicalUri>,
     pub member_manifest_uris: Vec<CanonicalUri>,
     pub uris: HashMap<CanonicalUri, Uri>,
@@ -19,7 +19,7 @@ impl Workspace {
     pub fn new() -> Self {
         Self {
             documents: HashMap::new(),
-            specs: Vec::new(),
+            member_names: Vec::new(),
             root_manifest_uri: None,
             member_manifest_uris: Vec::new(),
             uris: HashMap::new(),
@@ -73,7 +73,7 @@ impl Workspace {
 
         // Clear workspace-level state when all documents are closed
         if self.documents.is_empty() {
-            self.specs.clear();
+            self.member_names.clear();
             self.root_manifest_uri = None;
             self.member_manifest_uris.clear();
         }

@@ -1,6 +1,5 @@
 use std::{env, str::FromStr};
 
-use cargo::core::PackageIdSpec;
 use tokio::sync::{
     mpsc::{self, Sender},
     oneshot,
@@ -191,7 +190,7 @@ impl Appraiser {
                                         if required_version.is_empty() {
                                             continue;
                                         }
-                                        if required_version == pkg.version().to_string() {
+                                        if required_version == pkg.version {
                                             let Some(entry_node) = doc.entry(&dep.id) else {
                                                 continue;
                                             };
@@ -355,22 +354,23 @@ impl Appraiser {
                         };
                         //when Cargo.toml changed, clear audit diagnostics
                         diagnostic_controller.clear_audit_diagnostics().await;
-                        let doc = match state.update(
-                            msg.uri.clone(),
-                            canonical_uri.clone(),
-                            &msg.text,
-                        ) {
-                            Ok(doc) => doc,
-                            Err(err) => {
-                                for e in err {
-                                    let diag = parse_error_to_diagnostic(&e);
-                                    diagnostic_controller
-                                        .add_parse_diagnostic(&msg.uri, &format!("parse_error_{}", e.message), diag)
-                                        .await;
+                        let doc =
+                            match state.update(msg.uri.clone(), canonical_uri.clone(), &msg.text) {
+                                Ok(doc) => doc,
+                                Err(err) => {
+                                    for e in err {
+                                        let diag = parse_error_to_diagnostic(&e);
+                                        diagnostic_controller
+                                            .add_parse_diagnostic(
+                                                &msg.uri,
+                                                &format!("parse_error_{}", e.message),
+                                                diag,
+                                            )
+                                            .await;
+                                    }
+                                    continue;
                                 }
-                                continue;
-                            }
-                        };
+                            };
                         if let Err(e) = debouncer
                             .send_background(Ctx {
                                 uri: canonical_uri,
@@ -486,20 +486,20 @@ impl Appraiser {
                         }
                         state.root_manifest_uri = Some(root_manifest_uri.clone());
 
-                        // Build specs from index for audit
-                        let specs: Vec<PackageIdSpec> = output.index.iter()
-                            .filter_map(|(_, resolved)| {
-                                resolved.package.as_ref().map(|p| p.package_id().to_spec())
-                            })
+                        // Build member names for audit
+                        let member_names: Vec<String> = output
+                            .members
+                            .iter()
+                            .map(|m| m.name.clone())
                             .collect();
-                        state.specs = specs.clone();
+                        state.member_names = member_names.clone();
                         state.member_manifest_uris = output.member_manifest_uris.clone();
 
                         // Send audit event
                         if !GLOBAL_CONFIG.read().unwrap().audit.disabled {
                             trace!("[AUDIT] Sending audit request");
                             if let Err(e) = audit_controller
-                                .send(root_manifest_uri, state.specs.clone(), &cargo_path)
+                                .send(root_manifest_uri, state.member_names.clone(), &cargo_path)
                                 .await
                             {
                                 error!("audit controller send error: {}", e);
@@ -513,7 +513,7 @@ impl Appraiser {
                         };
 
                         // Set workspace members for hover support
-                        doc.members = Some(output.member_packages.clone());
+                        doc.members = Some(output.members.clone());
 
                         diagnostic_controller
                             .clear_cargo_diagnostics(&doc.uri)
@@ -538,8 +538,19 @@ impl Appraiser {
                             };
 
                             // Create lookup key and get resolution from index
-                            let lookup_key = make_lookup_key(dep);
-                            if let Some(resolved) = output.index.get(&lookup_key) {
+                            // For workspace dependencies, use name-only lookup since the table
+                            // in toml-parser (always Dependencies) may not match how member
+                            // packages actually use the dependency
+                            let resolved = if doc.is_workspace_dep(dep) {
+                                output.index.find_by_name(
+                                    dep.package_name(),
+                                    dep.platform.as_deref(),
+                                )
+                            } else {
+                                let lookup_key = make_lookup_key(dep);
+                                output.index.get(&lookup_key)
+                            };
+                            if let Some(resolved) = resolved {
                                 doc.set_resolved(&dep_id, resolved.clone());
                             }
 

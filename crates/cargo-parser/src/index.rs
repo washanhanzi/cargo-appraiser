@@ -7,7 +7,7 @@ use std::task::Poll;
 use cargo::core::compiler::{CompileKind, RustcTargetData};
 use cargo::core::dependency::DepKind;
 use cargo::core::resolver::{CliFeatures, ForceAllTargets, HasDevUnits};
-use cargo::core::{Dependency, Package, Summary};
+use cargo::core::{Dependency, Package, SourceId, Summary};
 use cargo::ops::tree::{DisplayDepth, EdgeKind, Prefix, Target, TreeOptions};
 use cargo::ops::Packages;
 use cargo::sources::source::{QueryKind, Source};
@@ -17,6 +17,7 @@ use cargo::util::{OptVersionReq, VersionExt};
 use cargo::GlobalContext;
 use tracing::{error, trace, warn};
 
+use crate::entity::{ResolvedPackage, SourceKind, VersionSummary};
 use crate::error::CargoResolveError;
 use crate::query::{dep_kind_to_table, DependencyLookupKey, ResolvedDependency};
 
@@ -27,19 +28,59 @@ pub struct CargoIndex {
     root_manifest: std::path::PathBuf,
     /// Member manifest paths (for workspaces)
     member_manifests: Vec<std::path::PathBuf>,
-    /// Member packages (for workspaces)
+    /// Member packages (for workspaces) - only populated when using resolve_direct
     member_packages: Vec<Package>,
+    /// Workspace members (name and manifest path) - populated from either resolve or resolve_direct
+    members: Vec<crate::entity::WorkspaceMember>,
     /// Primary index: lookup by (table, platform, name)
     index: HashMap<DependencyLookupKey, ResolvedDependency>,
 }
 
 impl CargoIndex {
-    /// Resolve dependencies from the given manifest path.
+    /// Resolve dependencies from the given manifest path using a subprocess.
     ///
-    /// This runs cargo's resolution process and builds an index for fast lookups.
+    /// This spawns the current executable with the "resolve" subcommand to run
+    /// cargo resolution in an isolated process. This prevents memory leaks from
+    /// cargo's InternedString cache accumulating in the long-lived LSP process.
     #[tracing::instrument(name = "cargo_resolve", level = "trace")]
     pub fn resolve(manifest_path: &Path) -> Result<Self, CargoResolveError> {
-        trace!("Entering cargo_resolve for manifest path: {:?}", manifest_path);
+        use std::process::Command;
+
+        let current_exe = std::env::current_exe().map_err(|e| {
+            CargoResolveError::resolve(anyhow::anyhow!("Failed to get current exe: {}", e))
+        })?;
+
+        let output = Command::new(&current_exe)
+            .arg("resolve")
+            .arg(manifest_path)
+            .output()
+            .map_err(|e| {
+                CargoResolveError::resolve(anyhow::anyhow!("Failed to spawn worker: {}", e))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(CargoResolveError::resolve(anyhow::anyhow!("{}", stderr)));
+        }
+
+        let serializable: crate::entity::SerializableCargoIndex =
+            serde_json::from_slice(&output.stdout).map_err(|e| {
+                CargoResolveError::resolve(anyhow::anyhow!("Failed to parse worker output: {}", e))
+            })?;
+
+        Ok(Self::from_serializable(serializable))
+    }
+
+    /// Resolve dependencies directly (without subprocess).
+    ///
+    /// This is used by the worker subprocess. Do not call this from the LSP server
+    /// as it will cause memory leaks from cargo's InternedString cache.
+    #[tracing::instrument(name = "cargo_resolve_direct", level = "trace")]
+    pub fn resolve_direct(manifest_path: &Path) -> Result<Self, CargoResolveError> {
+        trace!(
+            "Entering cargo_resolve for manifest path: {:?}",
+            manifest_path
+        );
 
         let gctx = GlobalContext::default().map_err(CargoResolveError::global_context)?;
 
@@ -56,7 +97,10 @@ impl CargoIndex {
         let mut deps = HashSet::new();
 
         if let Ok(current) = workspace.current() {
-            trace!("Processing current workspace package: {:?}", current.package_id());
+            trace!(
+                "Processing current workspace package: {:?}",
+                current.package_id()
+            );
             specs.push(current.package_id().to_spec());
             deps.extend(current.dependencies().to_vec());
         }
@@ -118,7 +162,11 @@ impl CargoIndex {
         let mut attempts = 0;
         let _guard = loop {
             attempts += 1;
-            trace!("Attempting to acquire package cache lock (attempt {}/{})", attempts, MAX_RETRIES);
+            trace!(
+                "Attempting to acquire package cache lock (attempt {}/{})",
+                attempts,
+                MAX_RETRIES
+            );
 
             match gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive) {
                 Ok(guard) => {
@@ -158,25 +206,36 @@ impl CargoIndex {
         );
 
         // Build package lookup map
-        let packages: HashMap<String, Vec<Package>> = ws_resolve
-            .pkg_set
-            .packages()
-            .fold(HashMap::new(), |mut acc, pkg| {
-                acc.entry(pkg.name().to_string())
-                    .or_default()
-                    .push(pkg.clone());
-                acc
-            });
+        let packages: HashMap<String, Vec<Package>> =
+            ws_resolve
+                .pkg_set
+                .packages()
+                .fold(HashMap::new(), |mut acc, pkg| {
+                    acc.entry(pkg.name().to_string())
+                        .or_default()
+                        .push(pkg.clone());
+                    acc
+                });
 
         // Query registries and build the index
         let index = Self::build_index(&gctx, deps, source_deps, &packages);
 
         trace!("Built index with {} entries", index.len());
 
+        // Build members list from member_packages
+        let members: Vec<crate::entity::WorkspaceMember> = member_packages
+            .iter()
+            .map(|p| crate::entity::WorkspaceMember {
+                name: p.name().to_string(),
+                manifest_path: p.manifest_path().to_path_buf(),
+            })
+            .collect();
+
         Ok(Self {
             root_manifest,
             member_manifests,
             member_packages,
+            members,
             index,
         })
     }
@@ -218,13 +277,18 @@ impl CargoIndex {
                 let key = DependencyLookupKey {
                     table: dep_kind_to_table(dep.kind()),
                     platform: dep.platform().map(|p| p.to_string()),
-                    name: dep.name_in_toml().to_string(),
+                    name: dep.package_name().to_string(),
                 };
 
                 // Find the installed package for this dependency
-                let package = packages
+                let cargo_package = packages
                     .get(&dep.package_name().to_string())
                     .and_then(|pkgs| pkgs.iter().find(|p| dep.matches(p.summary())).cloned());
+
+                // Convert cargo Package to our ResolvedPackage
+                let package = cargo_package
+                    .as_ref()
+                    .map(|pkg| Self::package_to_resolved(pkg));
 
                 // Query registry for all versions
                 let mut query_dep = dep.clone();
@@ -233,7 +297,11 @@ impl CargoIndex {
                 let dep_query = source.query_vec(&query_dep, QueryKind::Normalized);
 
                 if let Err(e) = source.block_until_ready() {
-                    error!("Failed to complete query for {}: {:?}", dep.package_name(), e);
+                    error!(
+                        "Failed to complete query for {}: {:?}",
+                        dep.package_name(),
+                        e
+                    );
                     continue;
                 }
 
@@ -253,19 +321,20 @@ impl CargoIndex {
                             .collect();
 
                         // Process summaries to find latest_matched and latest
-                        let (latest_matched_summary, latest_summary) = if let Some(pkg) = &package {
-                            Self::find_summaries(&summaries_vec, pkg.version(), &dep)
-                        } else {
-                            (None, None)
-                        };
+                        let (latest_matched_version, latest_version) =
+                            if let Some(pkg) = &cargo_package {
+                                Self::find_summaries(&summaries_vec, pkg.version(), &dep)
+                            } else {
+                                (None, None)
+                            };
 
                         index.insert(
                             key,
                             ResolvedDependency {
                                 package,
                                 available_versions,
-                                latest_matched_summary,
-                                latest_summary,
+                                latest_matched_version,
+                                latest_version,
                             },
                         );
                     }
@@ -277,8 +346,8 @@ impl CargoIndex {
                             ResolvedDependency {
                                 package,
                                 available_versions: vec![],
-                                latest_matched_summary: None,
-                                latest_summary: None,
+                                latest_matched_version: None,
+                                latest_version: None,
                             },
                         );
                     }
@@ -292,14 +361,75 @@ impl CargoIndex {
         index
     }
 
-    /// Find latest_matched and latest summaries from sorted summaries list.
+    /// Convert a cargo Package to our serializable ResolvedPackage.
+    fn package_to_resolved(pkg: &Package) -> ResolvedPackage {
+        let source_id = pkg.package_id().source_id();
+        let source = Self::source_id_to_kind(&source_id);
+
+        let features = pkg
+            .manifest()
+            .summary()
+            .features()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.iter().map(|fv| fv.to_string()).collect()))
+            .collect();
+
+        ResolvedPackage {
+            version: pkg.version().to_string(),
+            source,
+            features,
+        }
+    }
+
+    /// Convert a cargo SourceId to our serializable SourceKind.
+    fn source_id_to_kind(source_id: &SourceId) -> SourceKind {
+        use cargo::core::SourceKind as CargoSourceKind;
+
+        match source_id.kind() {
+            CargoSourceKind::Path => SourceKind::Path,
+            CargoSourceKind::Directory => SourceKind::Directory,
+            CargoSourceKind::Git(_) => {
+                let reference = source_id
+                    .git_reference()
+                    .and_then(|r| r.pretty_ref(false).map(|s| s.to_string()));
+                let full_commit = source_id.precise_git_fragment().map(|s| s.to_string());
+                let short_commit = full_commit.as_ref().map(|c| {
+                    if c.len() >= 7 {
+                        c[..7].to_string()
+                    } else {
+                        c.clone()
+                    }
+                });
+
+                SourceKind::Git {
+                    reference,
+                    short_commit,
+                    full_commit,
+                }
+            }
+            CargoSourceKind::Registry | CargoSourceKind::SparseRegistry => {
+                if source_id.is_crates_io() {
+                    SourceKind::CratesIo
+                } else {
+                    SourceKind::Registry {
+                        name: source_id.display_registry_name(),
+                    }
+                }
+            }
+            CargoSourceKind::LocalRegistry => SourceKind::Registry {
+                name: "local".to_string(),
+            },
+        }
+    }
+
+    /// Find latest_matched and latest version summaries from sorted summaries list.
     fn find_summaries(
         summaries: &[Summary],
         installed_version: &semver::Version,
         dep: &Dependency,
-    ) -> (Option<Summary>, Option<Summary>) {
-        let mut latest_summary = None;
-        let mut latest_matched_summary = None;
+    ) -> (Option<VersionSummary>, Option<VersionSummary>) {
+        let mut latest_version = None;
+        let mut latest_matched_version = None;
 
         // Extract version requirement
         let version_req = match dep.version_req() {
@@ -309,28 +439,29 @@ impl CargoIndex {
 
         for summary in summaries {
             // Find latest (considering prerelease preference)
-            if latest_summary.is_none()
+            if latest_version.is_none()
                 && summary.version().is_prerelease() == installed_version.is_prerelease()
             {
-                latest_summary = Some(summary.clone());
+                latest_version = Some(VersionSummary::new(summary.version().to_string()));
             }
 
             // Find latest that matches version requirement
-            if latest_matched_summary.is_none() {
+            if latest_matched_version.is_none() {
                 if let Some(req) = version_req {
                     if req.matches(summary.version()) {
-                        latest_matched_summary = Some(summary.clone());
+                        latest_matched_version =
+                            Some(VersionSummary::new(summary.version().to_string()));
                     }
                 }
             }
 
             // Early exit if both found
-            if latest_summary.is_some() && latest_matched_summary.is_some() {
+            if latest_version.is_some() && latest_matched_version.is_some() {
                 break;
             }
         }
 
-        (latest_matched_summary, latest_summary)
+        (latest_matched_version, latest_version)
     }
 
     /// Returns the number of dependencies in the index.
@@ -366,5 +497,68 @@ impl CargoIndex {
     /// Get member packages.
     pub fn member_packages(&self) -> &[Package] {
         &self.member_packages
+    }
+
+    /// Convert to serializable format for IPC.
+    pub fn to_serializable(&self) -> crate::entity::SerializableCargoIndex {
+        crate::entity::SerializableCargoIndex {
+            root_manifest: self.root_manifest.clone(),
+            member_manifests: self.member_manifests.clone(),
+            members: self
+                .member_packages
+                .iter()
+                .map(|p| crate::entity::WorkspaceMember {
+                    name: p.name().to_string(),
+                    manifest_path: p.manifest_path().to_path_buf(),
+                })
+                .collect(),
+            dependencies: self.index.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        }
+    }
+
+    /// Construct from serializable format (received from worker subprocess).
+    ///
+    /// Note: This does not restore member_packages as cargo Package types.
+    /// The members are preserved for hover functionality.
+    fn from_serializable(s: crate::entity::SerializableCargoIndex) -> Self {
+        Self {
+            root_manifest: s.root_manifest,
+            member_manifests: s.member_manifests,
+            member_packages: Vec::new(), // Cannot reconstruct cargo Package from serialized data
+            members: s.members,
+            index: s.dependencies.into_iter().collect(),
+        }
+    }
+
+    /// Get workspace members (name and manifest path).
+    pub fn members(&self) -> &[crate::entity::WorkspaceMember] {
+        &self.members
+    }
+
+    /// Find a resolved dependency by package name, ignoring table type.
+    ///
+    /// This is useful for workspace dependencies where the table in toml-parser
+    /// (always Dependencies) may not match the table in cargo resolution
+    /// (depends on how member packages use the dependency).
+    ///
+    /// Returns the first match found (prefers Dependencies > DevDependencies > BuildDependencies).
+    pub fn find_by_name(&self, name: &str, platform: Option<&str>) -> Option<&ResolvedDependency> {
+        use crate::query::DependencyTable;
+
+        // Try each table type in order of preference
+        let tables = [
+            DependencyTable::Dependencies,
+            DependencyTable::DevDependencies,
+            DependencyTable::BuildDependencies,
+        ];
+
+        for table in tables {
+            let key = DependencyLookupKey::new(table, platform.map(String::from), name.to_string());
+            if let Some(resolved) = self.index.get(&key) {
+                return Some(resolved);
+            }
+        }
+
+        None
     }
 }

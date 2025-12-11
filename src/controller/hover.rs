@@ -1,17 +1,15 @@
-use std::collections::HashMap;
-
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 
 use crate::entity::{
-    commit_str, git_ref_str, DependencyKey, DependencyValue, KeyKind, NodeKind, ResolvedDependency,
-    TomlDependency, TomlNode, ValueKind, WorkspaceKey,
+    DependencyKey, DependencyValue, KeyKind, NodeKind, ResolvedDependency, SourceKind,
+    TomlDependency, TomlNode, ValueKind, WorkspaceKey, WorkspaceMember,
 };
 
 pub fn hover(
     node: &TomlNode,
     _dep: Option<&TomlDependency>,
     resolved: Option<&ResolvedDependency>,
-    members: Option<&[cargo::core::package::Package]>,
+    members: Option<&[WorkspaceMember]>,
 ) -> Option<Hover> {
     match &node.kind {
         // Version hover - show available versions
@@ -41,24 +39,19 @@ pub fn hover(
         // Features hover - show all features
         NodeKind::Key(KeyKind::Dependency(DependencyKey::Features)) => {
             let resolved = resolved?;
-            let pkg = resolved.package.as_ref()?;
+            let features = resolved.features()?;
 
-            let features: HashMap<_, Vec<_>> = pkg
-                .manifest()
-                .summary()
-                .features()
-                .iter()
-                .map(|(k, v)| (*k, v.iter().map(|fv| fv.to_string()).collect()))
-                .collect();
-            let mut feature_list = features.keys().collect::<Vec<_>>();
+            let mut feature_list: Vec<_> = features.keys().collect();
             feature_list.sort();
             let mut s = String::new();
             for key in feature_list {
                 s.push_str(&format!("- {}", key));
-                if !features[key].is_empty() {
-                    s.push_str(": [");
-                    s.push_str(&features[key].join(", "));
-                    s.push(']');
+                if let Some(deps) = features.get(key) {
+                    if !deps.is_empty() {
+                        s.push_str(": [");
+                        s.push_str(&deps.join(", "));
+                        s.push(']');
+                    }
                 }
                 s.push('\n');
             }
@@ -74,18 +67,12 @@ pub fn hover(
         // Single feature hover - show what it enables
         NodeKind::Value(ValueKind::Dependency(DependencyValue::Feature)) => {
             let resolved = resolved?;
-            let pkg = resolved.package.as_ref()?;
-            let feature = pkg
-                .manifest()
-                .summary()
-                .features()
-                .iter()
-                .filter(|(f, _)| f.to_string() == node.text)
-                .collect::<Vec<_>>();
+            let features = resolved.features()?;
+
             let mut s = String::new();
-            for (_, v) in feature {
-                for fv in v {
-                    s.push_str(&format!("- {}\n", fv));
+            if let Some(deps) = features.get(&node.text) {
+                for dep in deps {
+                    s.push_str(&format!("- {}\n", dep));
                 }
             }
             if s.is_empty() {
@@ -104,7 +91,7 @@ pub fn hover(
             let members = members?;
             let member_list = members
                 .iter()
-                .map(|m| format!("- [{}]({})", m.name(), m.manifest_path().display()))
+                .map(|m| format!("- [{}]({})", m.name, m.manifest_path.display()))
                 .collect::<Vec<_>>()
                 .join("\n");
             Some(Hover {
@@ -118,16 +105,21 @@ pub fn hover(
         // Git dependency hover - show ref and commit
         NodeKind::Value(ValueKind::Dependency(DependencyValue::Git)) => {
             let resolved = resolved?;
-            let pkg = resolved.package.as_ref()?;
-            let source_id = pkg.package_id().source_id();
-            let git_ref = git_ref_str(&source_id);
-            let commit = commit_str(&source_id);
+            let source = resolved.source_kind()?;
+
             let mut s = String::new();
-            if let Some(git_ref) = git_ref {
-                s.push_str(&format!("- {}\n", git_ref));
-            }
-            if let Some(commit) = commit {
-                s.push_str(&format!("- {}\n", commit));
+            if let SourceKind::Git {
+                reference,
+                full_commit,
+                ..
+            } = source
+            {
+                if let Some(git_ref) = reference {
+                    s.push_str(&format!("- {}\n", git_ref));
+                }
+                if let Some(commit) = full_commit {
+                    s.push_str(&format!("- {}\n", commit));
+                }
             }
             if s.is_empty() {
                 return None;

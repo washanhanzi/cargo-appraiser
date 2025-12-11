@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use clap::{arg, command, Parser};
 use config::{initialize_config, UserConfig};
 use controller::{Appraiser, CargoDocumentEvent, CargoTomlPayload, ClientCapability};
@@ -15,6 +17,26 @@ mod controller;
 mod decoration;
 mod entity;
 mod usecase;
+
+/// Run the resolve subcommand - resolves dependencies and outputs JSON to stdout.
+/// This is designed to be called as a subprocess by the LSP server.
+fn run_resolve_worker(manifest_path: &str) {
+    use cargo_parser::CargoIndex;
+
+    match CargoIndex::resolve_direct(Path::new(manifest_path)) {
+        Ok(index) => {
+            let serializable = index.to_serializable();
+            if let Err(e) = serde_json::to_writer(std::io::stdout(), &serializable) {
+                eprintln!("Failed to serialize output: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
+}
 
 #[derive(Debug)]
 struct CargoAppraiser {
@@ -333,7 +355,16 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    // Parse command-line arguments
+    // Check for resolve subcommand before parsing clap args
+    // This allows us to use a simple argument format for the worker subprocess
+    let raw_args: Vec<String> = std::env::args().collect();
+    if raw_args.get(1).map(|s| s.as_str()) == Some("resolve") {
+        let manifest_path = raw_args.get(2).expect("manifest path required for resolve subcommand");
+        run_resolve_worker(manifest_path);
+        return;
+    }
+
+    // Parse command-line arguments for LSP mode
     let args = Args::parse();
 
     let stdin = tokio::io::stdin();

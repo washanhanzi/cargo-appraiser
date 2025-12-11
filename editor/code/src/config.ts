@@ -47,7 +47,7 @@ type InitializationOptions = {
     decorationFormatter: {
         latest: string
         local: string
-        not_installed: string
+        not_resolved: string
         waiting: string
         mixed_upgradeable: string
         compatible_latest: string

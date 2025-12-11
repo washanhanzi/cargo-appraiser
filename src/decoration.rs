@@ -1,4 +1,3 @@
-use cargo::core::SourceKind;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
@@ -8,9 +7,7 @@ use tower_lsp::{
 };
 mod vscode;
 
-use crate::entity::{
-    commit_str_short, git_ref_str, DependencyTable, ResolvedDependency, TomlDependency,
-};
+use crate::entity::{DependencyTable, ResolvedDependency, SourceKind, TomlDependency};
 
 pub mod inlay_hint;
 
@@ -126,7 +123,7 @@ pub fn formatted_string(
         VersionDecorationKind::Git => &formatter.git,
         VersionDecorationKind::Latest => &formatter.latest,
         VersionDecorationKind::Local => &formatter.local,
-        VersionDecorationKind::NotInstalled => &formatter.not_installed,
+        VersionDecorationKind::NotInstalled => &formatter.not_resolved,
         VersionDecorationKind::MixedUpgradeable => &formatter.mixed_upgradeable,
         VersionDecorationKind::CompatibleLatest => &formatter.compatible_latest,
         VersionDecorationKind::NonCompatibleLatest => &formatter.noncompatible_latest,
@@ -161,13 +158,16 @@ pub fn version_decoration(
             }
         };
 
-        let git = resolved.package.as_ref().and_then(|pkg| {
-            let source_id = pkg.package_id().source_id();
-            if source_id.is_git() {
+        let git = resolved.source_kind().and_then(|source| {
+            if let SourceKind::Git {
+                reference,
+                short_commit,
+                ..
+            } = source
+            {
                 Some((
-                    git_ref_str(&source_id).unwrap_or_default(),
-                    commit_str_short(&source_id)
-                        .map_or(String::new(), |c| c.to_string()),
+                    reference.clone().unwrap_or_default(),
+                    short_commit.clone().unwrap_or_default(),
                 ))
             } else {
                 None
@@ -196,24 +196,21 @@ pub fn version_decoration(
     };
 
     // Check source kind for local/path dependencies resolved through cargo
-    match pkg.package_id().source_id().kind() {
-        SourceKind::Path => {
+    match &pkg.source {
+        SourceKind::Path | SourceKind::Directory => {
             return DecorationPayload {
                 kind: VersionDecorationKind::Local,
                 ..Default::default()
             };
         }
-        SourceKind::Directory => {
-            return DecorationPayload {
-                kind: VersionDecorationKind::Local,
-                ..Default::default()
-            };
-        }
-        SourceKind::Git(_) => {
+        SourceKind::Git {
+            reference,
+            short_commit,
+            ..
+        } => {
             let git = Some((
-                git_ref_str(&pkg.package_id().source_id()).unwrap_or_default(),
-                commit_str_short(&pkg.package_id().source_id())
-                    .map_or(String::new(), |c| c.to_string()),
+                reference.clone().unwrap_or_default(),
+                short_commit.clone().unwrap_or_default(),
             ));
             return DecorationPayload {
                 kind: VersionDecorationKind::Git,
@@ -225,9 +222,23 @@ pub fn version_decoration(
     }
 
     // Registry dependency - check versions
-    let installed = pkg.version().clone();
-    let latest_matched = resolved.latest_matched_summary.as_ref().map(|s| s.version().clone());
-    let latest = resolved.latest_summary.as_ref().map(|s| s.version().clone());
+    let installed = match pkg.semver_version() {
+        Some(v) => v,
+        None => {
+            return DecorationPayload {
+                kind: VersionDecorationKind::NotParsed,
+                ..Default::default()
+            };
+        }
+    };
+    let latest_matched = resolved
+        .latest_matched_version
+        .as_ref()
+        .and_then(|s| s.semver_version());
+    let latest = resolved
+        .latest_version
+        .as_ref()
+        .and_then(|s| s.semver_version());
 
     let mut p = DecorationPayload {
         installed: Some(installed.clone()),
@@ -268,7 +279,7 @@ pub fn version_decoration(
 /// the formatter has 7 fields:
 /// latest: the dependency has the latest version installed
 /// local: the dependency is a local path dependency
-/// not_installed: the dependency is not installed maybe because of platform mismatch
+/// not_resolved: the dependency is not resolved (platform mismatch or not used by any member)
 /// loading: the dependency is loading
 /// mixed_upgradeable: the installed version has an compatible upgrade, but the latest version is not compatible with the current version requirement
 /// compatible_latest: the installed version can update to latest version
@@ -288,8 +299,8 @@ pub struct DecorationFormatter {
     pub latest: String,
     #[serde(default = "default_local")]
     pub local: String,
-    #[serde(default = "default_not_installed")]
-    pub not_installed: String,
+    #[serde(default = "default_not_resolved")]
+    pub not_resolved: String,
     #[serde(default = "default_waiting")]
     pub waiting: String,
     #[serde(default = "default_mixed_upgradeable")]
@@ -310,7 +321,7 @@ impl DecorationFormatter {
             waiting: CompiledTemplate::new(self.waiting.clone()),
             latest: CompiledTemplate::new(self.latest.clone()),
             local: CompiledTemplate::new(self.local.clone()),
-            not_installed: CompiledTemplate::new(self.not_installed.clone()),
+            not_resolved: CompiledTemplate::new(self.not_resolved.clone()),
             mixed_upgradeable: CompiledTemplate::new(self.mixed_upgradeable.clone()),
             compatible_latest: CompiledTemplate::new(self.compatible_latest.clone()),
             noncompatible_latest: CompiledTemplate::new(self.noncompatible_latest.clone()),
@@ -327,7 +338,7 @@ impl Default for DecorationFormatter {
             compatible_latest: default_compatible_latest(),
             local: default_local(),
             noncompatible_latest: default_noncompatible_latest(),
-            not_installed: default_not_installed(),
+            not_resolved: default_not_resolved(),
             waiting: default_waiting(),
             mixed_upgradeable: default_mixed_upgradeable(),
             yanked: default_yanked(),
@@ -341,7 +352,7 @@ pub struct CompiledFormatter {
     pub waiting: CompiledTemplate,
     pub latest: CompiledTemplate,
     pub local: CompiledTemplate,
-    pub not_installed: CompiledTemplate,
+    pub not_resolved: CompiledTemplate,
     pub mixed_upgradeable: CompiledTemplate,
     pub compatible_latest: CompiledTemplate,
     pub noncompatible_latest: CompiledTemplate,
@@ -450,8 +461,8 @@ fn default_noncompatible_latest() -> String {
     "🔒 {{installed}}, {{latest}}".to_string()
 }
 
-fn default_not_installed() -> String {
-    "Not installed".to_string()
+fn default_not_resolved() -> String {
+    "Not Resolved".to_string()
 }
 
 fn default_waiting() -> String {
