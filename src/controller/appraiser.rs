@@ -303,9 +303,10 @@ impl Appraiser {
                         let Some(node) = doc.precise_match(range.start) else {
                             continue;
                         };
-                        let dep = doc.tree().find_dependency_at_position(range.start);
+                        let tree = doc.tree();
+                        let dep = tree.find_dependency_at_position(range.start);
                         let resolved = dep.and_then(|d| doc.resolved(&d.id));
-                        let Some(action) = code_action(uri, node, dep, resolved) else {
+                        let Some(action) = code_action(uri, tree, node, dep, resolved) else {
                             continue;
                         };
                         let _ = tx.send(action);

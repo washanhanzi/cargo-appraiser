@@ -11,23 +11,25 @@ use crate::{
     decoration::{version_decoration, VersionDecorationKind},
     entity::{
         DependencyKey, DependencyStyle, DependencyValue, NodeKind, ResolvedDependency,
-        TomlDependency, TomlNode, ValueKind, CARGO,
+        TomlDependency, TomlNode, TomlTree, ValueKind, CARGO,
     },
 };
 
 pub fn code_action(
     uri: Uri,
+    tree: &TomlTree,
     node: &TomlNode,
     dep: Option<&TomlDependency>,
     resolved: Option<&ResolvedDependency>,
 ) -> Option<CodeActionResponse> {
     //only support dependency code action for now
     let dep = dep?;
-    code_action_dependency(uri, node, dep, resolved)
+    code_action_dependency(uri, tree, node, dep, resolved)
 }
 
 pub fn code_action_dependency(
     uri: Uri,
+    tree: &TomlTree,
     node: &TomlNode,
     dep: &TomlDependency,
     resolved: Option<&ResolvedDependency>,
@@ -36,7 +38,7 @@ pub fn code_action_dependency(
         NodeKind::Value(ValueKind::Dependency(DependencyValue::Simple))
         | NodeKind::Value(ValueKind::Dependency(DependencyValue::Version)) => {
             let version = version_decoration(dep, resolved);
-            let mut actions = VersionCodeAction::new(uri, node);
+            let mut actions = VersionCodeAction::new(uri, tree, node);
             actions.check_unresolved(resolved);
 
             // Add cargo update command first (at top) if applicable
@@ -105,7 +107,7 @@ pub fn code_action_dependency(
         NodeKind::Key(crate::entity::KeyKind::Dependency(DependencyKey::Workspace))
         | NodeKind::Value(ValueKind::Dependency(DependencyValue::Workspace)) => {
             let version = version_decoration(dep, resolved);
-            let mut actions = VersionCodeAction::new(uri, node);
+            let mut actions = VersionCodeAction::new(uri, tree, node);
             match version.kind {
                 VersionDecorationKind::MixedUpgradeable => {
                     actions.add_update_command(dep.package_name());
@@ -129,6 +131,7 @@ pub fn code_action_dependency(
 
 struct VersionCodeAction<'a> {
     uri: Uri,
+    tree: &'a TomlTree,
     major_code_action: bool,
     minor_code_action: bool,
     actions: CodeActionResponse,
@@ -137,9 +140,10 @@ struct VersionCodeAction<'a> {
 }
 
 impl<'a> VersionCodeAction<'a> {
-    fn new(uri: Uri, node: &'a TomlNode) -> Self {
+    fn new(uri: Uri, tree: &'a TomlTree, node: &'a TomlNode) -> Self {
         Self {
             uri,
+            tree,
             major_code_action: false,
             minor_code_action: false,
             actions: Vec::with_capacity(6),
@@ -181,7 +185,7 @@ impl<'a> VersionCodeAction<'a> {
     fn add_simple_table_refactor(&mut self, dep: &TomlDependency, node: &TomlNode) {
         if dep.style == DependencyStyle::Simple {
             self.add_code_action(
-                format!("{{ version = {} }}", node.text),
+                format!("{{ version = \"{}\" }}", strip_quotes(&node.text)),
                 CodeActionKind::REFACTOR,
                 node.range,
                 None,
@@ -195,12 +199,15 @@ impl<'a> VersionCodeAction<'a> {
         {
             // Only offer if the table has just version key
             if dep.fields.len() == 1 && dep.version().is_some() {
-                self.add_code_action(
-                    node.text.to_string(),
-                    CodeActionKind::REFACTOR,
-                    node.range,
-                    Some("Refactor to simple version".to_string()),
-                );
+                // Get the table node's range to replace the entire { version = "x.y.z" }
+                if let Some(table_node) = self.tree.get_dependency_entry_node(dep) {
+                    self.add_code_action(
+                        format!("\"{}\"", strip_quotes(&node.text)),
+                        CodeActionKind::REFACTOR,
+                        table_node.range,
+                        Some("Refactor to simple version".to_string()),
+                    );
+                }
             }
         }
     }

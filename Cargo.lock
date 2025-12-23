@@ -456,7 +456,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-appraiser"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "cargo 0.92.0",
