@@ -100,11 +100,15 @@ To apply these config, you need to restart the lsp.
                 "decorationFormatter": {}, //see below
                 "audit": {} //see below
             },
+            //you need to set both path and arguments if you want to use a custom binary. https://github.com/zed-industries/zed/issues/22775
              "binary": {
-               "path": "/path/to/cargo-appraiser" //path take precedence over settings.version
+               //path take precedence over settings.version
+               "path": "/path/to/cargo-appraiser",
+               "arguments": ["--renderer", "inlayHint"]
             },
             "settings":{
-              "version": "=0.3.0" //specify the version of cargo-appraiser server to use
+              //specify the version of cargo-appraiser server to use
+              "version": "=0.3.0"
             }
         }
     }
