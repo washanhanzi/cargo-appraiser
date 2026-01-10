@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-appraiser"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "cargo 0.92.0",
