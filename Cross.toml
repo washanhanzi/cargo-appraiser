@@ -2,9 +2,6 @@
 
 # Global [build] settings that apply to all targets unless overridden
 [build]
-# Use Zig as a cross-compiler (optional)
-zig = "2.17" # Specify the Zig version you prefer
-
 # Optional: Disable building Rust's standard library if not needed
 # build-std = false
 

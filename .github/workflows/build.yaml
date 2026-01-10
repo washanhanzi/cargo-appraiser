@@ -68,7 +68,7 @@ jobs:
       # 3. Install `cross`
       - name: Install Cross
         run: |
-          cargo install cross
+          cargo install cross --git https://github.com/cross-rs/cross
 
       # 4. Cache Cargo dependencies (optional but recommended)
       - name: Cache Cargo Registry
@@ -133,6 +133,9 @@ jobs:
 
       - name: Build macOS
         run: cargo build --release --bin ${{ env.APP_NAME }} --target ${{ matrix.target }} --features vendored-openssl
+
+      - name: Ad-hoc sign macOS binary
+        run: codesign --force --sign - target/${{ matrix.target }}/release/${{ env.APP_NAME }}
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
