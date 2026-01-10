@@ -2,8 +2,3 @@
 
 [build.env]
 passthrough = ["OPENSSL_DIR"]
-
-# Use zig cc as the C/C++ compiler to avoid old GCC bugs
-[build.zig]
-enable = true
-version = "2.17"
