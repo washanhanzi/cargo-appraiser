@@ -181,6 +181,30 @@ Enable `inlay_hints` in settings.
 
 Vim has minimal support for now.
 
+# Troubleshooting
+
+## macOS Gatekeeper
+
+If you manually downloaded the LSP binary (e.g., from GitHub releases via a browser), macOS Gatekeeper may block it, causing a `SIGKILL` error.
+
+To fix this, remove the quarantine attribute from the binary:
+
+```bash
+xattr -d com.apple.quarantine <path-to-binary>
+```
+
+## Default LSP Binary Paths
+
+**VS Code:**
+```
+~/Library/Application Support/Code/User/globalStorage/washan.cargo-appraiser/cargo-appraiser-v<version>/cargo-appraiser
+```
+
+**Zed:**
+```
+~/Library/Application Support/Zed/extensions/work/cargo-appraiser/cargo-appraiser-<version>/cargo-appraiser
+```
+
 # Thanks to
 
 - [taplo](https://github.com/tamasfe/taplo)
