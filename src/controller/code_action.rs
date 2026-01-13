@@ -385,3 +385,85 @@ fn strip_quotes(s: &str) -> String {
     }
     s.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_quotes_removes_double_quotes() {
+        assert_eq!(strip_quotes("\"1.0.0\""), "1.0.0");
+        assert_eq!(strip_quotes("\"hello world\""), "hello world");
+    }
+
+    #[test]
+    fn test_strip_quotes_handles_unquoted() {
+        assert_eq!(strip_quotes("1.0.0"), "1.0.0");
+        assert_eq!(strip_quotes("hello"), "hello");
+    }
+
+    #[test]
+    fn test_strip_quotes_handles_empty() {
+        assert_eq!(strip_quotes("\"\""), "");
+        assert_eq!(strip_quotes(""), "");
+    }
+
+    #[test]
+    fn test_strip_quotes_partial_quotes() {
+        // Only strips if both start AND end with quotes
+        assert_eq!(strip_quotes("\"hello"), "\"hello");
+        assert_eq!(strip_quotes("hello\""), "hello\"");
+    }
+
+    #[test]
+    fn test_new_update_command() {
+        let cmd = new_update_command("serde");
+        assert_eq!(cmd.title, "cargo update serde");
+        assert_eq!(cmd.command, CARGO);
+        assert!(cmd.arguments.is_some());
+        let args = cmd.arguments.unwrap();
+        assert_eq!(args.len(), 2);
+    }
+
+    #[test]
+    fn test_new_code_action() {
+        let uri: Uri = "file:///test.toml".parse().unwrap();
+        let range = Range::default();
+        let action = new_code_action(
+            uri,
+            "\"1.0.0\"".to_string(),
+            CodeActionKind::REFACTOR,
+            range,
+            Some("Update to 1.0.0".to_string()),
+        );
+
+        match action {
+            CodeActionOrCommand::CodeAction(ca) => {
+                assert_eq!(ca.title, "Update to 1.0.0");
+                assert_eq!(ca.kind, Some(CodeActionKind::REFACTOR));
+                assert!(ca.edit.is_some());
+            }
+            _ => panic!("Expected CodeAction"),
+        }
+    }
+
+    #[test]
+    fn test_new_code_action_default_title() {
+        let uri: Uri = "file:///test.toml".parse().unwrap();
+        let range = Range::default();
+        let action = new_code_action(
+            uri,
+            "\"2.0.0\"".to_string(),
+            CodeActionKind::QUICKFIX,
+            range,
+            None, // No title provided, should use value
+        );
+
+        match action {
+            CodeActionOrCommand::CodeAction(ca) => {
+                assert_eq!(ca.title, "\"2.0.0\"");
+            }
+            _ => panic!("Expected CodeAction"),
+        }
+    }
+}

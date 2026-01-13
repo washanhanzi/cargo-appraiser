@@ -39,7 +39,7 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
 
     // Convert paths to URIs
     let root_manifest_uri = CanonicalUri::try_from_path(index.root_manifest())
-        .map_err(|e| CargoError::resolve_error(e))?;
+        .map_err(CargoError::resolve_error)?;
 
     let member_manifest_uris: Vec<CanonicalUri> = index
         .member_manifests()

@@ -5,7 +5,9 @@ mod symbol_tree;
 use tower_lsp::lsp_types::Position;
 
 // Re-export public types
-pub use dependency_tree::{Dependency, DependencyStyle, DependencyTable, DependencyTree, FieldValue};
+pub use dependency_tree::{
+    Dependency, DependencyStyle, DependencyTable, DependencyTree, FieldValue,
+};
 pub use node::{
     DependencyKey, DependencyValue, KeyKind, NodeKind, TomlNode, ValueKind, WorkspaceKey,
     WorkspaceValue,

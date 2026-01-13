@@ -512,7 +512,11 @@ impl CargoIndex {
                     manifest_path: p.manifest_path().to_path_buf(),
                 })
                 .collect(),
-            dependencies: self.index.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            dependencies: self
+                .index
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         }
     }
 

@@ -3,6 +3,7 @@
 ![lsp release](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fgithub.com%2Fwashanhanzi%2Fcargo-appraiser%2Fraw%2Frelease%2FCargo.toml&query=%24.package.version&prefix=v&label=version&labelColor=orange&color=%2376FF03)
 ![vscode extension release](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2Fwashanhanzi%2Fcargo-appraiser%2Fraw%2Fvscode%2Frelease%2Feditor%2Fcode%2Fpackage.json&query=%24.version&prefix=vscode%2Fv&label=vscode%20extension&labelColor=blue&color=%2376FF03)
 
+[Architecture](ARCHITECTURE.md) | [Contributing](CONTRIBUTING.md)
 
 # What's this
 
@@ -75,7 +76,7 @@
 }
 ```
 
-##  lsp initialization options
+## lsp initialization options
 
 To apply these config, you need to restart the lsp.
 
@@ -173,7 +174,7 @@ Enable `inlay_hints` in settings.
 
 ```jsonc
 "inlay_hints": {
-	"enabled": true
+ "enabled": true
 }
 ```
 
@@ -196,11 +197,13 @@ xattr -d com.apple.quarantine <path-to-binary>
 ## Default LSP Binary Paths
 
 **VS Code:**
+
 ```
 ~/Library/Application Support/Code/User/globalStorage/washan.cargo-appraiser/cargo-appraiser-v<version>/cargo-appraiser
 ```
 
 **Zed:**
+
 ```
 ~/Library/Application Support/Zed/extensions/work/cargo-appraiser/cargo-appraiser-<version>/cargo-appraiser
 ```
