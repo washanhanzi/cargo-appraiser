@@ -8,7 +8,7 @@ use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity};
 use tracing::error;
 
 use crate::entity::{
-    CargoError, CargoErrorKind, CargoIndex, CanonicalUri, DependencyLookupKey, TomlDependency,
+    CanonicalUri, CargoError, CargoErrorKind, CargoIndex, DependencyLookupKey, TomlDependency,
     TomlNode, TomlTree, WorkspaceMember,
 };
 
@@ -34,7 +34,8 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     };
 
     // Use cargo-parser to resolve dependencies
-    let index = CargoIndex::resolve(&path).map_err(|e| CargoError::resolve_error(e.into()))?;
+    let index =
+        CargoIndex::resolve(&path).map_err(|e| crate::entity::from_resolve_error(e.into()))?;
 
     // Convert paths to URIs
     let root_manifest_uri = CanonicalUri::try_from_path(index.root_manifest())

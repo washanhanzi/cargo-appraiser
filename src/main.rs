@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use clap::{arg, command, Parser};
+use clap::Parser;
 use config::{initialize_config, UserConfig};
 use controller::{Appraiser, CargoDocumentEvent, CargoTomlPayload, ClientCapability};
 use decoration::{DecorationRenderer, Renderer};
@@ -359,7 +359,9 @@ async fn main() {
     // This allows us to use a simple argument format for the worker subprocess
     let raw_args: Vec<String> = std::env::args().collect();
     if raw_args.get(1).map(|s| s.as_str()) == Some("resolve") {
-        let manifest_path = raw_args.get(2).expect("manifest path required for resolve subcommand");
+        let manifest_path = raw_args
+            .get(2)
+            .expect("manifest path required for resolve subcommand");
         run_resolve_worker(manifest_path);
         return;
     }
