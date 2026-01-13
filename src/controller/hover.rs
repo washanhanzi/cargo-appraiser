@@ -135,3 +135,146 @@ pub fn hover(
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tower_lsp::lsp_types::Range;
+
+    fn make_range() -> Range {
+        Range::default()
+    }
+
+    #[test]
+    fn test_hover_version_shows_available_versions() {
+        let node = TomlNode::new(
+            "test".to_string(),
+            make_range(),
+            "1.0".to_string(),
+            NodeKind::Value(ValueKind::Dependency(DependencyValue::Version)),
+        );
+
+        let resolved = ResolvedDependency {
+            package: None,
+            available_versions: vec![
+                "2.0.0".to_string(),
+                "1.5.0".to_string(),
+                "1.0.0".to_string(),
+            ],
+            latest_matched_version: None,
+            latest_version: None,
+        };
+
+        let result = hover(&node, None, Some(&resolved), None);
+        assert!(result.is_some());
+
+        let hover = result.unwrap();
+        if let HoverContents::Markup(content) = hover.contents {
+            assert!(content.value.contains("2.0.0"));
+            assert!(content.value.contains("1.5.0"));
+            assert!(content.value.contains("1.0.0"));
+        } else {
+            panic!("Expected Markup content");
+        }
+    }
+
+    #[test]
+    fn test_hover_version_returns_none_when_no_versions() {
+        let node = TomlNode::new(
+            "test".to_string(),
+            make_range(),
+            "1.0".to_string(),
+            NodeKind::Value(ValueKind::Dependency(DependencyValue::Version)),
+        );
+
+        let resolved = ResolvedDependency {
+            package: None,
+            available_versions: vec![],
+            latest_matched_version: None,
+            latest_version: None,
+        };
+
+        let result = hover(&node, None, Some(&resolved), None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_hover_returns_none_for_unknown_node() {
+        let node = TomlNode::new(
+            "test".to_string(),
+            make_range(),
+            "test".to_string(),
+            NodeKind::Value(ValueKind::Other),
+        );
+
+        let result = hover(&node, None, None, None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_hover_returns_none_when_resolved_is_none() {
+        let node = TomlNode::new(
+            "test".to_string(),
+            make_range(),
+            "1.0".to_string(),
+            NodeKind::Value(ValueKind::Dependency(DependencyValue::Version)),
+        );
+
+        let result = hover(&node, None, None, None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_hover_workspace_members() {
+        let node = TomlNode::new(
+            "test".to_string(),
+            make_range(),
+            "members".to_string(),
+            NodeKind::Key(KeyKind::Workspace(WorkspaceKey::Members)),
+        );
+
+        let members = vec![
+            WorkspaceMember {
+                name: "crate-a".to_string(),
+                manifest_path: PathBuf::from("/workspace/crate-a/Cargo.toml"),
+            },
+            WorkspaceMember {
+                name: "crate-b".to_string(),
+                manifest_path: PathBuf::from("/workspace/crate-b/Cargo.toml"),
+            },
+        ];
+
+        let result = hover(&node, None, None, Some(&members));
+        assert!(result.is_some());
+
+        let hover = result.unwrap();
+        if let HoverContents::Markup(content) = hover.contents {
+            assert!(content.value.contains("crate-a"));
+            assert!(content.value.contains("crate-b"));
+        } else {
+            panic!("Expected Markup content");
+        }
+    }
+
+    #[test]
+    fn test_hover_simple_dependency() {
+        // Simple dependency should behave same as Version
+        let node = TomlNode::new(
+            "test".to_string(),
+            make_range(),
+            "1.0".to_string(),
+            NodeKind::Value(ValueKind::Dependency(DependencyValue::Simple)),
+        );
+
+        let resolved = ResolvedDependency {
+            package: None,
+            available_versions: vec!["1.0.0".to_string()],
+            latest_matched_version: None,
+            latest_version: None,
+        };
+
+        let result = hover(&node, None, Some(&resolved), None);
+        assert!(result.is_some());
+    }
+}

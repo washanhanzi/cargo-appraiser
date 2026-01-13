@@ -111,7 +111,6 @@ impl DiagnosticController {
             publish(&self.client, uri, diags).await;
         }
     }
-
 }
 
 async fn publish(client: &Client, uri: &Uri, diags: Vec<Diagnostic>) {

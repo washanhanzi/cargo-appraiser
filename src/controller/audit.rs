@@ -450,12 +450,7 @@ users = "0.11.0"
         let uri = Uri::try_from_path(&cargo_lock_path).unwrap();
         let canonical_uri = CanonicalUri::try_from(uri).unwrap();
 
-        let res = audit_workspace(
-            &canonical_uri,
-            &["test-package".to_string()],
-            "cargo",
-        )
-        .await;
+        let res = audit_workspace(&canonical_uri, &["test-package".to_string()], "cargo").await;
 
         // The audit might succeed or fail depending on whether cargo-audit is installed
         match res {

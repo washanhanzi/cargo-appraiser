@@ -270,11 +270,7 @@ impl DependencyTree {
     pub fn find_by_package_name(&self, name: &str) -> Vec<&Dependency> {
         self.by_package_name
             .get(name)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| self.deps.get(id))
-                    .collect()
-            })
+            .map(|ids| ids.iter().filter_map(|id| self.deps.get(id)).collect())
             .unwrap_or_default()
     }
 

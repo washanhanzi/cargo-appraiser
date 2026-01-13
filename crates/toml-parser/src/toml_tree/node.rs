@@ -52,7 +52,10 @@ impl TomlNode {
     /// Calculate the width of this node (characters)
     pub fn width(&self) -> u32 {
         if self.range.start.line == self.range.end.line {
-            self.range.end.character.saturating_sub(self.range.start.character)
+            self.range
+                .end
+                .character
+                .saturating_sub(self.range.start.character)
         } else {
             // Multi-line nodes: return a large width
             u32::MAX
