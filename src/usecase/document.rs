@@ -201,4 +201,73 @@ mod tests {
         let deps = doc.find_deps_by_crate_name("serde");
         assert_eq!(deps.len(), 2);
     }
+
+    #[test]
+    fn test_name_node() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_cargo_appraiser_name_node.toml");
+        std::fs::write(&temp_file, "").unwrap();
+
+        let uri = Uri::try_from_path(&temp_file).unwrap();
+        let canonical_uri = uri.clone().try_into().unwrap();
+        std::fs::remove_file(&temp_file).unwrap();
+
+        let doc = Document::parse(
+            uri,
+            canonical_uri,
+            r#"
+            [dependencies]
+            serde = "1.0"
+            tokio = { version = "1.0", features = ["full"] }
+            "#,
+        );
+
+        // Test name_node for simple dependency
+        let name_node = doc.name_node("dependencies.serde");
+        assert!(name_node.is_some());
+        let node = name_node.unwrap();
+        assert_eq!(node.text, "serde");
+
+        // Test name_node for table dependency
+        let name_node = doc.name_node("dependencies.tokio");
+        assert!(name_node.is_some());
+        let node = name_node.unwrap();
+        assert_eq!(node.text, "tokio");
+
+        // Test name_node returns None for non-existent dependency
+        let name_node = doc.name_node("dependencies.nonexistent");
+        assert!(name_node.is_none());
+    }
+
+    #[test]
+    fn test_entry_node() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_cargo_appraiser_entry.toml");
+        std::fs::write(&temp_file, "").unwrap();
+
+        let uri = Uri::try_from_path(&temp_file).unwrap();
+        let canonical_uri = uri.clone().try_into().unwrap();
+        std::fs::remove_file(&temp_file).unwrap();
+
+        let doc = Document::parse(
+            uri,
+            canonical_uri,
+            r#"
+            [dependencies]
+            serde = "1.0"
+            "#,
+        );
+
+        // Entry node should exist for valid dependency
+        let entry = doc.entry("dependencies.serde");
+        assert!(entry.is_some());
+
+        // Entry should not exist for invalid dependency
+        let entry = doc.entry("dependencies.invalid");
+        assert!(entry.is_none());
+
+        // Empty dep_id should return None
+        let dep = doc.dependency("");
+        assert!(dep.is_none());
+    }
 }
