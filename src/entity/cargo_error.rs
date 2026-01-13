@@ -10,7 +10,6 @@ pub struct CargoError {
 impl std::fmt::Display for CargoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind {
-            CargoErrorKind::WorkspaceError => write!(f, "{}", self.source),
             CargoErrorKind::ResolveError => write!(f, "{}", self.source),
             _ => write!(f, "{}", self.kind),
         }
@@ -25,20 +24,12 @@ impl CargoError {
         }
     }
 
-    pub fn workspace_error(e: anyhow::Error) -> Self {
-        CargoError {
-            kind: CargoErrorKind::WorkspaceError,
-            source: e,
-        }
-    }
-
     pub fn crate_name(&self) -> Option<&str> {
         match &self.kind {
             CargoErrorKind::NoMatchingPackage(name) => Some(name),
             CargoErrorKind::VersionNotFound(name, _) => Some(name),
             CargoErrorKind::FailedToSelectVersion(name) => Some(name),
             CargoErrorKind::CyclicDependency => None,
-            CargoErrorKind::WorkspaceError => None,
             CargoErrorKind::ResolveError => None,
         }
     }
@@ -54,8 +45,6 @@ pub enum CargoErrorKind {
     FailedToSelectVersion(String),
     #[error("cyclic dependency detected")]
     CyclicDependency,
-    #[error("unparsed workspace error")]
-    WorkspaceError,
     #[error("unparsed resolve error")]
     ResolveError,
 }

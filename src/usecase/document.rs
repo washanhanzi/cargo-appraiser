@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::{Position, Range, Uri};
+use tower_lsp::lsp_types::{Position, Uri};
 
 use crate::entity::{
-    CanonicalUri, DependencyLookupKey, ResolvedDependency, TomlDependency, TomlNode, TomlTree,
-    WorkspaceMember,
+    CanonicalUri, ResolvedDependency, TomlDependency, TomlNode, TomlTree, WorkspaceMember,
 };
 
 /// Represents a parsed Cargo.toml document with resolution status.
@@ -57,16 +56,6 @@ impl Document {
         self.tree.find_at_position(pos)
     }
 
-    /// Find a key node at the given position
-    pub fn precise_match_key(&self, pos: Position) -> Option<&TomlNode> {
-        self.tree.find_key_at_position(pos)
-    }
-
-    /// Find a value node at the given position
-    pub fn precise_match_value(&self, pos: Position) -> Option<&TomlNode> {
-        self.tree.find_value_at_position(pos)
-    }
-
     /// Get a dependency by its ID (e.g., "dependencies.serde")
     pub fn dependency(&self, id: &str) -> Option<&TomlDependency> {
         if id.is_empty() {
@@ -80,25 +69,16 @@ impl Document {
         self.tree.find_dependencies_by_name(crate_name)
     }
 
-    /// Get all dependencies with the given package name (considering renames)
-    pub fn dependencies_by_package_name(&self, package_name: &str) -> Vec<&TomlDependency> {
-        self.tree.find_dependencies_by_package_name(package_name)
-    }
-
-    /// Get a node by its ID
-    pub fn node(&self, id: &str) -> Option<&TomlNode> {
-        self.tree.get_node(id)
-    }
-
     /// Get the entry node for a dependency
     pub fn entry(&self, dep_id: &str) -> Option<&TomlNode> {
         let dep = self.tree.get_dependency(dep_id)?;
         self.tree.get_node(&dep.entry_node_id)
     }
 
-    /// Get the range for a dependency (its entry node range)
-    pub fn dependency_range(&self, dep_id: &str) -> Option<Range> {
-        self.entry(dep_id).map(|n| n.range)
+    /// Get the name node (crate name key) for a dependency
+    pub fn name_node(&self, dep_id: &str) -> Option<&TomlNode> {
+        let dep = self.tree.get_dependency(dep_id)?;
+        self.tree.get_node(&dep.name_node_id)
     }
 
     /// Find all key nodes with the given crate name text
@@ -120,15 +100,6 @@ impl Document {
     /// Get the resolved dependency info for a dependency ID
     pub fn resolved(&self, dep_id: &str) -> Option<&ResolvedDependency> {
         self.resolved.get(dep_id)
-    }
-
-    /// Create a lookup key for cargo-parser from a TomlDependency
-    pub fn lookup_key(dep: &TomlDependency) -> DependencyLookupKey {
-        DependencyLookupKey::new(
-            dep.table,
-            dep.platform.clone(),
-            dep.package_name().to_string(),
-        )
     }
 
     /// Mark all dependencies as dirty (needing resolution)
@@ -157,11 +128,6 @@ impl Document {
     /// Get all dependencies
     pub fn dependencies(&self) -> impl Iterator<Item = &TomlDependency> {
         self.tree.dependencies()
-    }
-
-    /// Get the dependency count
-    pub fn dependency_count(&self) -> usize {
-        self.tree.dependency_count()
     }
 
     /// Check if a dependency is a workspace dependency (declared in workspace.dependencies)
@@ -201,7 +167,7 @@ mod tests {
             "#,
         );
 
-        assert_eq!(doc.dependency_count(), 1);
+        assert_eq!(doc.dependencies().count(), 1);
 
         let dep = doc.dependency("dependencies.a").unwrap();
         assert_eq!(dep.name, "a");

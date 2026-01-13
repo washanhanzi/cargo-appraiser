@@ -191,12 +191,12 @@ impl Appraiser {
                                             continue;
                                         }
                                         if required_version == pkg.version {
-                                            let Some(entry_node) = doc.entry(&dep.id) else {
+                                            let Some(name_node) = doc.name_node(&dep.id) else {
                                                 continue;
                                             };
                                             trace!("[AUDIT] Adding diagnostic for {}", dep.id);
                                             let diag = Diagnostic {
-                                                range: entry_node.range,
+                                                range: name_node.range,
                                                 severity: Some(issue.severity()),
                                                 code: None,
                                                 code_description: None,
@@ -488,11 +488,8 @@ impl Appraiser {
                         state.root_manifest_uri = Some(root_manifest_uri.clone());
 
                         // Build member names for audit
-                        let member_names: Vec<String> = output
-                            .members
-                            .iter()
-                            .map(|m| m.name.clone())
-                            .collect();
+                        let member_names: Vec<String> =
+                            output.members.iter().map(|m| m.name.clone()).collect();
                         state.member_names = member_names.clone();
                         state.member_manifest_uris = output.member_manifest_uris.clone();
 
@@ -543,10 +540,9 @@ impl Appraiser {
                             // in toml-parser (always Dependencies) may not match how member
                             // packages actually use the dependency
                             let resolved = if doc.is_workspace_dep(dep) {
-                                output.index.find_by_name(
-                                    dep.package_name(),
-                                    dep.platform.as_deref(),
-                                )
+                                output
+                                    .index
+                                    .find_by_name(dep.package_name(), dep.platform.as_deref())
                             } else {
                                 let lookup_key = make_lookup_key(dep);
                                 output.index.get(&lookup_key)
