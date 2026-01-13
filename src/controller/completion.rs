@@ -9,13 +9,14 @@ use crate::entity::{
 };
 
 pub async fn completion(
+    http_client: &reqwest::Client,
     node: &TomlNode,
     dep: Option<&TomlDependency>,
     resolved: Option<&ResolvedDependency>,
 ) -> Option<CompletionResponse> {
     if let Some(name) = node.crate_name() {
         //crate name completion
-        return crate_name_completion(name).await;
+        return crate_name_completion(http_client, name).await;
     }
 
     match &node.kind {
@@ -31,7 +32,7 @@ pub async fn completion(
 
             // Fallback: fetch versions from crates.io for unresolved dependencies
             if let Some(dep) = dep {
-                return fetch_versions_for_crate(dep.package_name(), node).await;
+                return fetch_versions_for_crate(http_client, dep.package_name(), node).await;
             }
 
             None
@@ -89,7 +90,10 @@ fn version_completion_from_list(
     CompletionResponse::Array(versions)
 }
 
-async fn crate_name_completion(crate_name: &str) -> Option<CompletionResponse> {
+async fn crate_name_completion(
+    http_client: &reqwest::Client,
+    crate_name: &str,
+) -> Option<CompletionResponse> {
     #[derive(Deserialize, Debug)]
     struct SearchCrateOutput {
         name: String,
@@ -107,13 +111,7 @@ async fn crate_name_completion(crate_name: &str) -> Option<CompletionResponse> {
         crate_name
     );
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .header("User-Agent", "lsp-cargo-appraiser")
-        .send()
-        .await
-        .ok()?;
+    let resp = http_client.get(&url).send().await.ok()?;
 
     let search_response: SearchCrateResponse = resp.json().await.ok()?;
 
@@ -135,7 +133,11 @@ async fn crate_name_completion(crate_name: &str) -> Option<CompletionResponse> {
 }
 
 /// Fetch available versions for a crate from crates.io (fallback for unresolved deps)
-async fn fetch_versions_for_crate(crate_name: &str, node: &TomlNode) -> Option<CompletionResponse> {
+async fn fetch_versions_for_crate(
+    http_client: &reqwest::Client,
+    crate_name: &str,
+    node: &TomlNode,
+) -> Option<CompletionResponse> {
     #[derive(Deserialize, Debug)]
     struct Version {
         num: String,
@@ -149,13 +151,7 @@ async fn fetch_versions_for_crate(crate_name: &str, node: &TomlNode) -> Option<C
 
     let url = format!("https://crates.io/api/v1/crates/{}/versions", crate_name);
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .header("User-Agent", "lsp-cargo-appraiser")
-        .send()
-        .await
-        .ok()?;
+    let resp = http_client.get(&url).send().await.ok()?;
 
     if !resp.status().is_success() {
         return None;
