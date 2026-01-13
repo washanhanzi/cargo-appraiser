@@ -130,3 +130,89 @@ pub fn from_resolve_error(e: anyhow::Error) -> CargoError {
         source: e,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_resolve_error_no_matching_package() {
+        let error = anyhow::anyhow!(
+            "no matching package named `aserde` found\n\
+             location searched: registry `crates-io`\n\
+             required by package `hello-rust v0.1.0`"
+        );
+        let cargo_error = from_resolve_error(error);
+
+        assert!(
+            matches!(cargo_error.kind, CargoErrorKind::NoMatchingPackage(ref name) if name == "aserde")
+        );
+        assert_eq!(cargo_error.crate_name(), Some("aserde"));
+    }
+
+    #[test]
+    fn test_from_resolve_error_version_not_found() {
+        let error = anyhow::anyhow!(
+            "failed to select a version for the requirement `serde = \"^2\"`\n\
+             candidate versions found which didn't match: 1.0.210, 1.0.209"
+        );
+        let cargo_error = from_resolve_error(error);
+
+        match &cargo_error.kind {
+            CargoErrorKind::VersionNotFound(name, req) => {
+                assert_eq!(name, "serde");
+                assert!(req.contains("serde"));
+            }
+            _ => panic!("Expected VersionNotFound, got {:?}", cargo_error.kind),
+        }
+        assert_eq!(cargo_error.crate_name(), Some("serde"));
+    }
+
+    #[test]
+    fn test_from_resolve_error_failed_to_select_version() {
+        let error = anyhow::anyhow!(
+            "failed to select a version for `serde`.\n\
+             the package `hello-rust` depends on `serde`, with features: `de1rive` but `serde` does not have these features."
+        );
+        let cargo_error = from_resolve_error(error);
+
+        assert!(
+            matches!(cargo_error.kind, CargoErrorKind::FailedToSelectVersion(ref name) if name == "serde")
+        );
+        assert_eq!(cargo_error.crate_name(), Some("serde"));
+    }
+
+    #[test]
+    fn test_from_resolve_error_cyclic_dependency() {
+        let error = anyhow::anyhow!(
+            "cyclic package dependency: package `A v0.0.0` depends on itself. Cycle:\n\
+             package `A v0.0.0`\n\
+             ... which satisfies dependency `A = \"*\"` of package `B v0.0.0`"
+        );
+        let cargo_error = from_resolve_error(error);
+
+        assert!(matches!(cargo_error.kind, CargoErrorKind::CyclicDependency));
+        assert_eq!(cargo_error.crate_name(), None);
+    }
+
+    #[test]
+    fn test_from_resolve_error_unknown_error() {
+        let error = anyhow::anyhow!("some unknown cargo error message");
+        let cargo_error = from_resolve_error(error);
+
+        assert!(matches!(cargo_error.kind, CargoErrorKind::ResolveError));
+        assert_eq!(cargo_error.crate_name(), None);
+    }
+
+    #[test]
+    fn test_cargo_error_display() {
+        // Test that display works for different error kinds
+        let error = CargoError {
+            kind: CargoErrorKind::NoMatchingPackage("test_crate".to_string()),
+            source: anyhow::anyhow!("original error"),
+        };
+        let display = format!("{}", error);
+        assert!(display.contains("no matching package"));
+        assert!(display.contains("test_crate"));
+    }
+}
