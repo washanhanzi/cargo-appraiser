@@ -150,6 +150,11 @@ impl Appraiser {
         let client = self.client.clone();
         let client_capabilities = self.client_capabilities.clone();
         let cargo_path = self.cargo_path.clone();
+        // Shared HTTP client for crates.io API requests
+        let http_client = reqwest::Client::builder()
+            .user_agent("lsp-cargo-appraiser")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         tokio::spawn(async move {
             //workspace state
             let mut state = Workspace::new();
@@ -289,7 +294,7 @@ impl Appraiser {
                         };
                         let dep = doc.tree().find_dependency_at_position(pos);
                         let resolved = dep.and_then(|d| doc.resolved(&d.id));
-                        let completion = completion(node, dep, resolved).await;
+                        let completion = completion(&http_client, node, dep, resolved).await;
                         let _ = tx.send(completion);
                     }
                     CargoDocumentEvent::CodeAction(uri, range, tx) => {
