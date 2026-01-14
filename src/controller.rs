@@ -6,6 +6,7 @@ mod code_action;
 mod completion;
 mod debouncer;
 mod diagnostic;
+mod event_handlers;
 mod gd;
 mod hover;
 mod read_file;
