@@ -7,6 +7,8 @@ use moka::future::Cache;
 use serde::Deserialize;
 use tracing::{debug, error};
 
+use crate::config::GLOBAL_CONFIG;
+
 /// Cache TTL: 3 minutes
 const CACHE_TTL: Duration = Duration::from_secs(3 * 60);
 
@@ -85,8 +87,17 @@ async fn get_crate_index(
 
     debug!("cache miss for '{}', fetching from index", crate_name);
 
+    // Get base URL from config (None = feature disabled)
+    let base_url = match &GLOBAL_CONFIG.read().unwrap().crates_io.sparse_index_url {
+        Some(url) => url.clone(),
+        None => {
+            debug!("sparse index lookup disabled by config");
+            return None;
+        }
+    };
+
     // Fetch from sparse index
-    let url = format!("https://index.crates.io/{}", index_path(crate_name));
+    let url = format!("{}/{}", base_url, index_path(crate_name));
 
     let resp = match http_client.get(&url).send().await {
         Ok(r) => r,
@@ -263,6 +274,15 @@ pub async fn search_crates(
         return Some(cached);
     }
 
+    // Get base URL from config (None = feature disabled)
+    let base_url = match &GLOBAL_CONFIG.read().unwrap().crates_io.api_url {
+        Some(url) => url.clone(),
+        None => {
+            debug!("crates.io search disabled by config");
+            return None;
+        }
+    };
+
     debug!("fetching from crates.io for '{}'", query);
 
     #[derive(Deserialize, Debug)]
@@ -277,10 +297,7 @@ pub async fn search_crates(
         crates: Vec<SearchCrateOutput>,
     }
 
-    let url = format!(
-        "https://crates.io/api/v1/crates?page=1&per_page=10&q={}",
-        search_str
-    );
+    let url = format!("{}?page=1&per_page=10&q={}", base_url, search_str);
 
     let resp = match http_client.get(&url).send().await {
         Ok(r) => r,
