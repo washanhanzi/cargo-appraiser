@@ -102,6 +102,11 @@ impl Document {
         self.resolved.get(dep_id)
     }
 
+    /// Get all resolved dependency IDs (for debugging)
+    pub fn resolved_keys(&self) -> Vec<&String> {
+        self.resolved.keys().collect()
+    }
+
     /// Mark all dependencies as dirty (needing resolution)
     pub fn mark_dirty(&mut self) {
         self.rev += 1;

@@ -553,7 +553,14 @@ impl Appraiser {
                                 output.index.get(&lookup_key)
                             };
                             if let Some(resolved) = resolved {
+                                debug!("Setting resolved for dep_id={}", dep_id);
                                 doc.set_resolved(&dep_id, resolved.clone());
+                            } else {
+                                debug!(
+                                    "No resolution found for dep_id={}, package={}",
+                                    dep_id,
+                                    dep.package_name()
+                                );
                             }
 
                             resolved_dep_ids.push(dep_id);
