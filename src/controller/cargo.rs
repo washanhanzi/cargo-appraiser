@@ -38,8 +38,8 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         CargoIndex::resolve(&path).map_err(|e| crate::entity::from_resolve_error(e.into()))?;
 
     // Convert paths to URIs
-    let root_manifest_uri = CanonicalUri::try_from_path(index.root_manifest())
-        .map_err(CargoError::resolve_error)?;
+    let root_manifest_uri =
+        CanonicalUri::try_from_path(index.root_manifest()).map_err(CargoError::resolve_error)?;
 
     let member_manifest_uris: Vec<CanonicalUri> = index
         .member_manifests()
@@ -158,25 +158,42 @@ impl CargoError {
                         .map(|f| (f.name.clone(), f.node_id.clone()))
                         .collect();
 
+                    // Collect all valid features from summaries
+                    let mut all_valid_features: Vec<String> = Vec::new();
                     for summary in &summaries {
                         if !feature_map.is_empty() {
                             for f in summary.features().keys() {
-                                feature_map.remove(f.to_string().as_str());
+                                let feature_name = f.to_string();
+                                feature_map.remove(&feature_name);
+                                all_valid_features.push(feature_name);
                             }
                         }
                     }
 
-                    for (k, v) in feature_map {
-                        let node = tree.get_node(&v)?;
+                    for (unknown_feature, node_id) in feature_map {
+                        let node = tree.get_node(&node_id)?;
+
+                        // Try to find a close match for the typo
+                        let message = if let Some(suggestion) =
+                            find_closest_feature(&unknown_feature, &all_valid_features)
+                        {
+                            format!(
+                                "unknown feature `{}`, did you mean `{}`?",
+                                unknown_feature, suggestion
+                            )
+                        } else {
+                            format!("unknown feature `{}`", unknown_feature)
+                        };
+
                         diags.push((
-                            v.clone(),
+                            node_id.clone(),
                             Diagnostic {
                                 range: node.range,
                                 severity: Some(DiagnosticSeverity::ERROR),
                                 code: None,
                                 code_description: None,
                                 source: Some("cargo".to_string()),
-                                message: format!("unknown feature `{}`", k),
+                                message,
                                 related_information: None,
                                 tags: None,
                                 data: None,
@@ -201,4 +218,107 @@ pub fn make_lookup_key(dep: &TomlDependency) -> DependencyLookupKey {
         dep.platform.clone(),
         dep.package_name().to_string(),
     )
+}
+
+/// Find the closest matching feature using Levenshtein distance.
+/// Returns None if no feature is within the threshold distance (3).
+fn find_closest_feature(unknown: &str, valid_features: &[String]) -> Option<String> {
+    if valid_features.is_empty() {
+        return None;
+    }
+
+    valid_features
+        .iter()
+        .map(|f| (f, levenshtein_distance(unknown, f)))
+        .filter(|(_, dist)| *dist <= 3) // Only suggest if edit distance <= 3
+        .min_by_key(|(_, dist)| *dist)
+        .map(|(f, _)| f.clone())
+}
+
+/// Calculate the Levenshtein (edit) distance between two strings.
+/// This measures the minimum number of single-character edits (insertions,
+/// deletions, substitutions) required to change one string into the other.
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let a_len = a_chars.len();
+    let b_len = b_chars.len();
+
+    // Early exit for empty strings
+    if a_len == 0 {
+        return b_len;
+    }
+    if b_len == 0 {
+        return a_len;
+    }
+
+    // Use two rows for space optimization
+    let mut prev_row: Vec<usize> = (0..=b_len).collect();
+    let mut curr_row: Vec<usize> = vec![0; b_len + 1];
+
+    for (i, a_char) in a_chars.iter().enumerate() {
+        curr_row[0] = i + 1;
+
+        for (j, b_char) in b_chars.iter().enumerate() {
+            let cost = if a_char == b_char { 0 } else { 1 };
+            curr_row[j + 1] = std::cmp::min(
+                std::cmp::min(
+                    prev_row[j + 1] + 1, // deletion
+                    curr_row[j] + 1,     // insertion
+                ),
+                prev_row[j] + cost, // substitution
+            );
+        }
+
+        std::mem::swap(&mut prev_row, &mut curr_row);
+    }
+
+    prev_row[b_len]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_levenshtein_distance() {
+        assert_eq!(levenshtein_distance("", ""), 0);
+        assert_eq!(levenshtein_distance("abc", ""), 3);
+        assert_eq!(levenshtein_distance("", "abc"), 3);
+        assert_eq!(levenshtein_distance("abc", "abc"), 0);
+        assert_eq!(levenshtein_distance("derive", "de1rive"), 1);
+        assert_eq!(levenshtein_distance("derive", "deriv"), 1);
+        assert_eq!(levenshtein_distance("derive", "deriver"), 1);
+        assert_eq!(levenshtein_distance("serde", "serd"), 1);
+        assert_eq!(levenshtein_distance("abc", "xyz"), 3);
+    }
+
+    #[test]
+    fn test_find_closest_feature() {
+        let features = vec![
+            "derive".to_string(),
+            "serde".to_string(),
+            "default".to_string(),
+        ];
+
+        // Close typos should return suggestions
+        assert_eq!(
+            find_closest_feature("de1rive", &features),
+            Some("derive".to_string())
+        );
+        assert_eq!(
+            find_closest_feature("deriv", &features),
+            Some("derive".to_string())
+        );
+        assert_eq!(
+            find_closest_feature("serd", &features),
+            Some("serde".to_string())
+        );
+
+        // Completely different string should return None
+        assert_eq!(find_closest_feature("xyz123", &features), None);
+
+        // Empty features list should return None
+        assert_eq!(find_closest_feature("derive", &[]), None);
+    }
 }
