@@ -92,7 +92,11 @@ impl AuditController {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    Some(cmd) = internal_rx.recv() => {
+                    cmd = internal_rx.recv() => {
+                        let Some(cmd) = cmd else {
+                            // Channel closed, exit the loop
+                            break;
+                        };
                         match cmd {
                             AuditCommand::Audit(payload) => {
                                 // Always update with latest data (clears old state)
