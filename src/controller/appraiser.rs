@@ -282,20 +282,36 @@ impl Appraiser {
                         let _ = tx.send(gd);
                     }
                     CargoDocumentEvent::Completion(uri, pos, tx) => {
+                        debug!(
+                            "Completion event received: uri={}, pos=({}, {})",
+                            uri.as_str(),
+                            pos.line,
+                            pos.character
+                        );
                         let Ok(canonical_uri) = uri.clone().try_into() else {
                             error!("failed to canonicalize uri: {}", uri.as_str());
                             continue;
                         };
                         let Some(doc) = state.document(&canonical_uri) else {
+                            debug!("Completion: no document found");
                             continue;
                         };
-                        let Some(node) = doc.precise_match(pos) else {
-                            continue;
+
+                        let node = doc.precise_match(pos);
+                        debug!(
+                            "Completion: doc.rev={}, node={:?}",
+                            doc.rev,
+                            node.map(|n| (&n.kind, &n.text))
+                        );
+
+                        let completion_result = if let Some(node) = node {
+                            let dep = doc.tree().find_dependency_at_position(pos);
+                            let resolved = dep.and_then(|d| doc.resolved(&d.id));
+                            completion(&http_client, node, dep, resolved).await
+                        } else {
+                            None
                         };
-                        let dep = doc.tree().find_dependency_at_position(pos);
-                        let resolved = dep.and_then(|d| doc.resolved(&d.id));
-                        let completion = completion(&http_client, node, dep, resolved).await;
-                        let _ = tx.send(completion);
+                        let _ = tx.send(completion_result);
                     }
                     CargoDocumentEvent::CodeAction(uri, range, tx) => {
                         let Ok(canonical_uri) = uri.clone().try_into() else {
@@ -360,23 +376,18 @@ impl Appraiser {
                         };
                         //when Cargo.toml changed, clear audit diagnostics
                         diagnostic_controller.clear_audit_diagnostics().await;
-                        let doc =
-                            match state.update(msg.uri.clone(), canonical_uri.clone(), &msg.text) {
-                                Ok(doc) => doc,
-                                Err(err) => {
-                                    for e in err {
-                                        let diag = parse_error_to_diagnostic(&e);
-                                        diagnostic_controller
-                                            .add_parse_diagnostic(
-                                                &msg.uri,
-                                                &format!("parse_error_{}", e.message),
-                                                diag,
-                                            )
-                                            .await;
-                                    }
-                                    continue;
-                                }
-                            };
+                        let (doc, errors) =
+                            state.update(msg.uri.clone(), canonical_uri.clone(), &msg.text);
+                        for e in errors {
+                            let diag = parse_error_to_diagnostic(&e);
+                            diagnostic_controller
+                                .add_parse_diagnostic(
+                                    &msg.uri,
+                                    &format!("parse_error_{}", e.message),
+                                    diag,
+                                )
+                                .await;
+                        }
                         if let Err(e) = debouncer
                             .send_background(Ctx {
                                 uri: canonical_uri,
@@ -689,23 +700,17 @@ async fn reconsile_document<'a>(
     msg: &CargoTomlPayload,
     canonical_uri: &CanonicalUri,
 ) -> Option<&'a Document> {
-    match state.update(msg.uri.clone(), canonical_uri.clone(), &msg.text) {
-        Ok(doc) => {
-            if !doc.is_dependencies_dirty() {
-                None
-            } else {
-                Some(doc)
-            }
-        }
-        Err(err) => {
-            for e in err {
-                let diag = parse_error_to_diagnostic(&e);
-                diagnostic_controller
-                    .add_parse_diagnostic(&msg.uri, &format!("parse_error_{}", e.message), diag)
-                    .await;
-            }
-            None
-        }
+    let (doc, errors) = state.update(msg.uri.clone(), canonical_uri.clone(), &msg.text);
+    for e in errors {
+        let diag = parse_error_to_diagnostic(&e);
+        diagnostic_controller
+            .add_parse_diagnostic(&msg.uri, &format!("parse_error_{}", e.message), diag)
+            .await;
+    }
+    if !doc.is_dependencies_dirty() {
+        None
+    } else {
+        Some(doc)
     }
 }
 

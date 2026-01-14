@@ -79,14 +79,15 @@ impl Workspace {
         }
     }
 
-    /// Parse and store a document. Returns the document if successful.
+    /// Parse and store a document.
+    /// Returns Ok with the document reference and any parsing errors.
     /// The document will have all dependencies marked as dirty.
     pub fn update(
         &mut self,
         uri: Uri,
         canonical_uri: CanonicalUri,
         text: &str,
-    ) -> Result<&Document, Vec<toml_parser::ParseError>> {
+    ) -> (&Document, Vec<toml_parser::ParseError>) {
         // Get next rev from existing document, or start at 1
         let next_rev = self
             .documents
@@ -95,9 +96,7 @@ impl Workspace {
             .unwrap_or(1);
 
         let mut new_doc = Document::parse(uri.clone(), canonical_uri.clone(), text);
-        if !new_doc.parsing_errors.is_empty() {
-            return Err(new_doc.parsing_errors);
-        }
+        let errors = new_doc.parsing_errors.clone();
 
         // Set rev and mark all dependencies as dirty
         new_doc.rev = next_rev;
@@ -113,6 +112,6 @@ impl Workspace {
 
         self.uris.insert(canonical_uri.clone(), uri);
         self.documents.insert(canonical_uri.clone(), new_doc);
-        Ok(self.documents.get(&canonical_uri).unwrap())
+        (self.documents.get(&canonical_uri).unwrap(), errors)
     }
 }
