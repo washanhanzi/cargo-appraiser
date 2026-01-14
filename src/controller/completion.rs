@@ -1,13 +1,42 @@
+use tokio::sync::oneshot;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionResponse, CompletionTextEdit,
-    Position, Range, TextEdit,
+    Position, Range, TextEdit, Uri,
 };
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::entity::{
     DependencyValue, NodeKind, ResolvedDependency, TomlDependency, TomlNode, ValueKind,
 };
 use crate::usecase::{fetch_features, fetch_versions, search_crates};
+
+use super::context::AppraiserContext;
+
+/// Handle `CargoDocumentEvent::Completion` - provide completion items.
+pub async fn handle_completion(
+    ctx: &mut AppraiserContext<'_>,
+    uri: Uri,
+    pos: Position,
+    tx: oneshot::Sender<Option<CompletionResponse>>,
+) {
+    let Ok(canonical_uri) = uri.clone().try_into() else {
+        error!("failed to canonicalize uri: {}", uri.as_str());
+        return;
+    };
+
+    let Some(doc) = ctx.state.document(&canonical_uri) else {
+        return;
+    };
+
+    let Some(node) = doc.precise_match(pos) else {
+        return;
+    };
+
+    let dep = doc.tree().find_dependency_at_position(pos);
+    let resolved = dep.and_then(|d| doc.resolved(&d.id));
+    let comp = completion(ctx.http_client, node, dep, resolved).await;
+    let _ = tx.send(comp);
+}
 
 pub async fn completion(
     http_client: &reqwest::Client,

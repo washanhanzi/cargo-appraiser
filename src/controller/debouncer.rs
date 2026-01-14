@@ -1,6 +1,6 @@
 use crate::entity::CanonicalUri;
 
-use super::{appraiser::Ctx, CargoDocumentEvent};
+use super::context::{CargoDocumentEvent, Ctx};
 use futures::{Stream, StreamExt};
 use std::{
     collections::HashMap,
