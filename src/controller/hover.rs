@@ -1,9 +1,40 @@
-use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
+use tokio::sync::oneshot;
+use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Uri};
+use tracing::error;
 
 use crate::entity::{
     DependencyKey, DependencyValue, KeyKind, NodeKind, ResolvedDependency, SourceKind,
     TomlDependency, TomlNode, ValueKind, WorkspaceKey, WorkspaceMember,
 };
+
+use super::context::AppraiserContext;
+
+/// Handle `CargoDocumentEvent::Hovered` - provide hover information.
+pub async fn handle_hover(
+    ctx: &mut AppraiserContext<'_>,
+    uri: Uri,
+    pos: Position,
+    tx: oneshot::Sender<Option<Hover>>,
+) {
+    let Ok(canonical_uri) = uri.clone().try_into() else {
+        error!("failed to canonicalize uri: {}", uri.as_str());
+        return;
+    };
+
+    let Some(doc) = ctx.state.document(&canonical_uri) else {
+        return;
+    };
+
+    let Some(node) = doc.precise_match(pos) else {
+        return;
+    };
+
+    // Find the dependency for this node
+    let dep = doc.tree().find_dependency_at_position(pos);
+    let resolved = dep.and_then(|d| doc.resolved(&d.id));
+    let h = hover(node, dep, resolved, doc.members.as_deref());
+    let _ = tx.send(h);
+}
 
 pub fn hover(
     node: &TomlNode,

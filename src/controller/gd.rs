@@ -1,4 +1,6 @@
+use tokio::sync::oneshot;
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Uri};
+use tracing::error;
 
 use crate::{
     entity::{
@@ -6,6 +8,32 @@ use crate::{
     },
     usecase::{Document, Workspace},
 };
+
+use super::context::AppraiserContext;
+
+/// Handle `CargoDocumentEvent::Gded` - provide goto definition.
+pub async fn handle_gd(
+    ctx: &mut AppraiserContext<'_>,
+    uri: Uri,
+    pos: Position,
+    tx: oneshot::Sender<Option<GotoDefinitionResponse>>,
+) {
+    let Ok(canonical_uri) = uri.clone().try_into() else {
+        error!("failed to canonicalize uri: {}", uri.as_str());
+        return;
+    };
+
+    let Some(doc) = ctx.state.document(&canonical_uri) else {
+        return;
+    };
+
+    let Some(node) = doc.precise_match(pos) else {
+        return;
+    };
+
+    let gd = goto_definition(ctx.state, doc, node);
+    let _ = tx.send(gd);
+}
 
 pub fn goto_definition(
     state: &Workspace,
