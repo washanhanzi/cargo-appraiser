@@ -241,7 +241,23 @@ impl Appraiser {
                         };
                         let keys = doc.find_keys_by_crate_name(crate_name);
                         let deps = doc.find_deps_by_crate_name(crate_name);
-                        let Some(digs) = err.diagnostic(&keys, &deps, doc.tree()) else {
+
+                        // For NoMatchingPackage errors, search crates.io for suggestions
+                        let crate_suggestion = if matches!(
+                            err.kind,
+                            crate::entity::CargoErrorKind::NoMatchingPackage(_)
+                        ) {
+                            super::cargo::search_similar_crates(&http_client, crate_name).await
+                        } else {
+                            None
+                        };
+
+                        let Some(digs) = err.diagnostic_with_suggestion(
+                            &keys,
+                            &deps,
+                            doc.tree(),
+                            crate_suggestion,
+                        ) else {
                             continue;
                         };
                         for (id, diag) in digs {
