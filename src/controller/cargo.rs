@@ -90,36 +90,64 @@ impl CargoError {
         deps: &[&TomlDependency],
         tree: &TomlTree,
     ) -> Option<Vec<(String, Diagnostic)>> {
+        self.diagnostic_with_suggestion(keys, deps, tree, None)
+    }
+
+    /// Generate diagnostics for cargo errors with an optional crate name suggestion
+    pub fn diagnostic_with_suggestion(
+        &self,
+        keys: &[&TomlNode],
+        deps: &[&TomlDependency],
+        tree: &TomlTree,
+        crate_suggestion: Option<String>,
+    ) -> Option<Vec<(String, Diagnostic)>> {
         match &self.kind {
-            CargoErrorKind::NoMatchingPackage(_) => Some(
-                keys.iter()
-                    .map(|key| {
-                        (
-                            key.id.to_string(),
-                            Diagnostic {
-                                range: key.range,
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                code: None,
-                                code_description: None,
-                                source: Some("cargo".to_string()),
-                                message: self.to_string(),
-                                related_information: None,
-                                tags: None,
-                                data: None,
-                            },
-                        )
-                    })
-                    .collect(),
-            ),
-            CargoErrorKind::VersionNotFound(_, _) => Some(
+            CargoErrorKind::NoMatchingPackage(_) => {
+                let base_message = self.to_string();
+
+                Some(
+                    keys.iter()
+                        .map(|key| {
+                            let message = if let Some(ref suggestion) = crate_suggestion {
+                                format!("{}, did you mean `{}`?", base_message, suggestion)
+                            } else {
+                                base_message.clone()
+                            };
+                            (
+                                key.id.to_string(),
+                                Diagnostic {
+                                    range: key.range,
+                                    severity: Some(DiagnosticSeverity::ERROR),
+                                    code: None,
+                                    code_description: None,
+                                    source: Some("cargo".to_string()),
+                                    message,
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                },
+                            )
+                        })
+                        .collect(),
+                )
+            }
+            CargoErrorKind::VersionNotFound(crate_name, _) => Some(
                 deps.iter()
                     .filter_map(|d| {
                         let version_field = d.version()?;
-                        let error_msg = self.to_string();
+                        let base_message = self.to_string();
 
                         // Check if the requirement in the error message matches
-                        if error_msg.contains(&format!("`{} = \"", d.name)) {
+                        if base_message.contains(&format!("`{} = \"", d.name)) {
                             let version_node = tree.get_node(&version_field.node_id)?;
+
+                            // Try to get the latest available version
+                            let message = if let Some(latest) = get_latest_version(crate_name) {
+                                format!("{}, latest is `{}`", base_message, latest)
+                            } else {
+                                base_message
+                            };
+
                             Some((
                                 version_field.node_id.clone(),
                                 Diagnostic {
@@ -128,7 +156,7 @@ impl CargoError {
                                     code: None,
                                     code_description: None,
                                     source: Some("cargo".to_string()),
-                                    message: error_msg,
+                                    message,
                                     related_information: None,
                                     tags: None,
                                     data: None,
@@ -218,6 +246,62 @@ pub fn make_lookup_key(dep: &TomlDependency) -> DependencyLookupKey {
         dep.platform.clone(),
         dep.package_name().to_string(),
     )
+}
+
+/// Get the latest stable version of a crate from crates.io.
+fn get_latest_version(crate_name: &str) -> Option<String> {
+    // Query without version constraint to get all versions
+    let summaries = resolve_package_with_default_source(crate_name, None)?;
+
+    // Find the latest stable version (non-prerelease)
+    summaries
+        .iter()
+        .filter(|s| s.version().pre.is_empty())
+        .max_by(|a, b| a.version().cmp(b.version()))
+        .map(|s| s.version().to_string())
+}
+
+/// Search for crates with similar names using the crates.io API.
+/// Returns the closest matching crate name using Levenshtein distance.
+pub async fn search_similar_crates(
+    http_client: &reqwest::Client,
+    invalid_name: &str,
+) -> Option<String> {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct SearchCrateOutput {
+        name: String,
+    }
+
+    #[derive(Deserialize)]
+    struct SearchCrateResponse {
+        crates: Vec<SearchCrateOutput>,
+    }
+
+    // Search crates.io for similar names
+    let url = format!(
+        "https://crates.io/api/v1/crates?page=1&per_page=20&q={}",
+        invalid_name
+    );
+
+    let resp = http_client.get(&url).send().await.ok()?;
+    let search_response: SearchCrateResponse = resp.json().await.ok()?;
+
+    if search_response.crates.is_empty() {
+        return None;
+    }
+
+    // Find the closest match using Levenshtein distance
+    let crate_names: Vec<String> = search_response.crates.into_iter().map(|c| c.name).collect();
+
+    // Return the best match if it's close enough (distance <= 3)
+    crate_names
+        .iter()
+        .map(|name| (name, levenshtein_distance(invalid_name, name)))
+        .filter(|(_, dist)| *dist <= 3 && *dist > 0) // Must be similar but not exact
+        .min_by_key(|(_, dist)| *dist)
+        .map(|(name, _)| name.clone())
 }
 
 /// Find the closest matching feature using Levenshtein distance.
