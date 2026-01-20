@@ -2,10 +2,12 @@ use std::collections::HashMap;
 
 use semver::{Op, Version};
 use serde_json::Value;
+use tokio::sync::oneshot;
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionResponse, Command, Range, TextEdit,
     Uri, WorkspaceEdit,
 };
+use tracing::error;
 
 use crate::{
     decoration::{version_decoration, VersionDecorationKind},
@@ -14,6 +16,39 @@ use crate::{
         TomlDependency, TomlNode, TomlTree, ValueKind, CARGO,
     },
 };
+
+use super::context::AppraiserContext;
+
+/// Handle `CargoDocumentEvent::CodeAction` - provide code actions.
+pub async fn handle_code_action(
+    ctx: &mut AppraiserContext<'_>,
+    uri: Uri,
+    range: Range,
+    tx: oneshot::Sender<CodeActionResponse>,
+) {
+    let Ok(canonical_uri) = uri.clone().try_into() else {
+        error!("failed to canonicalize uri: {}", uri.as_str());
+        return;
+    };
+
+    let Some(doc) = ctx.state.document(&canonical_uri) else {
+        return;
+    };
+
+    let Some(node) = doc.precise_match(range.start) else {
+        return;
+    };
+
+    let tree = doc.tree();
+    let dep = tree.find_dependency_at_position(range.start);
+    let resolved = dep.and_then(|d| doc.resolved(&d.id));
+
+    let Some(action) = code_action(uri, tree, node, dep, resolved) else {
+        return;
+    };
+
+    let _ = tx.send(action);
+}
 
 pub fn code_action(
     uri: Uri,

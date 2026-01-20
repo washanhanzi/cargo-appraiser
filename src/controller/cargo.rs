@@ -12,7 +12,7 @@ use crate::entity::{
     TomlNode, TomlTree, WorkspaceMember,
 };
 
-use super::appraiser::Ctx;
+use super::context::Ctx;
 
 /// Output from cargo resolution, wrapping CargoIndex with context
 #[derive(Debug)]

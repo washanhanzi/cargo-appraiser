@@ -17,7 +17,8 @@
             "preLaunchTask": "${defaultBuildTask}",
             "env": {
                 "CARGO_APPRAISER_PATH": "${workspaceRoot}/target/debug/cargo-appraiser",
-                "RUST_LOG": "warn,cargo_appraiser::controller::completion=debug"
+                "RUST_LOG": "warn,cargo_appraiser::controller::appraiser=debug,cargo_appraiser::controller::completion=debug"
+                // "RUST_LOG": "debug"
             }
         },
         {

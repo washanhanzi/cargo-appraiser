@@ -87,7 +87,8 @@ To apply these config, you need to restart the lsp.
 ```jsonc
 {
   "cargo-appraiser.decorationFormatter": {}, //see below
-  "cargo-appraiser.audit": {} //see below
+  "cargo-appraiser.audit": {}, //see below
+  "cargo-appraiser.cratesIo": {} //see below
 }
 ```
 
@@ -99,7 +100,8 @@ To apply these config, you need to restart the lsp.
         "cargo-appraiser": {
             "initialization_options": {
                 "decorationFormatter": {}, //see below
-                "audit": {} //see below
+                "audit": {}, //see below
+                "cratesIo": {} //see below
             },
             //you need to set both path and arguments if you want to use a custom binary. https://github.com/zed-industries/zed/issues/22775
              "binary": {
@@ -158,6 +160,14 @@ To apply these config, you need to restart the lsp.
     // "warning" will show warning and vulnerability
     // "vulnerability" will only show vulnerability
     "level": "warning"
+  },
+  // crates.io URL configuration
+  // - not provided: use default URL
+  // - empty string "": disable the feature
+  // - non-empty string: use custom URL (trailing slash will be removed)
+  "cratesIo": {
+    "sparseIndexUrl": "https://index.crates.io",
+    "apiUrl": "https://crates.io/api/v1/crates"
   }
 }
 ```
