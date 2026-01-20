@@ -150,6 +150,10 @@ impl Debouncer {
                             error!("failed to send Ctx from debouncer: {}", e);
                         }
                     }
+                    else => {
+                        // Both branches are disabled: channel closed and queue empty
+                        break;
+                    }
                 }
             }
         });
