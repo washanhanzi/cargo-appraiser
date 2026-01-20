@@ -144,7 +144,50 @@ impl Appraiser {
                         handle_audited(&mut ctx, reports).await;
                     }
                     CargoDocumentEvent::CargoDiagnostic(uri, err) => {
-                        handle_cargo_diagnostic(&mut ctx, uri, err).await;
+                        debug!(
+                            "Appraiser Event: CargoDiagnostic for URI: {:?}, Error: {:?}",
+                            uri, err
+                        );
+                        let Some(client_uri) = state.uri(&uri) else {
+                            continue;
+                        };
+                        diagnostic_controller
+                            .clear_cargo_diagnostics(client_uri)
+                            .await;
+                        //we need a crate name to find something in toml
+                        let Some(crate_name) = err.crate_name() else {
+                            continue;
+                        };
+
+                        let Some(doc) = state.document(&uri) else {
+                            continue;
+                        };
+                        let keys = doc.find_keys_by_crate_name(crate_name);
+                        let deps = doc.find_deps_by_crate_name(crate_name);
+
+                        // For NoMatchingPackage errors, search crates.io for suggestions
+                        let crate_suggestion = if matches!(
+                            err.kind,
+                            crate::entity::CargoErrorKind::NoMatchingPackage(_)
+                        ) {
+                            super::cargo::search_similar_crates(&http_client, crate_name).await
+                        } else {
+                            None
+                        };
+
+                        let Some(digs) = err.diagnostic_with_suggestion(
+                            &keys,
+                            &deps,
+                            doc.tree(),
+                            crate_suggestion,
+                        ) else {
+                            continue;
+                        };
+                        for (id, diag) in digs {
+                            diagnostic_controller
+                                .add_cargo_diagnostic(client_uri, id.as_str(), diag)
+                                .await;
+                        }
                     }
                     CargoDocumentEvent::Hovered(uri, pos, tx) => {
                         handle_hover(&mut ctx, uri, pos, tx).await;
