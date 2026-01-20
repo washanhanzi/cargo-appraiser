@@ -13,7 +13,7 @@ tracing = "0.1"
 
 [package]
 name = "cargo-appraiser"
-version = "1.1.2"
+version = "1.1.3"
 edition = "2021"
 description = "a LSP for Cargo.toml"
 homepage = "https://github.com/washanhanzi/cargo-appraiser"
@@ -33,9 +33,10 @@ once_cell = "1.21"
 parking_lot = "0.12"
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
-    "native-tls",
+    "rustls-no-provider",
     "http2",
 ] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 moka = { version = "0.12", features = ["future"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive"] }

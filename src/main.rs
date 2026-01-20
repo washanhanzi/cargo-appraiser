@@ -366,6 +366,10 @@ async fn main() {
         return;
     }
 
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("install rustls provider");
+
     // Parse command-line arguments for LSP mode
     let args = Args::parse();
 
