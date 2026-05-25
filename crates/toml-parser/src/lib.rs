@@ -1,3 +1,4 @@
+mod toml11_inline_table;
 mod toml_tree;
 mod walker;
 

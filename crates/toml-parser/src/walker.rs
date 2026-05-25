@@ -5,6 +5,7 @@ use taplo::{
 };
 use tower_lsp::lsp_types::{Position, Range};
 
+use crate::toml11_inline_table::normalize_multiline_inline_tables;
 use crate::toml_tree::{
     Dependency, DependencyKey, DependencyStyle, DependencyTable, DependencyValue, FeatureEntry,
     FieldValue, KeyKind, NodeKind, TomlNode, TomlTree, ValueKind, WorkspaceKey, WorkspaceValue,
@@ -34,7 +35,8 @@ impl ParseError {
 
 /// Parse a Cargo.toml file and return the symbol tree and dependency map
 pub fn parse(text: &str) -> ParseResult {
-    let parsed = taplo::parser::parse(text);
+    let normalized_text = normalize_multiline_inline_tables(text);
+    let parsed = taplo::parser::parse(&normalized_text);
     let mapper = Mapper::new_utf16(text, false);
 
     let mut walker = Walker::new(mapper);
@@ -628,6 +630,66 @@ shared = { workspace = true }
 
         let dep = result.tree.get_dependency("dependencies.shared").unwrap();
         assert!(dep.is_workspace());
+    }
+
+    #[test]
+    fn test_multiline_workspace_dependency_with_features() {
+        let toml = r#"
+[dependencies]
+clap = {
+  workspace = true,
+  features = [
+    "cargo",
+    "derive",
+    "string",
+    "unicode",
+    "wrap_help",
+  ]
+}
+"#;
+        let result = parse(toml);
+
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let dep = result.tree.get_dependency("dependencies.clap").unwrap();
+        assert_eq!(dep.name, "clap");
+        assert_eq!(dep.style, DependencyStyle::Table);
+        assert!(dep.is_workspace());
+        assert_eq!(
+            dep.features
+                .iter()
+                .map(|feature| feature.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cargo", "derive", "string", "unicode", "wrap_help"]
+        );
+    }
+
+    #[test]
+    fn test_multiline_workspace_dependency_after_quoted_multiline_description() {
+        let toml = r#"
+[package]
+description = """"quoted""""
+
+[dependencies]
+clap = {
+  workspace = true,
+  features = ["derive"]
+}
+"#;
+        let result = parse(toml);
+
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let dep = result.tree.get_dependency("dependencies.clap").unwrap();
+        assert_eq!(dep.name, "clap");
+        assert!(dep.is_workspace());
+        assert_eq!(
+            dep.features
+                .iter()
+                .map(|feature| feature.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["derive"]
+        );
     }
 
     #[test]
