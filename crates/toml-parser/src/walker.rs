@@ -1,11 +1,8 @@
-use ls_types::{Position, Range};
-use lsp_async_stub::util::Mapper;
-use taplo::{
-    dom::{node::Key, Node},
-    util::join_ranges,
-};
+use ls_types::Range;
+use tombi_document_tree::{IntoDocumentTreeAndErrors, Key, Value};
+use tombi_toml_version::TomlVersion;
 
-use crate::toml11_inline_table::normalize_multiline_inline_tables;
+use crate::position_mapper::PositionMapper;
 use crate::toml_tree::{
     Dependency, DependencyKey, DependencyStyle, DependencyTable, DependencyValue, FeatureEntry,
     FieldValue, KeyKind, NodeKind, TomlNode, TomlTree, ValueKind, WorkspaceKey, WorkspaceValue,
@@ -33,63 +30,49 @@ impl ParseError {
     }
 }
 
-/// Parse a Cargo.toml file and return the symbol tree and dependency map
+/// Parse a Cargo.toml file and return the symbol tree and dependency map.
+///
+/// Parsing targets TOML v1.1 (newlines in inline tables etc.), which cargo
+/// accepts going forward; v1.0 documents are a strict subset.
 pub fn parse(text: &str) -> ParseResult {
-    let normalized_text = normalize_multiline_inline_tables(text);
-    let parsed = taplo::parser::parse(&normalized_text);
-    let mapper = Mapper::new_utf16(text, false);
-
-    // Surface taplo's syntax errors; discarding them means broken TOML
-    // produces no diagnostics at all. Offsets from the normalized text map
-    // onto the original because normalization is byte-preserving.
-    let syntax_errors: Vec<ParseError> = parsed
-        .errors
-        .iter()
-        .filter_map(|err| {
-            let range = mapper.range(err.range)?;
-            Some(ParseError::new(
-                err.message.clone(),
-                Range {
-                    start: Position {
-                        line: range.start.line as u32,
-                        character: range.start.character as u32,
-                    },
-                    end: Position {
-                        line: range.end.line as u32,
-                        character: range.end.character as u32,
-                    },
-                },
-            ))
-        })
-        .collect();
-
+    let mapper = PositionMapper::new(text);
     let mut walker = Walker::new(mapper);
-    walker.errors.extend(syntax_errors);
 
-    // Get the DOM from parsed TOML
-    let dom = parsed.into_dom();
+    // Surface syntax errors; discarding them means broken TOML produces no
+    // diagnostics at all.
+    let (root, syntax_errors) = tombi_parser::parse(text).into_root_and_errors();
+    walker.errors.extend(
+        syntax_errors
+            .iter()
+            .map(|e| ParseError::new(e.to_message(), walker.mapper.range(e.range()))),
+    );
+
+    let (tree, tree_errors) = root
+        .into_document_tree_and_errors(TomlVersion::V1_1_0)
+        .into();
+    walker.errors.extend(
+        tree_errors
+            .iter()
+            .map(|e| ParseError::new(e.to_string(), walker.mapper.range(e.range()))),
+    );
 
     // Walk the root table
-    if let Node::Table(root) = dom {
-        let entries = root.entries().read();
-        for (key, value) in entries.iter() {
-            let table_name = key.value();
-            let id = table_name.to_string();
-            walker.walk_root(&id, table_name, value, key);
-        }
+    for (key, value) in tree.key_values() {
+        let table_name = key.value.clone();
+        walker.walk_root(&table_name, &table_name, value);
     }
 
     walker.finish()
 }
 
-struct Walker {
+struct Walker<'a> {
     tree: TomlTree,
-    mapper: Mapper,
+    mapper: PositionMapper<'a>,
     errors: Vec<ParseError>,
 }
 
-impl Walker {
-    fn new(mapper: Mapper) -> Self {
+impl<'a> Walker<'a> {
+    fn new(mapper: PositionMapper<'a>) -> Self {
         Self {
             tree: TomlTree::with_capacity(64, 32),
             mapper,
@@ -105,30 +88,15 @@ impl Walker {
         }
     }
 
-    fn to_range(&self, node: &Node) -> Range {
-        let text_range = join_ranges(node.text_ranges(true));
-        self.mapper_range_to_lsp(self.mapper.range(text_range).unwrap())
+    fn value_range(&self, value: &Value) -> Range {
+        self.mapper.range(value.range())
     }
 
-    fn key_to_range(&self, key: &Key) -> Range {
-        let text_range = join_ranges(key.text_ranges());
-        self.mapper_range_to_lsp(self.mapper.range(text_range).unwrap())
+    fn key_range(&self, key: &Key) -> Range {
+        self.mapper.range(key.range())
     }
 
-    fn mapper_range_to_lsp(&self, range: lsp_async_stub::util::Range) -> Range {
-        Range {
-            start: Position {
-                line: range.start.line as u32,
-                character: range.start.character as u32,
-            },
-            end: Position {
-                line: range.end.line as u32,
-                character: range.end.character as u32,
-            },
-        }
-    }
-
-    fn walk_root(&mut self, id: &str, table_name: &str, node: &Node, _key: &Key) {
+    fn walk_root(&mut self, id: &str, table_name: &str, node: &Value) {
         // Check if this is a dependency-related table
         if let Some(dep_table) = DependencyTable::from_str(table_name) {
             self.walk_dependency_table(id, dep_table, node, None);
@@ -151,21 +119,19 @@ impl Walker {
         self.insert_node(id, node, NodeKind::Value(ValueKind::Table));
     }
 
-    fn walk_target_table(&mut self, id: &str, node: &Node) {
-        let Node::Table(t) = node else { return };
+    fn walk_target_table(&mut self, id: &str, node: &Value) {
+        let Value::Table(t) = node else { return };
 
-        let entries = t.entries().read();
-        for (platform_key, platform_value) in entries.iter() {
-            let platform = platform_key.value();
+        for (platform_key, platform_value) in t.key_values() {
+            let platform = platform_key.value.as_str();
             let platform_id = format!("{}.{}", id, platform);
 
-            let Node::Table(platform_table) = platform_value else {
+            let Value::Table(platform_table) = platform_value else {
                 continue;
             };
 
-            let platform_entries = platform_table.entries().read();
-            for (dep_table_key, dep_table_value) in platform_entries.iter() {
-                let dep_table_name = dep_table_key.value();
+            for (dep_table_key, dep_table_value) in platform_table.key_values() {
+                let dep_table_name = dep_table_key.value.as_str();
                 if let Some(dep_table) = DependencyTable::from_str(dep_table_name) {
                     let dep_id = format!("{}.{}", platform_id, dep_table_name);
                     self.walk_dependency_table(&dep_id, dep_table, dep_table_value, Some(platform));
@@ -174,12 +140,11 @@ impl Walker {
         }
     }
 
-    fn walk_workspace_table(&mut self, id: &str, node: &Node) {
-        let Node::Table(t) = node else { return };
+    fn walk_workspace_table(&mut self, id: &str, node: &Value) {
+        let Value::Table(t) = node else { return };
 
-        let entries = t.entries().read();
-        for (key, value) in entries.iter() {
-            let key_name = key.value();
+        for (key, value) in t.key_values() {
+            let key_name = key.value.as_str();
             let entry_id = format!("{}.{}", id, key_name);
             let key_id = format!("{}.key", entry_id);
 
@@ -195,7 +160,7 @@ impl Walker {
                 }
                 "members" => {
                     // Insert key node with WorkspaceKey::Members
-                    let key_range = self.key_to_range(key);
+                    let key_range = self.key_range(key);
                     self.tree.insert_node(TomlNode::new(
                         key_id,
                         key_range,
@@ -208,7 +173,7 @@ impl Walker {
                 }
                 "exclude" => {
                     // Insert key node with WorkspaceKey::Exclude
-                    let key_range = self.key_to_range(key);
+                    let key_range = self.key_range(key);
                     self.tree.insert_node(TomlNode::new(
                         key_id,
                         key_range,
@@ -226,8 +191,8 @@ impl Walker {
         }
     }
 
-    fn walk_workspace_members_array(&mut self, id: &str, node: &Node) {
-        let range = self.to_range(node);
+    fn walk_workspace_members_array(&mut self, id: &str, node: &Value) {
+        let range = self.value_range(node);
 
         // Insert the members array node
         self.tree.insert_node(TomlNode::new(
@@ -237,15 +202,14 @@ impl Walker {
             NodeKind::Value(ValueKind::Workspace(WorkspaceValue::Members)),
         ));
 
-        let Node::Array(arr) = node else { return };
+        let Value::Array(arr) = node else { return };
 
-        let items = arr.items().read();
-        for (i, item) in items.iter().enumerate() {
+        for (i, item) in arr.values().iter().enumerate() {
             let member_id = format!("{}.{}", id, i);
 
-            if let Node::Str(s) = item {
+            if let Value::String(s) = item {
                 let member_path = s.value().to_string();
-                let member_range = self.to_range(item);
+                let member_range = self.value_range(item);
 
                 self.tree.insert_node(TomlNode::new(
                     member_id,
@@ -261,14 +225,13 @@ impl Walker {
         &mut self,
         id: &str,
         table: DependencyTable,
-        node: &Node,
+        node: &Value,
         platform: Option<&str>,
     ) {
-        let Node::Table(t) = node else { return };
+        let Value::Table(t) = node else { return };
 
-        let entries = t.entries().read();
-        for (crate_key, crate_value) in entries.iter() {
-            let crate_name = crate_key.value();
+        for (crate_key, crate_value) in t.key_values() {
+            let crate_name = crate_key.value.as_str();
             let dep_id = format!("{}.{}", id, crate_name);
 
             self.walk_dependency(&dep_id, crate_name, crate_key, crate_value, table, platform);
@@ -280,12 +243,12 @@ impl Walker {
         id: &str,
         crate_name: &str,
         crate_key: &Key,
-        node: &Node,
+        node: &Value,
         table: DependencyTable,
         platform: Option<&str>,
     ) {
         let crate_key_id = format!("{}.key", id);
-        let crate_key_range = self.key_to_range(crate_key);
+        let crate_key_range = self.key_range(crate_key);
 
         // Insert crate name key node
         self.tree.insert_node(TomlNode::new(
@@ -297,8 +260,8 @@ impl Walker {
 
         match node {
             // Simple dependency: serde = "1.0"
-            Node::Str(s) => {
-                let range = self.to_range(node);
+            Value::String(s) => {
+                let range = self.value_range(node);
                 let version = s.value().to_string();
 
                 // Insert the simple dependency node
@@ -328,8 +291,8 @@ impl Walker {
             }
 
             // Table dependency: serde = { version = "1.0", features = [...] }
-            Node::Table(t) => {
-                let range = self.to_range(node);
+            Value::Table(t) => {
+                let range = self.value_range(node);
 
                 // Insert the table dependency node
                 self.tree.insert_node(TomlNode::new(
@@ -351,8 +314,7 @@ impl Walker {
                 dep.platform = platform.map(|s| s.to_string());
 
                 // Walk table entries
-                let entries = t.entries().read();
-                for (field_key, field_value) in entries.iter() {
+                for (field_key, field_value) in t.key_values() {
                     self.walk_dependency_field(id, field_key, field_value, &mut dep);
                 }
 
@@ -361,7 +323,7 @@ impl Walker {
 
             // Invalid node
             _ => {
-                let range = self.to_range(node);
+                let range = self.value_range(node);
                 self.errors.push(ParseError::new(
                     format!("Invalid dependency format for '{}'", crate_name),
                     range,
@@ -374,10 +336,10 @@ impl Walker {
         &mut self,
         dep_id: &str,
         key: &Key,
-        value: &Node,
+        value: &Value,
         dep: &mut Dependency,
     ) {
-        let field_name = key.value();
+        let field_name = key.value.as_str();
         let field_id = format!("{}.{}", dep_id, field_name);
         let key_id = format!("{}.key", field_id);
 
@@ -451,7 +413,7 @@ impl Walker {
         };
 
         // Insert key node
-        let key_range = self.key_to_range(key);
+        let key_range = self.key_range(key);
         self.tree.insert_node(TomlNode::new(
             key_id,
             key_range,
@@ -466,8 +428,8 @@ impl Walker {
         }
 
         // Insert value node
-        let value_range = self.to_range(value);
-        let value_text = self.node_to_text(value);
+        let value_range = self.value_range(value);
+        let value_text = node_to_text(value);
         self.tree.insert_node(TomlNode::new(
             field_id.clone(),
             value_range,
@@ -481,8 +443,8 @@ impl Walker {
         }
     }
 
-    fn walk_features_array(&mut self, id: &str, node: &Node, dep: &mut Dependency) {
-        let range = self.to_range(node);
+    fn walk_features_array(&mut self, id: &str, node: &Value, dep: &mut Dependency) {
+        let range = self.value_range(node);
 
         // Insert the features array node
         self.tree.insert_node(TomlNode::new(
@@ -492,15 +454,14 @@ impl Walker {
             NodeKind::Value(ValueKind::Dependency(DependencyValue::FeaturesArray)),
         ));
 
-        let Node::Array(arr) = node else { return };
+        let Value::Array(arr) = node else { return };
 
-        let items = arr.items().read();
-        for (i, item) in items.iter().enumerate() {
+        for (i, item) in arr.values().iter().enumerate() {
             let feature_id = format!("{}.{}", id, i);
 
-            if let Node::Str(s) = item {
+            if let Value::String(s) = item {
                 let feature_name = s.value().to_string();
-                let feature_range = self.to_range(item);
+                let feature_range = self.value_range(item);
 
                 self.tree.insert_node(TomlNode::new(
                     feature_id.clone(),
@@ -514,27 +475,27 @@ impl Walker {
         }
     }
 
-    fn insert_node(&mut self, id: &str, node: &Node, kind: NodeKind) {
-        let range = self.to_range(node);
-        let text = self.node_to_text(node);
+    fn insert_node(&mut self, id: &str, node: &Value, kind: NodeKind) {
+        let range = self.value_range(node);
+        let text = node_to_text(node);
         self.tree
             .insert_node(TomlNode::new(id.to_string(), range, text, kind));
     }
-
-    fn node_to_text(&self, node: &Node) -> String {
-        match node {
-            Node::Str(s) => s.value().to_string(),
-            Node::Bool(b) => b.value().to_string(),
-            Node::Integer(i) => i.value().to_string(),
-            Node::Float(f) => f.value().to_string(),
-            _ => String::new(),
-        }
-    }
 }
 
+fn node_to_text(node: &Value) -> String {
+    match node {
+        Value::String(s) => s.value().to_string(),
+        Value::Boolean(b) => b.value().to_string(),
+        Value::Integer(i) => i.value().to_string(),
+        Value::Float(f) => f.value().to_string(),
+        _ => String::new(),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ls_types::Position;
 
     #[test]
     fn test_parse_simple_dependency() {
@@ -760,5 +721,82 @@ members = ["crates/foo", "crates/bar", "tools/*"]
         let member2 = result.tree.get_node("workspace.members.2");
         assert!(member2.is_some());
         assert_eq!(member2.unwrap().text, "tools/*");
+    }
+}
+
+#[cfg(test)]
+mod tombi_migration_tests {
+    use super::*;
+    use ls_types::Position;
+
+    #[test]
+    fn test_utf16_ranges_after_emoji() {
+        // "👍" is 1 grapheme / 2 UTF-16 units; the version string on the
+        // same line must have UTF-16 columns, not grapheme columns.
+        let toml = "[dependencies]\nserde = \"1.0\" # 👍 nice\ntokio = \"1\"\n";
+        let result = parse(toml);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let node = result.tree.get_node("dependencies.serde").unwrap();
+        // `serde = "1.0"` — value starts at col 8 (ASCII prefix, unaffected).
+        assert_eq!(node.range.start, Position::new(1, 8));
+        assert_eq!(node.range.end, Position::new(1, 13));
+
+        // A node on the line after the emoji line is unaffected.
+        let node = result.tree.get_node("dependencies.tokio").unwrap();
+        assert_eq!(node.range.start, Position::new(2, 8));
+    }
+
+    #[test]
+    fn test_utf16_ranges_emoji_before_value() {
+        // Emoji inside a string value shifts the end column: the value
+        // "👍" spans quotes + 2 UTF-16 units.
+        let toml = "[package]\nname = \"👍x\"\n\n[dependencies]\nserde = \"1.0\"\n";
+        let result = parse(toml);
+        let node = result.tree.get_node("dependencies.serde").unwrap();
+        assert_eq!(node.range.start, Position::new(4, 8));
+    }
+
+    #[test]
+    fn test_broken_toml_produces_errors() {
+        let toml = "[dependencies\nserde = \"1.0\"\n";
+        let result = parse(toml);
+        assert!(!result.errors.is_empty(), "syntax errors must surface");
+    }
+
+    #[test]
+    fn test_unclosed_inline_table_mid_typing() {
+        // The user is mid-typing: no panic, errors reported.
+        let toml = "[dependencies]\nserde = { version = \"1.0\"\ntokio = \"1\"\n";
+        let result = parse(toml);
+        assert!(!result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_toml_v11_multiline_inline_table_ranges() {
+        // Native TOML 1.1: newlines inside inline tables. Assert exact
+        // ranges (the old normalizer's offset-preservation contract).
+        let toml = "[dependencies]\nclap = {\n  workspace = true,\n  features = [\"derive\"]\n}\n";
+        let result = parse(toml);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        let dep = result.tree.get_dependency("dependencies.clap").unwrap();
+        assert!(dep.is_workspace());
+
+        // The `workspace` key sits on line 2, cols 2..11.
+        let key = result
+            .tree
+            .get_node("dependencies.clap.workspace.key")
+            .unwrap();
+        assert_eq!(key.range.start, Position::new(2, 2));
+        assert_eq!(key.range.end, Position::new(2, 11));
+
+        // The feature value on line 3 includes its quotes.
+        let feat = result
+            .tree
+            .get_node("dependencies.clap.features.0")
+            .unwrap();
+        assert_eq!(feat.range.start, Position::new(3, 14));
+        assert_eq!(feat.range.end, Position::new(3, 22));
     }
 }

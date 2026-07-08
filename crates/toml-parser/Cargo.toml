@@ -6,10 +6,13 @@ description = "Parser for Cargo.toml files with LSP position support"
 license = "MIT"
 
 [dependencies]
-taplo.workspace = true
 ls-types.workspace = true
-lsp-async-stub.workspace = true
 serde.workspace = true
 tracing.workspace = true
+tombi-parser = { git = "https://github.com/tombi-toml/tombi", tag = "v1.2.0" }
+tombi-document-tree = { git = "https://github.com/tombi-toml/tombi", tag = "v1.2.0" }
+tombi-toml-version = { git = "https://github.com/tombi-toml/tombi", tag = "v1.2.0" }
+tombi-text = { git = "https://github.com/tombi-toml/tombi", tag = "v1.2.0" }
+unicode-segmentation = "1.12"
 
 [dev-dependencies]
