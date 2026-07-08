@@ -8,13 +8,13 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::sync::mpsc::{self, error::SendError, Sender};
+use tokio::sync::mpsc::{self, error::SendError, Sender, UnboundedSender};
 use tokio_util::time::{delay_queue, DelayQueue};
 use tracing::error;
 
 // Change Timer
 pub struct Debouncer {
-    tx: Sender<CargoDocumentEvent>,
+    tx: UnboundedSender<CargoDocumentEvent>,
     interactive_timeout: u64,
     background_timeout: u64,
     sender: Sender<DebouncerEvent>,
@@ -97,7 +97,7 @@ impl Stream for Queue {
 
 impl Debouncer {
     pub fn new(
-        tx: Sender<CargoDocumentEvent>,
+        tx: UnboundedSender<CargoDocumentEvent>,
         interactive_timeout: u64,
         background_timeout: u64,
     ) -> Self {
@@ -142,7 +142,7 @@ impl Debouncer {
                         };
                     }
                     Some(ctx) = q.next() => {
-                        if let Err(e) = tx.send(CargoDocumentEvent::ReadyToResolve(ctx)).await {
+                        if let Err(e) = tx.send(CargoDocumentEvent::ReadyToResolve(ctx)) {
                             error!("failed to send Ctx from debouncer: {}", e);
                         }
                     }

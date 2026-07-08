@@ -65,12 +65,9 @@ pub async fn handle_cargo_diagnostic(
         .flatten();
 
         if let Some(digs) = digs {
-            if let Err(e) = inner_tx
-                .send(CargoDocumentEvent::CargoDiagnosticsComputed(
-                    client_uri, digs,
-                ))
-                .await
-            {
+            if let Err(e) = inner_tx.send(CargoDocumentEvent::CargoDiagnosticsComputed(
+                client_uri, digs,
+            )) {
                 debug!("failed to send computed cargo diagnostics: {}", e);
             }
         }

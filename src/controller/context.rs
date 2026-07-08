@@ -1,6 +1,9 @@
 //! Shared context and types for the Appraiser controller.
 
-use tokio::sync::{mpsc::Sender, oneshot};
+use tokio::sync::{
+    mpsc::{Sender, UnboundedSender},
+    oneshot,
+};
 use tower_lsp::{
     lsp_types::{
         CodeActionResponse, CompletionResponse, GotoDefinitionResponse, Hover, Position, Range, Uri,
@@ -84,8 +87,9 @@ pub struct AppraiserContext<'a> {
     pub audit_controller: &'a AuditController,
     /// Sender for cargo resolve tasks
     pub cargo_tx: &'a Sender<Ctx>,
-    /// Sender for internal event loop messages
-    pub inner_tx: &'a Sender<CargoDocumentEvent>,
+    /// Sender for internal event loop messages (unbounded so the loop can
+    /// send to itself without deadlocking on a full channel)
+    pub inner_tx: &'a UnboundedSender<CargoDocumentEvent>,
     /// LSP client for sending requests/notifications
     pub client: &'a Client,
     /// Client capabilities detected during initialization

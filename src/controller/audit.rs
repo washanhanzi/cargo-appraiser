@@ -7,7 +7,7 @@ use std::{
 
 use regex::Regex;
 use tokio::{
-    sync::mpsc::{self, error::SendError, Sender},
+    sync::mpsc::{self, error::SendError, Sender, UnboundedSender},
     time::Sleep,
 };
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Uri};
@@ -45,13 +45,13 @@ pub(super) enum AuditCommand {
 }
 
 pub struct AuditController {
-    tx: Sender<CargoDocumentEvent>,
+    tx: UnboundedSender<CargoDocumentEvent>,
     sender: Sender<AuditCommand>,
     receiver: Option<mpsc::Receiver<AuditCommand>>,
 }
 
 impl AuditController {
-    pub fn new(tx: Sender<CargoDocumentEvent>) -> Self {
+    pub fn new(tx: UnboundedSender<CargoDocumentEvent>) -> Self {
         let (sender, receiver) = mpsc::channel(32);
         Self {
             tx,
@@ -137,7 +137,7 @@ impl AuditController {
                             }
                         };
                         trace!("[AUDIT] Found {} crates with issues", reports.len());
-                        if let Err(e) = tx.send(CargoDocumentEvent::Audited(reports)).await {
+                        if let Err(e) = tx.send(CargoDocumentEvent::Audited(reports)) {
                             error!("[AUDIT] Failed to send Audited event: {}", e);
                         }
                     }

@@ -60,14 +60,18 @@ impl Appraiser {
     }
 
     pub fn initialize(&self) -> Sender<CargoDocumentEvent> {
-        // Create mpsc channel
+        // External events (from LSP callbacks) go through a bounded channel:
+        // backpressure against the client is fine. Internal producers (the
+        // loop itself, debouncer, audit, cargo resolve results) use an
+        // unbounded channel — sending into the bounded channel from tasks the
+        // loop awaits on (or from the loop itself) can deadlock when full.
         let (tx, mut rx) = mpsc::channel::<CargoDocumentEvent>(64);
-        let inner_tx = tx.clone();
+        let (inner_tx, mut inner_rx) = mpsc::unbounded_channel::<CargoDocumentEvent>();
 
         // Cargo tree task
         // Cargo tree channel
         let (cargo_tx, mut cargo_rx) = mpsc::channel::<Ctx>(32);
-        let tx_for_cargo = tx.clone();
+        let tx_for_cargo = inner_tx.clone();
         tokio::spawn(async move {
             match env::var("PATH") {
                 Ok(path_var) => trace!("Current PATH: {}", path_var),
@@ -77,9 +81,7 @@ impl Appraiser {
             while let Some(event) = cargo_rx.recv().await {
                 match cargo_resolve(&event).await {
                     Ok(output) => {
-                        if let Err(e) = tx_for_cargo
-                            .send(CargoDocumentEvent::CargoResolved(output))
-                            .await
+                        if let Err(e) = tx_for_cargo.send(CargoDocumentEvent::CargoResolved(output))
                         {
                             error!("error sending cargo resolved event: {}", e);
                         }
@@ -88,7 +90,6 @@ impl Appraiser {
                         error!("error resolving: {}", err);
                         if let Err(e) = tx_for_cargo
                             .send(CargoDocumentEvent::CargoDiagnostic(event.uri.clone(), err))
-                            .await
                         {
                             error!("error sending diagnostic event: {}", e);
                         }
@@ -98,11 +99,11 @@ impl Appraiser {
         });
 
         // Timer task
-        let mut debouncer = Debouncer::new(tx.clone(), 1000, 5000);
+        let mut debouncer = Debouncer::new(inner_tx.clone(), 1000, 5000);
         debouncer.spawn();
 
         // Audit task
-        let mut audit_controller = AuditController::new(tx.clone());
+        let mut audit_controller = AuditController::new(inner_tx.clone());
         audit_controller.spawn();
 
         // Main loop
@@ -127,7 +128,18 @@ impl Appraiser {
             let diag_client = client.clone();
             let mut diagnostic_controller = DiagnosticController::new(diag_client);
 
-            while let Some(event) = rx.recv().await {
+            loop {
+                // Drain internal events first: they are follow-ups to work
+                // already in flight and must never wait behind client events.
+                let event = tokio::select! {
+                    biased;
+                    Some(event) = inner_rx.recv() => event,
+                    event = rx.recv() => match event {
+                        Some(event) => event,
+                        None => break,
+                    },
+                };
+
                 // Build context for handlers
                 let mut ctx = AppraiserContext {
                     state: &mut state,

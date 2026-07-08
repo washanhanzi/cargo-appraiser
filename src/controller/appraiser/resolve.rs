@@ -73,7 +73,7 @@ pub async fn handle_cargo_resolved(ctx: &mut AppraiserContext<'_>, output: Cargo
     let root_manifest_uri = output.root_manifest_uri.clone();
     if ctx.state.document(&root_manifest_uri).is_none() {
         let uri: Uri = (*root_manifest_uri).clone();
-        if let Err(e) = ctx.inner_tx.send(CargoDocumentEvent::Parse(uri)).await {
+        if let Err(e) = ctx.inner_tx.send(CargoDocumentEvent::Parse(uri)) {
             error!("inner tx send error: {}", e);
         }
     }
