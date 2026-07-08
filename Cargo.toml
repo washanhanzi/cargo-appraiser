@@ -7,7 +7,7 @@ tower-lsp = { git = "https://github.com/washanhanzi/tower-lsp", branch = "main",
     "proposed",
 ] }
 lsp-async-stub = "0.7"
-cargo = { git = "https://github.com/washanhanzi/cargo.git", branch = "master" }
+cargo = { git = "https://github.com/rust-lang/cargo", tag = "0.92.0" }
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
 
@@ -44,7 +44,7 @@ thiserror = "2.0"
 tokio = { version = "1.44", features = ["full", "macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", features = ["time"] }
 unicode-xid = "0.2.6"
-cargo = { git = "https://github.com/rust-lang/cargo", tag = "0.92.0" }
+cargo.workspace = true
 tower-lsp = { git = "https://github.com/washanhanzi/tower-lsp", branch = "main", features = [
     "proposed",
 ] }

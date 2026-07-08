@@ -62,6 +62,3 @@ pub use entity::{
 pub use error::CargoResolveError;
 pub use index::CargoIndex;
 pub use query::{dep_kind_to_table, DependencyLookupKey, DependencyTable, ResolvedDependency};
-
-// Re-export cargo Package for workspace member access (still needed for member_packages)
-pub use cargo::core::Package;

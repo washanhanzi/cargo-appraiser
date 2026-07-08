@@ -28,8 +28,6 @@ pub struct CargoIndex {
     root_manifest: std::path::PathBuf,
     /// Member manifest paths (for workspaces)
     member_manifests: Vec<std::path::PathBuf>,
-    /// Member packages (for workspaces) - only populated when using resolve_direct
-    member_packages: Vec<Package>,
     /// Workspace members (name and manifest path) - populated from either resolve or resolve_direct
     members: Vec<crate::entity::WorkspaceMember>,
     /// Primary index: lookup by (table, platform, name)
@@ -93,7 +91,7 @@ impl CargoIndex {
         // Collect specs and dependencies from workspace members
         let mut specs = Vec::with_capacity(5);
         let mut member_manifests = Vec::with_capacity(5);
-        let mut member_packages = Vec::with_capacity(5);
+        let mut members: Vec<crate::entity::WorkspaceMember> = Vec::with_capacity(5);
         let mut deps = HashSet::new();
 
         if let Ok(current) = workspace.current() {
@@ -110,7 +108,10 @@ impl CargoIndex {
             specs.push(member.package_id().to_spec());
             deps.extend(member.dependencies().to_vec());
             member_manifests.push(member.manifest_path().to_path_buf());
-            member_packages.push(member.clone());
+            members.push(crate::entity::WorkspaceMember {
+                name: member.name().to_string(),
+                manifest_path: member.manifest_path().to_path_buf(),
+            });
         }
 
         if deps.is_empty() {
@@ -146,7 +147,6 @@ impl CargoIndex {
             graph_features: false,
             display_depth: DisplayDepth::MaxDisplayDepth(1),
             no_proc_macro: false,
-            public: false,
         };
 
         let requested_kinds = CompileKind::from_requested_targets(workspace.gctx(), &[])
@@ -222,19 +222,9 @@ impl CargoIndex {
 
         trace!("Built index with {} entries", index.len());
 
-        // Build members list from member_packages
-        let members: Vec<crate::entity::WorkspaceMember> = member_packages
-            .iter()
-            .map(|p| crate::entity::WorkspaceMember {
-                name: p.name().to_string(),
-                manifest_path: p.manifest_path().to_path_buf(),
-            })
-            .collect();
-
         Ok(Self {
             root_manifest,
             member_manifests,
-            member_packages,
             members,
             index,
         })
@@ -494,24 +484,12 @@ impl CargoIndex {
         &self.member_manifests
     }
 
-    /// Get member packages.
-    pub fn member_packages(&self) -> &[Package] {
-        &self.member_packages
-    }
-
     /// Convert to serializable format for IPC.
     pub fn to_serializable(&self) -> crate::entity::SerializableCargoIndex {
         crate::entity::SerializableCargoIndex {
             root_manifest: self.root_manifest.clone(),
             member_manifests: self.member_manifests.clone(),
-            members: self
-                .member_packages
-                .iter()
-                .map(|p| crate::entity::WorkspaceMember {
-                    name: p.name().to_string(),
-                    manifest_path: p.manifest_path().to_path_buf(),
-                })
-                .collect(),
+            members: self.members.clone(),
             dependencies: self
                 .index
                 .iter()
@@ -521,14 +499,10 @@ impl CargoIndex {
     }
 
     /// Construct from serializable format (received from worker subprocess).
-    ///
-    /// Note: This does not restore member_packages as cargo Package types.
-    /// The members are preserved for hover functionality.
     fn from_serializable(s: crate::entity::SerializableCargoIndex) -> Self {
         Self {
             root_manifest: s.root_manifest,
             member_manifests: s.member_manifests,
-            member_packages: Vec::new(), // Cannot reconstruct cargo Package from serialized data
             members: s.members,
             index: s.dependencies.into_iter().collect(),
         }
