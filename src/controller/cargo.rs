@@ -1,8 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::task::Poll;
 
 use cargo::core::Summary;
-use cargo::sources::source::{QueryKind, Source};
+use cargo::sources::source::QueryKind;
 use cargo::util::cache_lock::CacheLockMode;
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity};
 use tracing::error;
@@ -61,7 +60,7 @@ pub fn resolve_package_with_default_source(
     let gctx = cargo::util::context::GlobalContext::default().ok()?;
     let source_id = cargo::core::SourceId::crates_io(&gctx).ok()?;
     let dep = cargo::core::Dependency::parse(package, version, source_id).ok()?;
-    let mut source = source_id
+    let source = source_id
         .load(&gctx, &HashSet::new())
         .map_err(|e| error!("failed to load source: {}", e))
         .ok()?;
@@ -69,20 +68,12 @@ pub fn resolve_package_with_default_source(
         error!("failed to acquire package cache lock");
         return None;
     };
-    let summary = source.query_vec(&dep, QueryKind::Normalized);
-    if let Err(e) = source.block_until_ready() {
-        error!("failed to query source: {}", e);
-        return None;
-    }
-    match summary {
-        Poll::Ready(summaries) => {
-            let summaries = summaries
-                .map_err(|e| error!("failed to query summaries: {}", e))
-                .ok()?;
-            Some(summaries.iter().map(|s| s.as_summary().clone()).collect())
-        }
-        Poll::Pending => None,
-    }
+    // Source queries are async in cargo >= 0.93; this function runs on the
+    // blocking pool, so drive the future to completion here.
+    let summaries = futures::executor::block_on(source.query_vec(&dep, QueryKind::Normalized))
+        .map_err(|e| error!("failed to query summaries: {}", e))
+        .ok()?;
+    Some(summaries.iter().map(|s| s.as_summary().clone()).collect())
 }
 
 impl CargoError {

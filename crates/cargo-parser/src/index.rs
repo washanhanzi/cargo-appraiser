@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::task::Poll;
 
 use cargo::core::compiler::{CompileKind, RustcTargetData};
 use cargo::core::dependency::DepKind;
@@ -10,7 +9,7 @@ use cargo::core::resolver::{CliFeatures, ForceAllTargets, HasDevUnits};
 use cargo::core::{Dependency, Package, SourceId, Summary};
 use cargo::ops::tree::{DisplayDepth, EdgeKind, Prefix, Target, TreeOptions};
 use cargo::ops::Packages;
-use cargo::sources::source::{QueryKind, Source};
+use cargo::sources::source::QueryKind;
 use cargo::sources::SourceConfigMap;
 use cargo::util::cache_lock::CacheLockMode;
 use cargo::util::{OptVersionReq, VersionExt};
@@ -147,6 +146,7 @@ impl CargoIndex {
             graph_features: false,
             display_depth: DisplayDepth::MaxDisplayDepth(1),
             no_proc_macro: false,
+            public: false,
         };
 
         let requested_kinds = CompileKind::from_requested_targets(workspace.gctx(), &[])
@@ -249,18 +249,13 @@ impl CargoIndex {
                 }
             };
 
-            let mut source = match source_config_map.load(source_id, &HashSet::new()) {
+            let source = match source_config_map.load(source_id, &HashSet::new()) {
                 Ok(source) => source,
                 Err(e) => {
                     error!("Failed to load source: {:?}", e);
                     continue;
                 }
             };
-
-            if let Err(e) = source.block_until_ready() {
-                error!("Failed to prepare source: {:?}", e);
-                continue;
-            }
 
             // Query each dependency
             for dep in deps_for_source {
@@ -284,19 +279,15 @@ impl CargoIndex {
                 let mut query_dep = dep.clone();
                 query_dep.set_version_req(OptVersionReq::Any);
 
-                let dep_query = source.query_vec(&query_dep, QueryKind::Normalized);
-
-                if let Err(e) = source.block_until_ready() {
-                    error!(
-                        "Failed to complete query for {}: {:?}",
-                        dep.package_name(),
-                        e
-                    );
-                    continue;
-                }
+                // Source queries are async in cargo >= 0.93; drive them to
+                // completion here — this code runs in the resolve worker
+                // subprocess, outside any async runtime.
+                let dep_query = futures::executor::block_on(
+                    source.query_vec(&query_dep, QueryKind::Normalized),
+                );
 
                 match dep_query {
-                    Poll::Ready(Ok(summaries)) => {
+                    Ok(summaries) => {
                         let mut summaries_vec: Vec<Summary> = summaries
                             .into_iter()
                             .map(|s| s.as_summary().clone())
@@ -328,7 +319,7 @@ impl CargoIndex {
                             },
                         );
                     }
-                    Poll::Ready(Err(e)) => {
+                    Err(e) => {
                         error!("Failed to query dependency {}: {:?}", dep.package_name(), e);
                         // Still insert with empty data
                         index.insert(
@@ -340,9 +331,6 @@ impl CargoIndex {
                                 latest_version: None,
                             },
                         );
-                    }
-                    Poll::Pending => {
-                        error!("Query for {} is pending (unexpected)", dep.package_name());
                     }
                 }
             }
