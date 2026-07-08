@@ -112,6 +112,8 @@ impl Appraiser {
         // Shared HTTP client for crates.io API requests
         let http_client = reqwest::Client::builder()
             .user_agent("lsp-cargo-appraiser")
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
@@ -145,6 +147,13 @@ impl Appraiser {
                     }
                     CargoDocumentEvent::CargoDiagnostic(uri, err) => {
                         handle_cargo_diagnostic(&mut ctx, uri, err).await;
+                    }
+                    CargoDocumentEvent::CargoDiagnosticsComputed(uri, digs) => {
+                        for (id, diag) in digs {
+                            ctx.diagnostic_controller
+                                .add_cargo_diagnostic(&uri, &id, diag)
+                                .await;
+                        }
                     }
                     CargoDocumentEvent::Hovered(uri, pos, tx) => {
                         handle_hover(&mut ctx, uri, pos, tx).await;

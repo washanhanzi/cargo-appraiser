@@ -33,9 +33,12 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         )));
     };
 
-    // Use cargo-parser to resolve dependencies
-    let index =
-        CargoIndex::resolve(&path).map_err(|e| crate::entity::from_resolve_error(e.into()))?;
+    // Use cargo-parser to resolve dependencies. The subprocess call blocks,
+    // so run it on the blocking pool instead of a runtime worker thread.
+    let index = tokio::task::spawn_blocking(move || CargoIndex::resolve(&path))
+        .await
+        .map_err(|e| CargoError::resolve_error(anyhow::anyhow!("resolve task failed: {e}")))?
+        .map_err(|e| crate::entity::from_resolve_error(e.into()))?;
 
     // Convert paths to URIs
     let root_manifest_uri = CanonicalUri::try_from_path(index.root_manifest())

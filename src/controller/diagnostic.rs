@@ -6,9 +6,9 @@ use tower_lsp::{
 };
 use tracing::debug;
 
-use crate::entity::{CanonicalUri, CargoError};
+use crate::entity::{CanonicalUri, CargoError, TomlDependency, TomlNode};
 
-use super::context::AppraiserContext;
+use super::context::{AppraiserContext, CargoDocumentEvent};
 
 /// Handle `CargoDocumentEvent::CargoDiagnostic` - process cargo errors as diagnostics.
 pub async fn handle_cargo_diagnostic(
@@ -38,18 +38,43 @@ pub async fn handle_cargo_diagnostic(
         return;
     };
 
-    let keys = doc.find_keys_by_crate_name(crate_name);
-    let deps = doc.find_deps_by_crate_name(crate_name);
+    let keys: Vec<TomlNode> = doc
+        .find_keys_by_crate_name(crate_name)
+        .into_iter()
+        .cloned()
+        .collect();
+    let deps: Vec<TomlDependency> = doc
+        .find_deps_by_crate_name(crate_name)
+        .into_iter()
+        .cloned()
+        .collect();
+    let tree = doc.tree().clone();
+    let client_uri = client_uri.clone();
+    let inner_tx = ctx.inner_tx.clone();
 
-    let Some(digs) = err.diagnostic(&keys, &deps, doc.tree()) else {
-        return;
-    };
+    // Computing diagnostics may query the cargo registry (network/disk I/O),
+    // so run it off the event loop and post the result back as an event.
+    tokio::spawn(async move {
+        let digs = tokio::task::spawn_blocking(move || {
+            let key_refs: Vec<&TomlNode> = keys.iter().collect();
+            let dep_refs: Vec<&TomlDependency> = deps.iter().collect();
+            err.diagnostic(&key_refs, &dep_refs, &tree)
+        })
+        .await
+        .ok()
+        .flatten();
 
-    for (id, diag) in digs {
-        ctx.diagnostic_controller
-            .add_cargo_diagnostic(client_uri, id.as_str(), diag)
-            .await;
-    }
+        if let Some(digs) = digs {
+            if let Err(e) = inner_tx
+                .send(CargoDocumentEvent::CargoDiagnosticsComputed(
+                    client_uri, digs,
+                ))
+                .await
+            {
+                debug!("failed to send computed cargo diagnostics: {}", e);
+            }
+        }
+    });
 }
 
 //we need to distinguish between parsing erros and cargo error

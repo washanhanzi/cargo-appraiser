@@ -142,7 +142,7 @@ pub async fn handle_parse(ctx: &mut AppraiserContext<'_>, uri: Uri) {
             error!("failed to convert canonical uri to path: {}", uri.as_str());
             return;
         };
-        match std::fs::read_to_string(path) {
+        match tokio::fs::read_to_string(path).await {
             Ok(content) => content,
             Err(e) => {
                 error!("read file error: {}", e);

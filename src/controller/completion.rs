@@ -34,8 +34,17 @@ pub async fn handle_completion(
 
     let dep = doc.tree().find_dependency_at_position(pos);
     let resolved = dep.and_then(|d| doc.resolved(&d.id));
-    let comp = completion(ctx.http_client, node, dep, resolved).await;
-    let _ = tx.send(comp);
+
+    // Completion may hit crates.io; run it off the event loop so a slow
+    // request can't stall document sync, hover and diagnostics.
+    let http_client = ctx.http_client.clone();
+    let node = node.clone();
+    let dep = dep.cloned();
+    let resolved = resolved.cloned();
+    tokio::spawn(async move {
+        let comp = completion(&http_client, &node, dep.as_ref(), resolved.as_ref()).await;
+        let _ = tx.send(comp);
+    });
 }
 
 pub async fn completion(

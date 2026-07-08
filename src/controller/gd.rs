@@ -31,18 +31,18 @@ pub async fn handle_gd(
         return;
     };
 
-    let gd = goto_definition(ctx.state, doc, node);
+    let gd = goto_definition(ctx.state, doc, node).await;
     let _ = tx.send(gd);
 }
 
-pub fn goto_definition(
+pub async fn goto_definition(
     state: &Workspace,
     doc: &Document,
     node: &TomlNode,
 ) -> Option<GotoDefinitionResponse> {
     // Check if the node is a workspace member path
     if let NodeKind::Value(ValueKind::Workspace(WorkspaceValue::Member)) = &node.kind {
-        return goto_workspace_member(doc, node);
+        return goto_workspace_member(doc, node).await;
     }
 
     // Check if the node is a workspace = true declaration
@@ -79,7 +79,7 @@ pub fn goto_definition(
 }
 
 /// Go to definition for a workspace member path (non-glob)
-fn goto_workspace_member(doc: &Document, node: &TomlNode) -> Option<GotoDefinitionResponse> {
+async fn goto_workspace_member(doc: &Document, node: &TomlNode) -> Option<GotoDefinitionResponse> {
     let member_path = &node.text;
 
     // Skip glob patterns
@@ -96,7 +96,7 @@ fn goto_workspace_member(doc: &Document, node: &TomlNode) -> Option<GotoDefiniti
     let cargo_toml = member_dir.join("Cargo.toml");
 
     // Check if the Cargo.toml exists
-    if !cargo_toml.exists() {
+    if !tokio::fs::try_exists(&cargo_toml).await.unwrap_or(false) {
         return None;
     }
 

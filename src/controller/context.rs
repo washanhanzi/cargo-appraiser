@@ -57,6 +57,8 @@ pub enum CargoDocumentEvent {
     ),
     /// Cargo diagnostic error
     CargoDiagnostic(CanonicalUri, CargoError),
+    /// Diagnostics computed off the event loop, ready to publish
+    CargoDiagnosticsComputed(Uri, Vec<(String, tower_lsp::lsp_types::Diagnostic)>),
     /// Audit results
     Audited(super::audit::AuditReports),
 }
