@@ -101,10 +101,14 @@ impl Workspace {
             new_doc.dirty_dependencies.insert(id, next_rev);
         }
 
-        // Preserve all resolved data from old document
-        // Stale entries are harmless and will be updated on next CargoResolved event
-        if let Some(old_doc) = self.documents.get(&canonical_uri) {
-            new_doc.resolved = old_doc.resolved.clone();
+        // Preserve resolved data from the old document (moved, not cloned).
+        // Entries for dependencies that no longer exist are pruned; the rest
+        // are stale-but-harmless and will be updated on next CargoResolved event
+        if let Some(old_doc) = self.documents.remove(&canonical_uri) {
+            new_doc.resolved = old_doc.resolved;
+            new_doc
+                .resolved
+                .retain(|id, _| new_doc.dirty_dependencies.contains_key(id));
         }
 
         self.uris.insert(canonical_uri.clone(), uri);

@@ -361,56 +361,55 @@ pub struct CompiledFormatter {
 #[derive(Debug, Clone, Default)]
 pub struct CompiledTemplate {
     template: String,
-    needs_installed: bool,
-    needs_latest_matched: bool,
-    needs_latest: bool,
-    needs_git_ref: bool,
-    needs_git_commit: bool,
 }
 
 impl CompiledTemplate {
     fn new(template: String) -> Self {
-        Self {
-            needs_installed: template.contains("{{installed}}"),
-            needs_latest_matched: template.contains("{{latest_matched}}"),
-            needs_latest: template.contains("{{latest}}"),
-            needs_git_ref: template.contains("{{ref}}"),
-            needs_git_commit: template.contains("{{commit}}"),
-            template,
-        }
+        Self { template }
     }
 
     pub fn template(&self) -> &str {
         &self.template
     }
 
+    /// Substitute `{{placeholder}}` tokens in a single pass.
+    /// Placeholders whose value is unavailable (and unknown ones) are kept
+    /// verbatim in the output.
     pub fn format(&self, version: &DecorationPayload) -> String {
-        let mut result = self.template.clone();
+        let mut result = String::with_capacity(self.template.len() + 16);
+        let mut rest = self.template.as_str();
 
-        if self.needs_installed && version.installed.is_some() {
-            result = result.replace(
-                "{{installed}}",
-                &version.installed.as_ref().unwrap().to_string(),
-            );
-        }
-        if self.needs_latest_matched && version.latest_matched.is_some() {
-            result = result.replace(
-                "{{latest_matched}}",
-                &version.latest_matched.as_ref().unwrap().to_string(),
-            );
-        }
-        if self.needs_latest && version.latest.is_some() {
-            result = result.replace("{{latest}}", &version.latest.as_ref().unwrap().to_string());
-        }
-        if let Some((ref_str, commit)) = version.git.as_ref() {
-            if self.needs_git_ref {
-                result = result.replace("{{ref}}", ref_str);
+        while let Some(start) = rest.find("{{") {
+            result.push_str(&rest[..start]);
+            let after = &rest[start + 2..];
+            let Some(end) = after.find("}}") else {
+                // Unclosed placeholder: keep the tail verbatim
+                rest = &rest[start..];
+                break;
+            };
+
+            let name = &after[..end];
+            let replacement = match name {
+                "installed" => version.installed.as_ref().map(|v| v.to_string()),
+                "latest_matched" => version.latest_matched.as_ref().map(|v| v.to_string()),
+                "latest" => version.latest.as_ref().map(|v| v.to_string()),
+                "ref" => version.git.as_ref().map(|(r, _)| r.clone()),
+                "commit" => version.git.as_ref().map(|(_, c)| c.clone()),
+                _ => None,
+            };
+
+            match replacement {
+                Some(value) => result.push_str(&value),
+                None => {
+                    result.push_str("{{");
+                    result.push_str(name);
+                    result.push_str("}}");
+                }
             }
-            if self.needs_git_commit {
-                result = result.replace("{{commit}}", commit);
-            }
+            rest = &after[end + 2..];
         }
 
+        result.push_str(rest);
         result
     }
 }

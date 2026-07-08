@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -12,7 +11,7 @@ use crate::config::GLOBAL_CONFIG;
 /// Cache TTL: 3 minutes
 const CACHE_TTL: Duration = Duration::from_secs(3 * 60);
 
-/// Global cache for crate index data with 5-minute TTL
+/// Global cache for crate index data (expires after CACHE_TTL)
 static CRATE_INDEX_CACHE: LazyLock<Cache<String, CrateIndexData>> = LazyLock::new(|| {
     Cache::builder()
         .time_to_live(CACHE_TTL)
@@ -20,20 +19,13 @@ static CRATE_INDEX_CACHE: LazyLock<Cache<String, CrateIndexData>> = LazyLock::ne
         .build()
 });
 
-/// Global cache for crate search results with 5-minute TTL
+/// Global cache for crate search results (expires after CACHE_TTL)
 static CRATE_SEARCH_CACHE: LazyLock<Cache<String, Vec<CrateInfo>>> = LazyLock::new(|| {
     Cache::builder()
         .time_to_live(CACHE_TTL)
         .max_capacity(500)
         .build()
 });
-
-/// Debounce state for crate search - simple atomic counter
-static SEARCH_QUERY_ID: AtomicU64 = AtomicU64::new(0);
-
-/// Debounce wait time (ms) - wait for user to pause typing
-/// 150ms balances responsiveness with avoiding excessive requests
-const DEBOUNCE_MS: u64 = 150;
 
 /// Parsed crate index data containing all versions and their features
 #[derive(Debug, Clone)]
@@ -79,19 +71,24 @@ fn index_path(crate_name: &str) -> Option<String> {
     Some(path)
 }
 
-/// Fetch and parse the crate index, using cache if available
+/// Fetch and parse the crate index, using cache if available.
+/// Concurrent calls for the same crate are coalesced: only one HTTP request
+/// runs, the rest await its result. Failed fetches are not cached.
 async fn get_crate_index(
     http_client: &reqwest::Client,
     crate_name: &str,
 ) -> Option<CrateIndexData> {
     let cache_key = crate_name.to_lowercase();
+    CRATE_INDEX_CACHE
+        .optionally_get_with(cache_key, fetch_crate_index(http_client, crate_name))
+        .await
+}
 
-    // Check cache first
-    if let Some(cached) = CRATE_INDEX_CACHE.get(&cache_key).await {
-        debug!("cache hit for '{}'", crate_name);
-        return Some(cached);
-    }
-
+/// Fetch and parse the crate index from the sparse index (no caching)
+async fn fetch_crate_index(
+    http_client: &reqwest::Client,
+    crate_name: &str,
+) -> Option<CrateIndexData> {
     debug!("cache miss for '{}', fetching from index", crate_name);
 
     // Get base URL from config (None = feature disabled)
@@ -161,15 +158,10 @@ async fn get_crate_index(
 
     debug!("parsed {} versions for '{}'", versions.len(), crate_name);
 
-    let data = CrateIndexData {
+    Some(CrateIndexData {
         versions,
         features: features_map,
-    };
-
-    // Cache the result
-    CRATE_INDEX_CACHE.insert(cache_key, data.clone()).await;
-
-    Some(data)
+    })
 }
 
 /// Fetch available versions for a crate (non-yanked, newest first)
@@ -231,8 +223,18 @@ fn resolve_version(index: &CrateIndexData, version_req_str: &str) -> Option<Stri
     None
 }
 
+/// Get cached search results for a query, if present.
+/// Lets callers skip their debounce delay on a cache hit.
+pub async fn get_cached_search(search_str: &str) -> Option<Vec<CrateInfo>> {
+    CRATE_SEARCH_CACHE.get(&search_str.to_lowercase()).await
+}
+
 /// Search crates.io for crates matching the given search string.
-/// Results are cached by exact query and debounced to avoid excessive HTTP requests.
+/// Results (including empty ones) are cached by lowercased query, and
+/// concurrent calls for the same query are coalesced into one HTTP request.
+/// Failed requests are not cached.
+///
+/// Debouncing is the caller's concern (see the controller layer).
 pub async fn search_crates(
     http_client: &reqwest::Client,
     search_str: &str,
@@ -240,50 +242,14 @@ pub async fn search_crates(
     let query = search_str.to_lowercase();
     debug!("search_crates() for: {}", query);
 
-    // Check cache first (instant return, no debounce needed)
-    if let Some(cached) = CRATE_SEARCH_CACHE.get(&query).await {
-        debug!(
-            "search_crates: cache hit for '{}', returning {} results",
-            query,
-            cached.len()
-        );
-        return Some(cached);
-    }
+    CRATE_SEARCH_CACHE
+        .optionally_get_with(query.clone(), fetch_search(http_client, &query))
+        .await
+}
 
-    // Register this query and get its ID (trailing debounce)
-    let query_id = SEARCH_QUERY_ID.fetch_add(1, Ordering::SeqCst) + 1;
-    debug!(
-        "search_crates: query='{}', query_id={}, waiting {}ms",
-        query, query_id, DEBOUNCE_MS
-    );
-
-    // Wait for user to pause typing
-    tokio::time::sleep(Duration::from_millis(DEBOUNCE_MS)).await;
-
-    // Check if this query is still the latest (user might have typed more)
-    let current_id = SEARCH_QUERY_ID.load(Ordering::SeqCst);
-    debug!(
-        "search_crates: query='{}' (id={}) after wait, current_id={}",
-        query, query_id, current_id
-    );
-    if query_id != current_id {
-        debug!(
-            "search_crates: query '{}' (id={}) superseded by id={}, SKIPPING",
-            query, query_id, current_id
-        );
-        return None;
-    }
-    debug!(
-        "search_crates: query='{}' (id={}) is latest, PROCEEDING",
-        query, query_id
-    );
-
-    // Double-check cache (might have been populated during debounce wait)
-    if let Some(cached) = CRATE_SEARCH_CACHE.get(&query).await {
-        debug!("search_crates: cache hit for '{}' after debounce", query);
-        return Some(cached);
-    }
-
+/// Fetch search results from the crates.io API (no caching).
+/// Returns Some (possibly empty) on success, None on error.
+async fn fetch_search(http_client: &reqwest::Client, query: &str) -> Option<Vec<CrateInfo>> {
     // Get base URL from config (None = feature disabled)
     let base_url = match &GLOBAL_CONFIG.read().crates_io.api_url {
         Some(url) => url.clone(),
@@ -307,23 +273,32 @@ pub async fn search_crates(
         crates: Vec<SearchCrateOutput>,
     }
 
-    let url = format!("{}?page=1&per_page=10&q={}", base_url, search_str);
-
-    let resp = match http_client.get(&url).send().await {
+    let resp = match http_client
+        .get(&base_url)
+        .query(&[("page", "1"), ("per_page", "10"), ("q", query)])
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
-            error!("Failed to search crates.io for '{}': {}", search_str, e);
+            error!("Failed to search crates.io for '{}': {}", query, e);
             return None;
         }
     };
 
+    if !resp.status().is_success() {
+        error!(
+            "crates.io search returned {} for '{}'",
+            resp.status(),
+            query
+        );
+        return None;
+    }
+
     let search_response: SearchCrateResponse = match resp.json().await {
         Ok(r) => r,
         Err(e) => {
-            error!(
-                "Failed to parse search response for '{}': {}",
-                search_str, e
-            );
+            error!("Failed to parse search response for '{}': {}", query, e);
             return None;
         }
     };
@@ -344,19 +319,5 @@ pub async fn search_crates(
         })
         .collect();
 
-    // Cache results
-    if !crates.is_empty() {
-        debug!(
-            "search_crates: caching {} results for '{}'",
-            crates.len(),
-            query
-        );
-        CRATE_SEARCH_CACHE.insert(query, crates.clone()).await;
-    }
-
-    debug!(
-        "search_crates: returning {} results for original query",
-        crates.len()
-    );
     Some(crates)
 }

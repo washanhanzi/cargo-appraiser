@@ -39,29 +39,84 @@ impl CargoIndex {
     /// This spawns the current executable with the "resolve" subcommand to run
     /// cargo resolution in an isolated process. This prevents memory leaks from
     /// cargo's InternedString cache accumulating in the long-lived LSP process.
+    ///
+    /// The subprocess is killed after RESOLVE_TIMEOUT so a network stall
+    /// inside cargo (git fetch, registry update) can't hang the resolve task
+    /// forever.
     #[tracing::instrument(name = "cargo_resolve", level = "trace")]
     pub fn resolve(manifest_path: &Path) -> Result<Self, CargoResolveError> {
-        use std::process::Command;
+        use std::io::Read;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
         let current_exe = std::env::current_exe().map_err(|e| {
             CargoResolveError::resolve(anyhow::anyhow!("Failed to get current exe: {}", e))
         })?;
 
-        let output = Command::new(&current_exe)
+        let mut child = Command::new(&current_exe)
             .arg("resolve")
             .arg(manifest_path)
-            .output()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|e| {
                 CargoResolveError::resolve(anyhow::anyhow!("Failed to spawn worker: {}", e))
             })?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        // Drain the pipes on threads so a full pipe buffer can't block the
+        // worker while we wait on it.
+        let mut stdout_pipe = child.stdout.take().expect("stdout is piped");
+        let mut stderr_pipe = child.stderr.take().expect("stderr is piped");
+        let stdout_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stdout_pipe.read_to_end(&mut buf);
+            buf
+        });
+        let stderr_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stderr_pipe.read_to_end(&mut buf);
+            buf
+        });
+
+        let deadline = Instant::now() + RESOLVE_TIMEOUT;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    if Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(CargoResolveError::resolve(anyhow::anyhow!(
+                            "cargo resolve timed out after {}s",
+                            RESOLVE_TIMEOUT.as_secs()
+                        )));
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(CargoResolveError::resolve(anyhow::anyhow!(
+                        "Failed to wait for worker: {}",
+                        e
+                    )));
+                }
+            }
+        };
+
+        let stdout = stdout_thread.join().unwrap_or_default();
+        let stderr = stderr_thread.join().unwrap_or_default();
+
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr);
             return Err(CargoResolveError::resolve(anyhow::anyhow!("{}", stderr)));
         }
 
         let serializable: crate::entity::SerializableCargoIndex =
-            serde_json::from_slice(&output.stdout).map_err(|e| {
+            serde_json::from_slice(&stdout).map_err(|e| {
                 CargoResolveError::resolve(anyhow::anyhow!("Failed to parse worker output: {}", e))
             })?;
 
@@ -239,16 +294,16 @@ impl CargoIndex {
     ) -> HashMap<DependencyLookupKey, ResolvedDependency> {
         let mut index = HashMap::with_capacity(deps.len());
 
+        let source_config_map = match SourceConfigMap::new(gctx) {
+            Ok(map) => map,
+            Err(e) => {
+                error!("Failed to create source config map: {:?}", e);
+                return index;
+            }
+        };
+
         // For each source, query for all dependencies from that source
         for (source_id, deps_for_source) in source_deps {
-            let source_config_map = match SourceConfigMap::new(gctx) {
-                Ok(map) => map,
-                Err(e) => {
-                    error!("Failed to create source config map: {:?}", e);
-                    continue;
-                }
-            };
-
             let source = match source_config_map.load(source_id, &HashSet::new()) {
                 Ok(source) => source,
                 Err(e) => {

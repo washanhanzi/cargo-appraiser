@@ -16,6 +16,11 @@ pub struct SymbolTree {
     /// O(log n) position lookup - IDs sorted by (start_line, start_col)
     /// Used for binary search to find nodes at a given position
     position_index: Vec<String>,
+
+    /// prefix_max_end[i] = max end position of position_index[0..=i].
+    /// Lets position lookups stop scanning backwards as soon as every
+    /// remaining node is known to end before the queried position.
+    prefix_max_end: Vec<(u32, u32)>,
 }
 
 impl SymbolTree {
@@ -24,6 +29,7 @@ impl SymbolTree {
         Self {
             nodes: HashMap::new(),
             position_index: Vec::new(),
+            prefix_max_end: Vec::new(),
         }
     }
 
@@ -32,6 +38,7 @@ impl SymbolTree {
         Self {
             nodes: HashMap::with_capacity(capacity),
             position_index: Vec::with_capacity(capacity),
+            prefix_max_end: Vec::with_capacity(capacity),
         }
     }
 
@@ -53,6 +60,15 @@ impl SymbolTree {
             let start_b = (node_b.range.start.line, node_b.range.start.character);
             start_a.cmp(&start_b)
         });
+
+        self.prefix_max_end.clear();
+        let mut max_end = (0, 0);
+        for id in &self.position_index {
+            let node = self.nodes.get(id).unwrap();
+            let end = (node.range.end.line, node.range.end.character);
+            max_end = max_end.max(end);
+            self.prefix_max_end.push(max_end);
+        }
     }
 
     /// Get a node by its ID (O(1) lookup)
@@ -93,61 +109,23 @@ impl SymbolTree {
     /// Find the most specific (narrowest) node at the given position.
     ///
     /// Algorithm:
-    /// 1. Binary search to find the range of nodes that could contain the position
-    /// 2. Filter to nodes where the position is within their range
-    /// 3. Prefer Key nodes over Entry nodes
-    /// 4. Among same type, return the narrowest match
+    /// 1. Binary search for the last node starting at or before the position
+    /// 2. Scan backwards over containing nodes, stopping once the prefix max
+    ///    end shows no earlier node can reach the position
+    /// 3. Prefer Key nodes over Entry nodes; among same type, the narrowest
     ///
     /// Returns None if no node contains the given position.
     pub fn find_at_position(&self, pos: Position) -> Option<&TomlNode> {
-        if self.position_index.is_empty() {
-            return None;
-        }
-
-        // Binary search to find the rightmost node where start <= pos
-        // This gives us a starting point to search for candidates
-        let search_idx = self.binary_search_position(pos);
-
-        // Collect candidates: nodes where start <= pos && end >= pos
-        let mut candidates: Vec<&TomlNode> = Vec::new();
-
-        // Search backwards from the binary search result
-        for i in (0..=search_idx).rev() {
-            if i >= self.position_index.len() {
-                continue;
-            }
-            let id = &self.position_index[i];
-            if let Some(node) = self.nodes.get(id) {
-                // Check if position is before this node's start
-                if (node.range.start.line, node.range.start.character) > (pos.line, pos.character) {
-                    continue;
-                }
-
-                // Check if position is within this node's range
-                if self.position_in_range(pos, node) {
-                    candidates.push(node);
-                }
-            }
-        }
-
-        if candidates.is_empty() {
-            return None;
-        }
-
-        // Sort candidates: keys first, then by width (narrowest first)
-        candidates.sort_by(|a, b| {
-            // Keys have priority
-            match (a.is_key(), b.is_key()) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => {
-                    // Same type: prefer narrower
-                    a.width().cmp(&b.width())
-                }
+        // Keys have priority over values, then narrower beats wider:
+        // minimize (!is_key, width)
+        let mut best: Option<((bool, u32), &TomlNode)> = None;
+        self.scan_containing(pos, |node| {
+            let rank = (!node.is_key(), node.width());
+            if best.is_none_or(|(best_rank, _)| rank < best_rank) {
+                best = Some((rank, node));
             }
         });
-
-        candidates.first().copied()
+        best.map(|(_, node)| node)
     }
 
     /// Find a node at the given position, optionally filtering by key or value
@@ -160,41 +138,53 @@ impl SymbolTree {
         self.find_at_position_filtered(pos, |node| node.is_value())
     }
 
-    /// Find a node at position with a custom filter
+    /// Find the narrowest node at position matching a custom filter
     fn find_at_position_filtered<F>(&self, pos: Position, filter: F) -> Option<&TomlNode>
     where
         F: Fn(&TomlNode) -> bool,
     {
+        let mut best: Option<(u32, &TomlNode)> = None;
+        self.scan_containing(pos, |node| {
+            if filter(node) {
+                let width = node.width();
+                if best.is_none_or(|(best_width, _)| width < best_width) {
+                    best = Some((width, node));
+                }
+            }
+        });
+        best.map(|(_, node)| node)
+    }
+
+    /// Visit every node whose range contains `pos`.
+    ///
+    /// Binary-searches for the last node starting at or before `pos`, then
+    /// scans backwards. The prefix max-end array bounds the scan: once every
+    /// node at or before index `i` ends before `pos`, none of them (nor any
+    /// earlier node) can contain it.
+    fn scan_containing<'a, F>(&'a self, pos: Position, mut visit: F)
+    where
+        F: FnMut(&'a TomlNode),
+    {
         if self.position_index.is_empty() {
-            return None;
+            return;
         }
 
+        let pos_tuple = (pos.line, pos.character);
         let search_idx = self.binary_search_position(pos);
 
-        let mut best_match: Option<&TomlNode> = None;
-        let mut best_width = u32::MAX;
-
         for i in (0..=search_idx).rev() {
-            if i >= self.position_index.len() {
-                continue;
+            if self.prefix_max_end.get(i).is_some_and(|&end| end < pos_tuple) {
+                break;
             }
-            let id = &self.position_index[i];
-            if let Some(node) = self.nodes.get(id) {
-                if (node.range.start.line, node.range.start.character) > (pos.line, pos.character) {
-                    continue;
-                }
-
-                if self.position_in_range(pos, node) && filter(node) {
-                    let width = node.width();
-                    if width < best_width {
-                        best_width = width;
-                        best_match = Some(node);
-                    }
-                }
+            let Some(node) = self.nodes.get(&self.position_index[i]) else {
+                continue;
+            };
+            let start = (node.range.start.line, node.range.start.character);
+            let end = (node.range.end.line, node.range.end.character);
+            if start <= pos_tuple && pos_tuple <= end {
+                visit(node);
             }
         }
-
-        best_match
     }
 
     /// Binary search to find the index of the rightmost node where start <= pos
@@ -211,15 +201,6 @@ impl SymbolTree {
 
         // partition_point returns the first element > pos, so we want result - 1
         result.saturating_sub(1)
-    }
-
-    /// Check if a position is within a node's range
-    fn position_in_range(&self, pos: Position, node: &TomlNode) -> bool {
-        let pos_tuple = (pos.line, pos.character);
-        let start_tuple = (node.range.start.line, node.range.start.character);
-        let end_tuple = (node.range.end.line, node.range.end.character);
-
-        pos_tuple >= start_tuple && pos_tuple <= end_tuple
     }
 
     /// Get all nodes that are top-level dependencies
@@ -337,6 +318,50 @@ mod tests {
         });
         assert!(result.is_some());
         assert_eq!(result.unwrap().id, "key");
+    }
+
+    #[test]
+    fn test_find_at_position_wide_node_spanning_narrow_ones() {
+        // A wide multi-line node whose range covers many later narrow nodes.
+        // The backwards scan must not stop at the narrow nodes' small ends;
+        // the prefix max-end carries the wide node's end forward.
+        let mut tree = SymbolTree::new();
+
+        tree.insert(make_node(
+            "table",
+            make_range(0, 0, 10, 0),
+            NodeKind::Value(ValueKind::Dependency(DependencyValue::Table)),
+        ));
+        for i in 1..=5 {
+            tree.insert(make_node(
+                &format!("dep{}", i),
+                make_range(i, 0, i, 5),
+                NodeKind::Value(ValueKind::Dependency(DependencyValue::Version)),
+            ));
+        }
+
+        tree.build_index();
+
+        // Position on line 8 is inside only the wide table node
+        let result = tree.find_at_position(Position {
+            line: 8,
+            character: 0,
+        });
+        assert_eq!(result.unwrap().id, "table");
+
+        // Position inside both prefers the narrower node
+        let result = tree.find_at_position(Position {
+            line: 3,
+            character: 2,
+        });
+        assert_eq!(result.unwrap().id, "dep3");
+
+        // Position past every node matches nothing
+        let result = tree.find_at_position(Position {
+            line: 10,
+            character: 1,
+        });
+        assert!(result.is_none());
     }
 
     #[test]

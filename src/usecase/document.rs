@@ -81,11 +81,15 @@ impl Document {
         self.tree.get_node(&dep.name_node_id)
     }
 
-    /// Find all key nodes with the given crate name text
+    /// Find the name key nodes of dependencies with the given crate name.
+    /// Matches both the key text and the `package = "..."` rename, and only
+    /// looks at dependency tables (a key named `serde` under `[features]`
+    /// must not match).
     pub fn find_keys_by_crate_name(&self, crate_name: &str) -> Vec<&TomlNode> {
         self.tree
-            .nodes()
-            .filter(|n| n.is_key() && n.text == crate_name)
+            .dependencies()
+            .filter(|d| d.name == crate_name || d.package_name() == crate_name)
+            .filter_map(|d| self.tree.get_node(&d.name_node_id))
             .collect()
     }
 

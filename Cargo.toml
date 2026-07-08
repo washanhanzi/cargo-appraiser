@@ -28,6 +28,7 @@ futures = "0.3"
 parking_lot = "0.12"
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
+    "query",
     "rustls-no-provider",
     "http2",
 ] }

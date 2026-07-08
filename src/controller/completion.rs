@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
 use tokio::sync::oneshot;
 use tower_lsp_server::ls_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionResponse, CompletionTextEdit,
@@ -8,9 +11,18 @@ use tracing::{debug, error};
 use crate::entity::{
     DependencyValue, NodeKind, ResolvedDependency, TomlDependency, TomlNode, ValueKind,
 };
-use crate::usecase::{fetch_features, fetch_versions, search_crates};
+use crate::usecase::{fetch_features, fetch_versions, get_cached_search, search_crates};
 
 use super::context::AppraiserContext;
+
+/// Trailing debounce for crate-name search: wait for the user to pause
+/// typing before hitting crates.io. Each new search supersedes the pending
+/// one; superseded searches return no completions.
+static SEARCH_QUERY_ID: AtomicU64 = AtomicU64::new(0);
+
+/// Debounce wait time (ms) - 150ms balances responsiveness with avoiding
+/// excessive requests
+const SEARCH_DEBOUNCE_MS: u64 = 150;
 
 /// Handle `CargoDocumentEvent::Completion` - provide completion items.
 pub async fn handle_completion(
@@ -150,7 +162,22 @@ async fn crate_name_completion(
     crate_name: &str,
     replace_range: Range,
 ) -> Option<CompletionResponse> {
-    let crates = search_crates(http_client, crate_name).await?;
+    let crates = match get_cached_search(crate_name).await {
+        // Cache hit: return instantly, no debounce needed
+        Some(cached) => cached,
+        None => {
+            let query_id = SEARCH_QUERY_ID.fetch_add(1, Ordering::SeqCst) + 1;
+            tokio::time::sleep(Duration::from_millis(SEARCH_DEBOUNCE_MS)).await;
+            if query_id != SEARCH_QUERY_ID.load(Ordering::SeqCst) {
+                debug!(
+                    "crate_name_completion: search for '{}' superseded, skipping",
+                    crate_name
+                );
+                return None;
+            }
+            search_crates(http_client, crate_name).await?
+        }
+    };
 
     let completion_items: Vec<CompletionItem> = crates
         .into_iter()
