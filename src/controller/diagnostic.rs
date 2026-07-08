@@ -29,8 +29,20 @@ pub async fn handle_cargo_diagnostic(
         .clear_cargo_diagnostics(client_uri)
         .await;
 
-    // We need a crate name to find something in toml
+    // Errors without a crate name (network failures, malformed workspace,
+    // git fetch errors) can't be attached to a specific dependency — surface
+    // them as a document-level diagnostic instead of dropping them silently.
     let Some(crate_name) = err.crate_name() else {
+        let diag = Diagnostic {
+            range: tower_lsp::lsp_types::Range::default(),
+            severity: Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR),
+            source: Some("cargo".to_string()),
+            message: err.to_string(),
+            ..Default::default()
+        };
+        ctx.diagnostic_controller
+            .add_cargo_diagnostic(client_uri, "cargo_error", diag)
+            .await;
         return;
     };
 

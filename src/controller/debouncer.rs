@@ -78,6 +78,10 @@ impl Stream for Queue {
         let this = self.get_mut();
 
         while let Poll::Ready(Some(expired)) = this.expirations.poll_expired(cx) {
+            // Reset the backoff once the entry fires: backoff should only grow
+            // within one burst of edits, not accumulate for the whole session
+            // (and the map must not leak entries per URI).
+            this.backoff_factor.remove(expired.get_ref());
             if let Some((rev, _)) = this.entries.remove(expired.get_ref()) {
                 return Poll::Ready(Some(Ctx {
                     uri: expired.get_ref().clone(),

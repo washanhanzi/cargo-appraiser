@@ -39,7 +39,32 @@ pub fn parse(text: &str) -> ParseResult {
     let parsed = taplo::parser::parse(&normalized_text);
     let mapper = Mapper::new_utf16(text, false);
 
+    // Surface taplo's syntax errors; discarding them means broken TOML
+    // produces no diagnostics at all. Offsets from the normalized text map
+    // onto the original because normalization is byte-preserving.
+    let syntax_errors: Vec<ParseError> = parsed
+        .errors
+        .iter()
+        .filter_map(|err| {
+            let range = mapper.range(err.range)?;
+            Some(ParseError::new(
+                err.message.clone(),
+                Range {
+                    start: Position {
+                        line: range.start.line as u32,
+                        character: range.start.character as u32,
+                    },
+                    end: Position {
+                        line: range.end.line as u32,
+                        character: range.end.character as u32,
+                    },
+                },
+            ))
+        })
+        .collect();
+
     let mut walker = Walker::new(mapper);
+    walker.errors.extend(syntax_errors);
 
     // Get the DOM from parsed TOML
     let dom = parsed.into_dom();

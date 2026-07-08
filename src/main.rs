@@ -116,7 +116,7 @@ impl LanguageServer for CargoAppraiser {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri;
-        if !uri.path().as_str().ends_with("Cargo.toml") {
+        if !is_file_named(&uri, "Cargo.toml") {
             return Ok(None);
         };
         //create a once channel with payload Hover
@@ -157,17 +157,28 @@ impl LanguageServer for CargoAppraiser {
                     error!("execute_command: non-string arguments rejected");
                     return Ok(None);
                 }
-                //run cargo command with params in a new task
-                let command_result = tokio::process::Command::new(cargo_path).args(args).spawn();
-                if command_result.is_err() {
+                //run cargo command in a new task; only signal CargoLockChanged
+                //after the command finished, otherwise the re-resolve races the
+                //lock file update and can read the old lock
+                let Ok(mut child) = tokio::process::Command::new(cargo_path).args(args).spawn()
+                else {
                     return Ok(None);
-                }
-                if let Err(e) = self.tx.send(CargoDocumentEvent::CargoLockChanged).await {
-                    error!(
-                        "error sending cargo lock changed event from execute command: {}",
-                        e
-                    );
-                }
+                };
+                let tx = self.tx.clone();
+                tokio::spawn(async move {
+                    match child.wait().await {
+                        Ok(status) if status.success() => {
+                            if let Err(e) = tx.send(CargoDocumentEvent::CargoLockChanged).await {
+                                error!(
+                                    "error sending cargo lock changed event from execute command: {}",
+                                    e
+                                );
+                            }
+                        }
+                        Ok(status) => error!("cargo command exited with {}", status),
+                        Err(e) => error!("cargo command failed: {}", e),
+                    }
+                });
                 Ok(None)
             }
             _ => Ok(None),
@@ -176,7 +187,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri;
-        if !uri.path().as_str().ends_with("Cargo.toml") {
+        if !is_file_named(&uri, "Cargo.toml") {
             return;
         };
         if let Err(e) = self
@@ -208,7 +219,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
-        if !uri.path().as_str().ends_with("Cargo.toml") {
+        if !is_file_named(&uri, "Cargo.toml") {
             return;
         };
         if let Err(e) = self.tx.send(CargoDocumentEvent::Closed(uri)).await {
@@ -218,7 +229,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = params.text_document.uri;
-        if !uri.path().as_str().ends_with("Cargo.toml") {
+        if !is_file_named(&uri, "Cargo.toml") {
             return;
         };
 
@@ -235,7 +246,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
-        if !uri.path().as_str().ends_with("Cargo.toml") {
+        if !is_file_named(&uri, "Cargo.toml") {
             return Ok(None);
         };
 
@@ -253,7 +264,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
-        if !uri.path().as_str().ends_with("Cargo.toml") {
+        if !is_file_named(&uri, "Cargo.toml") {
             return Ok(None);
         };
         let (tx, rx) = oneshot::channel();
@@ -279,7 +290,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = params.text_document.uri;
-        if !uri.path().as_str().ends_with("Cargo.toml") {
+        if !is_file_named(&uri, "Cargo.toml") {
             return Ok(None);
         };
         let (tx, rx) = oneshot::channel();
@@ -301,7 +312,7 @@ impl LanguageServer for CargoAppraiser {
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
-        if !uri.path().as_str().ends_with("Cargo.toml") {
+        if !is_file_named(&uri, "Cargo.toml") {
             return Ok(None);
         };
         //create a once channel with payload Hover
@@ -329,7 +340,7 @@ impl LanguageServer for CargoAppraiser {
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         //check params.changes's item, if it end with "Cargo.lock"
         for change in params.changes {
-            if change.uri.path().as_str().ends_with("Cargo.lock") {
+            if is_file_named(&change.uri, "Cargo.lock") {
                 //send refresh event
                 if let Err(e) = self.tx.send(CargoDocumentEvent::CargoLockChanged).await {
                     error!("error sending cargo lock changed event: {}", e);
@@ -341,6 +352,16 @@ impl LanguageServer for CargoAppraiser {
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         info!("did change configuration: {}", params.settings);
     }
+}
+
+/// Check that the final path segment of the URI is exactly `name`.
+/// A plain `ends_with` would also match e.g. "MyCargo.toml".
+fn is_file_named(uri: &Uri, name: &str) -> bool {
+    uri.path()
+        .as_str()
+        .rsplit('/')
+        .next()
+        .is_some_and(|file| file == name)
 }
 
 #[derive(Parser, Debug)]

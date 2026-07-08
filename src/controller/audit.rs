@@ -106,7 +106,11 @@ impl AuditController {
                                 if cargo_path.is_none() {
                                     cargo_path = Some(payload.cargo_path);
                                 }
-                                timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(30))));
+                                // Only start a timer if none is pending; resetting it on
+                                // every resolve would starve the audit during active editing
+                                if timer.is_none() {
+                                    timer = Some(Box::pin(tokio::time::sleep(Duration::from_secs(30))));
+                                }
                             }
                             AuditCommand::Reset => {
                                 // Clear pending audit state and timer
@@ -266,7 +270,19 @@ pub async fn audit_workspace(
     };
 
     if output.stdout.is_empty() {
-        return Err(anyhow::anyhow!("cargo audit stdout empty"));
+        // cargo audit writes findings to stdout and status lines to stderr;
+        // exit code is non-zero when vulnerabilities are found. Empty stdout
+        // with success means a clean audit; otherwise surface stderr (e.g.
+        // "no such command: audit" when cargo-audit isn't installed).
+        if output.status.success() {
+            return Ok(AuditReports::new());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!(
+            "cargo audit failed ({}): {}",
+            output.status,
+            stderr.trim()
+        ));
     }
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
@@ -398,17 +414,23 @@ fn save_current_issue(
 pub async fn handle_audited(ctx: &mut AppraiserContext<'_>, reports: AuditReports) {
     trace!("[AUDIT] Received {} crate reports", reports.len());
 
-    let Some(doc) = ctx.state.root_document() else {
-        return;
-    };
-
-    // Collect all diagnostics to add
+    // Collect all diagnostics to add. Check every open manifest, not just the
+    // root: in a workspace the vulnerable direct dependency is usually
+    // declared in a member's Cargo.toml.
     let mut diagnostics_to_add: Vec<(Uri, String, Diagnostic)> = Vec::new();
 
-    for issues in reports.values() {
-        for issue in issues {
-            for (crate_name, paths) in &issue.dependency_paths {
-                collect_audit_diagnostics(doc, issue, crate_name, paths, &mut diagnostics_to_add);
+    for doc in ctx.state.documents.values() {
+        for issues in reports.values() {
+            for issue in issues {
+                for (crate_name, paths) in &issue.dependency_paths {
+                    collect_audit_diagnostics(
+                        doc,
+                        issue,
+                        crate_name,
+                        paths,
+                        &mut diagnostics_to_add,
+                    );
+                }
             }
         }
     }

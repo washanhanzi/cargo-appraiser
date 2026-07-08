@@ -264,11 +264,11 @@ impl CargoIndex {
 
             // Query each dependency
             for dep in deps_for_source {
-                let key = DependencyLookupKey {
-                    table: dep_kind_to_table(dep.kind()),
-                    platform: dep.platform().map(|p| p.to_string()),
-                    name: dep.package_name().to_string(),
-                };
+                let key = DependencyLookupKey::new(
+                    dep_kind_to_table(dep.kind()),
+                    dep.platform().map(|p| p.to_string()),
+                    dep.package_name().to_string(),
+                );
 
                 // Find the installed package for this dependency
                 let cargo_package = packages

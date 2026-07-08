@@ -154,8 +154,10 @@ async fn get_crate_index(
         }
     }
 
-    // Reverse to get newest first (index is oldest first)
-    versions.reverse();
+    // Sort newest first. The sparse index is publish-ordered, not
+    // semver-ordered (backported patches are appended last), so a plain
+    // reverse() would rank e.g. 0.2.26 above 1.0.0.
+    versions.sort_by_cached_key(|v| std::cmp::Reverse(semver::Version::parse(v).ok()));
 
     debug!("parsed {} versions for '{}'", versions.len(), crate_name);
 

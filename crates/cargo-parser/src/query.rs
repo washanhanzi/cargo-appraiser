@@ -20,13 +20,26 @@ pub struct DependencyLookupKey {
 
 impl DependencyLookupKey {
     /// Create a new dependency lookup key.
+    ///
+    /// The platform string is normalized so that raw Cargo.toml source text
+    /// (e.g. `cfg(target_os="macos")`, single quotes) and cargo's canonical
+    /// rendering (`cfg(target_os = "macos")`) produce the same key.
     pub fn new(table: DependencyTable, platform: Option<String>, name: impl Into<String>) -> Self {
         Self {
             table,
-            platform,
+            platform: platform.map(|p| normalize_platform(&p)),
             name: name.into(),
         }
     }
+}
+
+/// Strip whitespace and unify quote style in a platform/cfg expression.
+fn normalize_platform(platform: &str) -> String {
+    platform
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| if c == '\'' { '"' } else { c })
+        .collect()
 }
 
 /// Convert cargo's DepKind to DependencyTable.

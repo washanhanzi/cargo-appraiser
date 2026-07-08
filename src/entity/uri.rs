@@ -20,10 +20,15 @@ impl CanonicalUri {
         Ok(CanonicalUri(uri))
     }
 
+    /// Map a `.toml` manifest URI to its sibling `.lock` file.
+    /// Only the file extension is rewritten; other occurrences of ".toml"
+    /// in the path must not be touched.
     pub fn ensure_lock(&self) -> Self {
-        if self.path().as_str().ends_with(".toml") {
-            let path = self.as_str().replace(".toml", ".lock");
-            return CanonicalUri(Uri::from_str(&path).unwrap());
+        if let Some(stripped) = self.as_str().strip_suffix(".toml") {
+            let lock = format!("{}.lock", stripped);
+            if let Ok(uri) = Uri::from_str(&lock) {
+                return CanonicalUri(uri);
+            }
         }
         self.clone()
     }
