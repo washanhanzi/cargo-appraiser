@@ -82,7 +82,6 @@ pub async fn handle_cargo_resolved(ctx: &mut AppraiserContext<'_>, output: Cargo
     // Build member names for audit
     let member_names: Vec<String> = output.members.iter().map(|m| m.name.clone()).collect();
     ctx.state.member_names = member_names.clone();
-    ctx.state.member_manifest_uris = output.member_manifest_uris.clone();
 
     // Send audit event
     if !GLOBAL_CONFIG.read().audit.disabled {
@@ -165,26 +164,7 @@ pub async fn handle_cargo_resolved(ctx: &mut AppraiserContext<'_>, output: Cargo
     }
 
     // Build full update with all dependencies
-    let items: Vec<DecorationItem> = doc
-        .dependencies()
-        .filter_map(|dep| {
-            let entry = doc.entry(&dep.id)?;
-            let state = if doc.dirty_dependencies.contains_key(&dep.id) {
-                DecorationState::Waiting
-            } else {
-                let resolved = doc.resolved(&dep.id);
-                DecorationState::Resolved {
-                    dep: dep.clone(),
-                    resolved: resolved.cloned(),
-                }
-            };
-            Some(DecorationItem {
-                id: dep.id.clone(),
-                range: entry.range,
-                state,
-            })
-        })
-        .collect();
+    let items = decoration_items(doc);
 
     if let Err(e) = ctx
         .render_tx
@@ -209,6 +189,29 @@ pub async fn handle_cargo_resolved(ctx: &mut AppraiserContext<'_>, output: Cargo
     }
 }
 
+/// Build decoration items for all dependencies of a document: waiting states
+/// for dirty deps, resolved states for clean ones.
+fn decoration_items(doc: &Document) -> Vec<DecorationItem> {
+    doc.dependencies()
+        .filter_map(|dep| {
+            let entry = doc.entry(&dep.id)?;
+            let state = if doc.dirty_dependencies.contains_key(&dep.id) {
+                DecorationState::Waiting
+            } else {
+                DecorationState::Resolved {
+                    dep: dep.clone(),
+                    resolved: doc.resolved(&dep.id).cloned(),
+                }
+            };
+            Some(DecorationItem {
+                id: dep.id.clone(),
+                range: entry.range,
+                state,
+            })
+        })
+        .collect()
+}
+
 /// Start the cargo resolve process for a document.
 async fn start_resolve(
     doc: &Document,
@@ -227,30 +230,7 @@ async fn start_resolve(
     }
 
     // Build a full update with waiting states for dirty deps and resolved states for clean deps
-    let items: Vec<DecorationItem> = doc
-        .dependencies()
-        .filter_map(|dep| {
-            let entry = doc.entry(&dep.id)?;
-            let state = if doc.dirty_dependencies.contains_key(&dep.id) {
-                debug!(
-                    "Marking dependency '{}' as waiting for URI: {:?}",
-                    dep.id, doc.uri
-                );
-                DecorationState::Waiting
-            } else {
-                let resolved = doc.resolved(&dep.id);
-                DecorationState::Resolved {
-                    dep: dep.clone(),
-                    resolved: resolved.cloned(),
-                }
-            };
-            Some(DecorationItem {
-                id: dep.id.clone(),
-                range: entry.range,
-                state,
-            })
-        })
-        .collect();
+    let items = decoration_items(doc);
 
     if let Err(e) = render_tx
         .send(DecorationEvent::Update(doc.uri.clone(), items))

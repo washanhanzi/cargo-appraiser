@@ -114,14 +114,8 @@ impl NodeKind {
 pub enum KeyKind {
     /// Keys in dependency tables ([dependencies], [dev-dependencies], etc.)
     Dependency(DependencyKey),
-    /// Keys in [package] table
-    Package(PackageKey),
     /// Keys in [workspace] table
     Workspace(WorkspaceKey),
-    /// Keys in [profile.*] tables
-    Profile(ProfileKey),
-    /// Keys in [features] table
-    Features(FeaturesKey),
     /// Generic/unknown key
     Other,
 }
@@ -157,70 +151,11 @@ pub enum DependencyKey {
     Optional,
 }
 
-/// Keys specific to [package] table
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PackageKey {
-    Name,
-    Version,
-    Authors,
-    Edition,
-    Description,
-    Documentation,
-    Readme,
-    Homepage,
-    Repository,
-    License,
-    LicenseFile,
-    Keywords,
-    Categories,
-    Workspace,
-    Build,
-    Links,
-    Exclude,
-    Include,
-    Publish,
-    DefaultRun,
-    Autobins,
-    Autoexamples,
-    Autotests,
-    Autobenches,
-    Resolver,
-    Other,
-}
-
 /// Keys specific to [workspace] table
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkspaceKey {
     Members,
     Exclude,
-    Resolver,
-    Dependencies,
-    Package,
-    Other,
-}
-
-/// Keys specific to [profile.*] tables
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ProfileKey {
-    OptLevel,
-    Debug,
-    DebugAssertions,
-    OverflowChecks,
-    Lto,
-    Panic,
-    IncrementalCompilation,
-    CodegenUnits,
-    Rpath,
-    Other,
-}
-
-/// Keys specific to [features] table
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FeaturesKey {
-    /// A feature name
-    FeatureName,
-    /// The `default` feature
-    Default,
 }
 
 // ============================================================================
@@ -232,14 +167,8 @@ pub enum FeaturesKey {
 pub enum ValueKind {
     /// Values in dependency tables
     Dependency(DependencyValue),
-    /// Values in [package] table
-    Package(PackageValue),
     /// Values in [workspace] table
     Workspace(WorkspaceValue),
-    /// Values in [profile.*] tables
-    Profile(ProfileValue),
-    /// Values in [features] table
-    Features(FeaturesValue),
     /// Generic table
     Table,
     /// Generic array
@@ -283,17 +212,6 @@ pub enum DependencyValue {
     Optional,
 }
 
-/// Values specific to [package] table
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PackageValue {
-    Name,
-    Version,
-    Authors,
-    Edition,
-    Description,
-    Other,
-}
-
 /// Values specific to [workspace] table
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkspaceValue {
@@ -301,27 +219,6 @@ pub enum WorkspaceValue {
     Members,
     /// A single member path within the members array
     Member,
-    /// The exclude array value
-    Exclude,
-    Other,
-}
-
-/// Values specific to [profile.*] tables
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ProfileValue {
-    OptLevel,
-    Debug,
-    Lto,
-    Other,
-}
-
-/// Values specific to [features] table
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FeaturesValue {
-    /// Feature dependencies array
-    FeatureDeps,
-    /// A single feature dependency
-    FeatureDep,
 }
 
 // ============================================================================

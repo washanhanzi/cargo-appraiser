@@ -416,7 +416,6 @@ dependencies = [
  "futures",
  "lsp-async-stub",
  "moka",
- "once_cell",
  "openssl",
  "parking_lot",
  "percent-encoding",

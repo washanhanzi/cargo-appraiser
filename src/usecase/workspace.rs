@@ -11,7 +11,6 @@ pub struct Workspace {
     /// Workspace member package names (for audit)
     pub member_names: Vec<String>,
     pub root_manifest_uri: Option<CanonicalUri>,
-    pub member_manifest_uris: Vec<CanonicalUri>,
     pub uris: HashMap<CanonicalUri, Uri>,
 }
 
@@ -21,7 +20,6 @@ impl Workspace {
             documents: HashMap::new(),
             member_names: Vec::new(),
             root_manifest_uri: None,
-            member_manifest_uris: Vec::new(),
             uris: HashMap::new(),
         }
     }
@@ -75,7 +73,6 @@ impl Workspace {
         if self.documents.is_empty() {
             self.member_names.clear();
             self.root_manifest_uri = None;
-            self.member_manifest_uris.clear();
         }
     }
 

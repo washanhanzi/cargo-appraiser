@@ -19,7 +19,6 @@ use super::context::Ctx;
 pub struct CargoResolveOutput {
     pub ctx: Ctx,
     pub root_manifest_uri: CanonicalUri,
-    pub member_manifest_uris: Vec<CanonicalUri>,
     pub members: Vec<WorkspaceMember>,
     pub index: CargoIndex,
 }
@@ -44,18 +43,11 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
     let root_manifest_uri =
         CanonicalUri::try_from_path(index.root_manifest()).map_err(CargoError::resolve_error)?;
 
-    let member_manifest_uris: Vec<CanonicalUri> = index
-        .member_manifests()
-        .iter()
-        .filter_map(|p| CanonicalUri::try_from_path(p).ok())
-        .collect();
-
     let members = index.members().to_vec();
 
     Ok(CargoResolveOutput {
         ctx: ctx.clone(),
         root_manifest_uri,
-        member_manifest_uris,
         members,
         index,
     })

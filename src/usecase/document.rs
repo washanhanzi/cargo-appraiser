@@ -141,7 +141,7 @@ mod tests {
     use tower_lsp::lsp_types::Uri;
 
     use super::Document;
-    use crate::entity::{DependencyStyle, DependencyTable};
+    use toml_parser::{DependencyStyle, DependencyTable};
 
     #[test]
     fn test_parse() {

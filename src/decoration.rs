@@ -7,7 +7,7 @@ use tower_lsp::{
 };
 mod vscode;
 
-use crate::entity::{DependencyTable, ResolvedDependency, SourceKind, TomlDependency};
+use crate::entity::{ResolvedDependency, SourceKind, TomlDependency};
 
 pub mod inlay_hint;
 
@@ -108,8 +108,6 @@ pub struct DecorationPayload {
     //(ref,commit)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git: Option<(String, String)>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tables: Option<Vec<DependencyTable>>,
 }
 
 pub fn formatted_string(
@@ -410,34 +408,6 @@ impl CompiledTemplate {
             }
             if self.needs_git_commit {
                 result = result.replace("{{commit}}", commit);
-            }
-        }
-
-        if let Some(tables) = version.tables.as_ref() {
-            let mut table_str = String::with_capacity(15);
-            table_str.push_str(" [");
-            for t in tables {
-                match t {
-                    DependencyTable::Dependencies => {}
-                    DependencyTable::DevDependencies => {
-                        if table_str.len() > 2 {
-                            table_str.push_str(", dev");
-                        } else {
-                            table_str.push_str("dev");
-                        }
-                    }
-                    DependencyTable::BuildDependencies => {
-                        if table_str.len() > 2 {
-                            table_str.push_str(", build");
-                        } else {
-                            table_str.push_str("build");
-                        }
-                    }
-                }
-            }
-            table_str.push(']');
-            if !table_str.is_empty() {
-                result.push_str(&table_str);
             }
         }
 
