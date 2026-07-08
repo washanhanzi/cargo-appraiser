@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/toml-parser", "crates/cargo-parser", "crates/audit-parser"]
+members = ["crates/toml-parser", "crates/cargo-parser"]
 
 [workspace.dependencies]
 taplo = "0.14"
