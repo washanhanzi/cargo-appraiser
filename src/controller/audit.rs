@@ -46,12 +46,18 @@ pub(super) enum AuditCommand {
 
 pub struct AuditController {
     tx: Sender<CargoDocumentEvent>,
-    sender: Option<Sender<AuditCommand>>,
+    sender: Sender<AuditCommand>,
+    receiver: Option<mpsc::Receiver<AuditCommand>>,
 }
 
 impl AuditController {
     pub fn new(tx: Sender<CargoDocumentEvent>) -> Self {
-        Self { tx, sender: None }
+        let (sender, receiver) = mpsc::channel(32);
+        Self {
+            tx,
+            sender,
+            receiver: Some(receiver),
+        }
     }
 
     pub async fn send(
@@ -61,8 +67,6 @@ impl AuditController {
         cargo_path: &str,
     ) -> Result<(), SendError<AuditCommand>> {
         self.sender
-            .as_ref()
-            .unwrap()
             .send(AuditCommand::Audit(AuditPayload {
                 root_manifest_uri: uri,
                 member_names,
@@ -72,19 +76,16 @@ impl AuditController {
     }
 
     pub async fn reset(&self) -> Result<(), SendError<AuditCommand>> {
-        self.sender
-            .as_ref()
-            .unwrap()
-            .send(AuditCommand::Reset)
-            .await
+        self.sender.send(AuditCommand::Reset).await
     }
 
     pub fn spawn(&mut self) {
-        //create a mpsc channel
-        let (internal_tx, mut internal_rx) = mpsc::channel(32);
+        let Some(mut internal_rx) = self.receiver.take() else {
+            error!("[AUDIT] AuditController::spawn called twice");
+            return;
+        };
         let mut received_uri = None;
         let mut member_names: Option<Vec<String>> = None;
-        self.sender = Some(internal_tx);
         let tx = self.tx.clone();
         let mut cargo_path: Option<String> = None;
         let mut timer: Option<Pin<Box<Sleep>>> = None;
@@ -124,8 +125,9 @@ impl AuditController {
                         }
                     }, if timer.is_some() => {
                         timer = None;
-                        let uri = received_uri.take().unwrap();
-                        let names_to_audit = member_names.take().unwrap();
+                        let (Some(uri), Some(names_to_audit)) = (received_uri.take(), member_names.take()) else {
+                            continue;
+                        };
                         trace!("[AUDIT] Running audit for: {}", uri.as_str());
                         let reports = match audit_workspace(&uri, &names_to_audit, cargo_path.as_deref().unwrap_or("cargo")).await {
                             Ok(r) => r,
@@ -376,7 +378,7 @@ fn save_current_issue(
     issue: &mut Option<AuditIssue>,
 ) {
     let Some(issue) = issue.take() else { return };
-    let audit_level = GLOBAL_CONFIG.read().unwrap().audit.level.clone();
+    let audit_level = GLOBAL_CONFIG.read().audit.level.clone();
 
     match (&issue.kind, audit_level.as_str()) {
         (_, "warning") => {}

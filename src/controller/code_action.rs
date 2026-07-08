@@ -415,10 +415,10 @@ fn new_update_command(package_name: &str) -> Command {
 }
 
 fn strip_quotes(s: &str) -> String {
-    if s.starts_with('"') && s.ends_with('"') {
-        return s[1..s.len() - 1].to_string();
-    }
-    s.to_string()
+    s.strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(s)
+        .to_string()
 }
 
 #[cfg(test)]

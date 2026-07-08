@@ -15,11 +15,8 @@ use crate::{
 };
 
 use super::{
-    audit::AuditController,
-    capabilities::ClientCapabilities,
-    cargo::CargoResolveOutput,
-    debouncer::Debouncer,
-    diagnostic::DiagnosticController,
+    audit::AuditController, capabilities::ClientCapabilities, cargo::CargoResolveOutput,
+    debouncer::Debouncer, diagnostic::DiagnosticController,
 };
 
 /// Context for cargo resolution tasks.

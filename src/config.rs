@@ -1,6 +1,6 @@
-use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 use serde::Deserialize;
-use std::sync::RwLock;
+use std::sync::LazyLock;
 use tracing::debug;
 
 use crate::decoration::{CompiledFormatter, DecorationFormatter};
@@ -85,10 +85,11 @@ pub struct UserConfig {
     pub crates_io: CratesIoUserConfig,
 }
 
-pub static GLOBAL_CONFIG: Lazy<RwLock<Config>> = Lazy::new(|| RwLock::new(Config::default()));
+pub static GLOBAL_CONFIG: LazyLock<RwLock<Config>> =
+    LazyLock::new(|| RwLock::new(Config::default()));
 
 pub fn initialize_config(config: UserConfig) {
-    let mut global_config = GLOBAL_CONFIG.write().unwrap();
+    let mut global_config = GLOBAL_CONFIG.write();
     *global_config = Config {
         decoration_formatter: config.decoration_formatter.compile(),
         audit: config.audit,
@@ -97,10 +98,7 @@ pub fn initialize_config(config: UserConfig) {
                 config.crates_io.sparse_index_url,
                 "https://index.crates.io",
             ),
-            api_url: resolve_url(
-                config.crates_io.api_url,
-                "https://crates.io/api/v1/crates",
-            ),
+            api_url: resolve_url(config.crates_io.api_url, "https://crates.io/api/v1/crates"),
         },
     };
     debug!("config {:?}", global_config);

@@ -60,7 +60,7 @@ impl InlayHintDecoration {
                         inlay_hint_decoration_state::reset(&state, &uri);
                     }
                     DecorationEvent::Update(uri, items) => {
-                        let config = GLOBAL_CONFIG.read().unwrap();
+                        let config = GLOBAL_CONFIG.read();
                         let hints: Vec<InlayHint> = items
                             .into_iter()
                             .filter_map(|item| {

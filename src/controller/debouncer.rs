@@ -17,7 +17,8 @@ pub struct Debouncer {
     tx: Sender<CargoDocumentEvent>,
     interactive_timeout: u64,
     background_timeout: u64,
-    sender: Option<Sender<DebouncerEvent>>,
+    sender: Sender<DebouncerEvent>,
+    receiver: Option<mpsc::Receiver<DebouncerEvent>>,
 }
 
 pub enum DebouncerEvent {
@@ -100,34 +101,29 @@ impl Debouncer {
         interactive_timeout: u64,
         background_timeout: u64,
     ) -> Self {
+        let (sender, receiver) = mpsc::channel::<DebouncerEvent>(64);
         Self {
             tx,
             interactive_timeout,
             background_timeout,
-            sender: None,
+            sender,
+            receiver: Some(receiver),
         }
     }
 
     pub async fn send_interactive(&self, ctx: Ctx) -> Result<(), SendError<DebouncerEvent>> {
-        self.sender
-            .as_ref()
-            .unwrap()
-            .send(DebouncerEvent::Interactive(ctx))
-            .await
+        self.sender.send(DebouncerEvent::Interactive(ctx)).await
     }
 
     pub async fn send_background(&self, ctx: Ctx) -> Result<(), SendError<DebouncerEvent>> {
-        self.sender
-            .as_ref()
-            .unwrap()
-            .send(DebouncerEvent::Background(ctx))
-            .await
+        self.sender.send(DebouncerEvent::Background(ctx)).await
     }
 
     pub fn spawn(&mut self) {
-        // Create a tokio mpsc channel
-        let (internal_tx, mut internal_rx) = mpsc::channel::<DebouncerEvent>(64);
-        self.sender = Some(internal_tx);
+        let Some(mut internal_rx) = self.receiver.take() else {
+            error!("Debouncer::spawn called twice");
+            return;
+        };
         let tx = self.tx.clone();
         let mut q = Queue::new(self.interactive_timeout, self.background_timeout);
 

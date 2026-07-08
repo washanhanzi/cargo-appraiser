@@ -61,15 +61,22 @@ pub struct CrateInfo {
     pub description: Option<String>,
 }
 
-/// Get the sparse index URL path for a crate name
-fn index_path(crate_name: &str) -> String {
+/// Get the sparse index URL path for a crate name.
+/// Returns None for non-ASCII names (crates.io names are always ASCII);
+/// byte-slicing a multi-byte name would panic.
+fn index_path(crate_name: &str) -> Option<String> {
     let name = crate_name.to_lowercase();
-    match name.len() {
+    if !name.is_ascii() {
+        return None;
+    }
+    let path = match name.len() {
+        0 => return None,
         1 => format!("1/{}", name),
         2 => format!("2/{}", name),
         3 => format!("3/{}/{}", &name[..1], name),
         _ => format!("{}/{}/{}", &name[..2], &name[2..4], name),
-    }
+    };
+    Some(path)
 }
 
 /// Fetch and parse the crate index, using cache if available
@@ -88,7 +95,7 @@ async fn get_crate_index(
     debug!("cache miss for '{}', fetching from index", crate_name);
 
     // Get base URL from config (None = feature disabled)
-    let base_url = match &GLOBAL_CONFIG.read().unwrap().crates_io.sparse_index_url {
+    let base_url = match &GLOBAL_CONFIG.read().crates_io.sparse_index_url {
         Some(url) => url.clone(),
         None => {
             debug!("sparse index lookup disabled by config");
@@ -97,7 +104,8 @@ async fn get_crate_index(
     };
 
     // Fetch from sparse index
-    let url = format!("{}/{}", base_url, index_path(crate_name));
+    let rel_path = index_path(crate_name)?;
+    let url = format!("{}/{}", base_url, rel_path);
 
     let resp = match http_client.get(&url).send().await {
         Ok(r) => r,
@@ -275,7 +283,7 @@ pub async fn search_crates(
     }
 
     // Get base URL from config (None = feature disabled)
-    let base_url = match &GLOBAL_CONFIG.read().unwrap().crates_io.api_url {
+    let base_url = match &GLOBAL_CONFIG.read().crates_io.api_url {
         Some(url) => url.clone(),
         None => {
             debug!("crates.io search disabled by config");

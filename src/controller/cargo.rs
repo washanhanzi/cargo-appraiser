@@ -41,8 +41,8 @@ pub async fn cargo_resolve(ctx: &Ctx) -> Result<CargoResolveOutput, CargoError> 
         .map_err(|e| crate::entity::from_resolve_error(e.into()))?;
 
     // Convert paths to URIs
-    let root_manifest_uri = CanonicalUri::try_from_path(index.root_manifest())
-        .map_err(CargoError::resolve_error)?;
+    let root_manifest_uri =
+        CanonicalUri::try_from_path(index.root_manifest()).map_err(CargoError::resolve_error)?;
 
     let member_manifest_uris: Vec<CanonicalUri> = index
         .member_manifests()
@@ -67,18 +67,26 @@ pub fn resolve_package_with_default_source(
     version: Option<&str>,
 ) -> Option<Vec<Summary>> {
     let gctx = cargo::util::context::GlobalContext::default().ok()?;
-    let source_id = cargo::core::SourceId::crates_io(&gctx).unwrap();
+    let source_id = cargo::core::SourceId::crates_io(&gctx).ok()?;
     let dep = cargo::core::Dependency::parse(package, version, source_id).ok()?;
-    let mut source = source_id.load(&gctx, &HashSet::new()).unwrap();
+    let mut source = source_id
+        .load(&gctx, &HashSet::new())
+        .map_err(|e| error!("failed to load source: {}", e))
+        .ok()?;
     let Ok(_guard) = gctx.acquire_package_cache_lock(CacheLockMode::DownloadExclusive) else {
         error!("failed to acquire package cache lock");
         return None;
     };
     let summary = source.query_vec(&dep, QueryKind::Normalized);
-    source.block_until_ready().unwrap();
+    if let Err(e) = source.block_until_ready() {
+        error!("failed to query source: {}", e);
+        return None;
+    }
     match summary {
         Poll::Ready(summaries) => {
-            let summaries = summaries.unwrap();
+            let summaries = summaries
+                .map_err(|e| error!("failed to query summaries: {}", e))
+                .ok()?;
             Some(summaries.iter().map(|s| s.as_summary().clone()).collect())
         }
         Poll::Pending => None,

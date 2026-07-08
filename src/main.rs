@@ -151,8 +151,12 @@ impl LanguageServer for CargoAppraiser {
                 let args = params
                     .arguments
                     .iter()
-                    .map(|v| v.as_str().unwrap().to_string())
+                    .filter_map(|v| v.as_str().map(str::to_string))
                     .collect::<Vec<_>>();
+                if args.len() != params.arguments.len() {
+                    error!("execute_command: non-string arguments rejected");
+                    return Ok(None);
+                }
                 //run cargo command with params in a new task
                 let command_result = tokio::process::Command::new(cargo_path).args(args).spawn();
                 if command_result.is_err() {

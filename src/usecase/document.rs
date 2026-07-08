@@ -270,5 +270,4 @@ mod tests {
         let dep = doc.dependency("");
         assert!(dep.is_none());
     }
-
 }

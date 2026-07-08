@@ -5,6 +5,8 @@ mod resolve;
 
 use std::env;
 
+use futures::FutureExt;
+
 use tokio::sync::mpsc::{self, Sender};
 use tower_lsp::Client;
 use tracing::{error, trace, warn};
@@ -141,57 +143,72 @@ impl Appraiser {
                     cargo_path: &cargo_path,
                 };
 
-                match event {
-                    CargoDocumentEvent::Audited(reports) => {
-                        handle_audited(&mut ctx, reports).await;
-                    }
-                    CargoDocumentEvent::CargoDiagnostic(uri, err) => {
-                        handle_cargo_diagnostic(&mut ctx, uri, err).await;
-                    }
-                    CargoDocumentEvent::CargoDiagnosticsComputed(uri, digs) => {
-                        for (id, diag) in digs {
-                            ctx.diagnostic_controller
-                                .add_cargo_diagnostic(&uri, &id, diag)
-                                .await;
-                        }
-                    }
-                    CargoDocumentEvent::Hovered(uri, pos, tx) => {
-                        handle_hover(&mut ctx, uri, pos, tx).await;
-                    }
-                    CargoDocumentEvent::Gded(uri, pos, tx) => {
-                        handle_gd(&mut ctx, uri, pos, tx).await;
-                    }
-                    CargoDocumentEvent::Completion(uri, pos, tx) => {
-                        handle_completion(&mut ctx, uri, pos, tx).await;
-                    }
-                    CargoDocumentEvent::CodeAction(uri, range, tx) => {
-                        handle_code_action(&mut ctx, uri, range, tx).await;
-                    }
-                    CargoDocumentEvent::Closed(uri) => {
-                        handle_closed(&mut ctx, uri).await;
-                    }
-                    CargoDocumentEvent::CargoLockChanged => {
-                        handle_cargo_lock_changed(&mut ctx).await;
-                    }
-                    CargoDocumentEvent::Changed(msg) => {
-                        handle_changed(&mut ctx, msg).await;
-                    }
-                    CargoDocumentEvent::Parse(uri) => {
-                        handle_parse(&mut ctx, uri).await;
-                    }
-                    CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
-                        handle_opened_saved(&mut ctx, msg).await;
-                    }
-                    CargoDocumentEvent::ReadyToResolve(event_ctx) => {
-                        handle_ready_to_resolve(&mut ctx, event_ctx).await;
-                    }
-                    CargoDocumentEvent::CargoResolved(output) => {
-                        handle_cargo_resolved(&mut ctx, output).await;
-                    }
+                // Catch panics so a single bad event can't silently kill the
+                // event loop (the LSP service would keep accepting requests
+                // that go nowhere).
+                let handle = std::panic::AssertUnwindSafe(dispatch(&mut ctx, event));
+                if let Err(panic) = handle.catch_unwind().await {
+                    let msg = panic
+                        .downcast_ref::<&str>()
+                        .map(|s| s.to_string())
+                        .or_else(|| panic.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "unknown panic".to_string());
+                    error!("panic in event handler: {}", msg);
                 }
             }
         });
 
         tx
+    }
+}
+
+async fn dispatch(ctx: &mut AppraiserContext<'_>, event: CargoDocumentEvent) {
+    match event {
+        CargoDocumentEvent::Audited(reports) => {
+            handle_audited(ctx, reports).await;
+        }
+        CargoDocumentEvent::CargoDiagnostic(uri, err) => {
+            handle_cargo_diagnostic(ctx, uri, err).await;
+        }
+        CargoDocumentEvent::CargoDiagnosticsComputed(uri, digs) => {
+            for (id, diag) in digs {
+                ctx.diagnostic_controller
+                    .add_cargo_diagnostic(&uri, &id, diag)
+                    .await;
+            }
+        }
+        CargoDocumentEvent::Hovered(uri, pos, tx) => {
+            handle_hover(ctx, uri, pos, tx).await;
+        }
+        CargoDocumentEvent::Gded(uri, pos, tx) => {
+            handle_gd(ctx, uri, pos, tx).await;
+        }
+        CargoDocumentEvent::Completion(uri, pos, tx) => {
+            handle_completion(ctx, uri, pos, tx).await;
+        }
+        CargoDocumentEvent::CodeAction(uri, range, tx) => {
+            handle_code_action(ctx, uri, range, tx).await;
+        }
+        CargoDocumentEvent::Closed(uri) => {
+            handle_closed(ctx, uri).await;
+        }
+        CargoDocumentEvent::CargoLockChanged => {
+            handle_cargo_lock_changed(ctx).await;
+        }
+        CargoDocumentEvent::Changed(msg) => {
+            handle_changed(ctx, msg).await;
+        }
+        CargoDocumentEvent::Parse(uri) => {
+            handle_parse(ctx, uri).await;
+        }
+        CargoDocumentEvent::Opened(msg) | CargoDocumentEvent::Saved(msg) => {
+            handle_opened_saved(ctx, msg).await;
+        }
+        CargoDocumentEvent::ReadyToResolve(event_ctx) => {
+            handle_ready_to_resolve(ctx, event_ctx).await;
+        }
+        CargoDocumentEvent::CargoResolved(output) => {
+            handle_cargo_resolved(ctx, output).await;
+        }
     }
 }

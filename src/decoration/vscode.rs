@@ -70,7 +70,7 @@ impl VSCodeDecoration {
                     }
                     DecorationEvent::Update(uri, items) => {
                         let decorations: Vec<DecorationData> = {
-                            let config = GLOBAL_CONFIG.read().unwrap();
+                            let config = GLOBAL_CONFIG.read();
                             items
                                 .into_iter()
                                 .filter_map(|item| {

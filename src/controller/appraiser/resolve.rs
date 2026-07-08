@@ -1,7 +1,5 @@
 //! Cargo resolve handlers (ReadyToResolve, CargoResolved, CargoLockChanged).
 
-use std::str::FromStr;
-
 use tokio::sync::mpsc::Sender;
 use tower_lsp::lsp_types::Uri;
 use tracing::{debug, error, trace};
@@ -74,7 +72,7 @@ pub async fn handle_cargo_resolved(ctx: &mut AppraiserContext<'_>, output: Cargo
     // Resolve virtual manifest if we haven't
     let root_manifest_uri = output.root_manifest_uri.clone();
     if ctx.state.document(&root_manifest_uri).is_none() {
-        let uri = Uri::from_str(root_manifest_uri.as_str()).unwrap();
+        let uri: Uri = (*root_manifest_uri).clone();
         if let Err(e) = ctx.inner_tx.send(CargoDocumentEvent::Parse(uri)).await {
             error!("inner tx send error: {}", e);
         }
@@ -87,7 +85,7 @@ pub async fn handle_cargo_resolved(ctx: &mut AppraiserContext<'_>, output: Cargo
     ctx.state.member_manifest_uris = output.member_manifest_uris.clone();
 
     // Send audit event
-    if !GLOBAL_CONFIG.read().unwrap().audit.disabled {
+    if !GLOBAL_CONFIG.read().audit.disabled {
         trace!("[AUDIT] Sending audit request");
         if let Err(e) = ctx
             .audit_controller
