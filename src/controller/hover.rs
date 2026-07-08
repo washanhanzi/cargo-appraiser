@@ -1,5 +1,5 @@
 use tokio::sync::oneshot;
-use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Uri};
+use tower_lsp_server::ls_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Uri};
 use tracing::error;
 
 use crate::entity::{
@@ -171,7 +171,7 @@ pub fn hover(
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use tower_lsp::lsp_types::Range;
+    use tower_lsp_server::ls_types::Range;
 
     fn make_range() -> Range {
         Range::default()

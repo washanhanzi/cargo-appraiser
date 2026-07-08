@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::node::TomlNode;
-use tower_lsp::lsp_types::Position;
+use ls_types::Position;
 
 /// The parsed TOML structure with efficient lookup capabilities.
 ///
@@ -232,7 +232,7 @@ impl SymbolTree {
 mod tests {
     use super::super::node::{DependencyKey, DependencyValue, KeyKind, NodeKind, ValueKind};
     use super::*;
-    use tower_lsp::lsp_types::Range;
+    use ls_types::Range;
 
     fn make_range(start_line: u32, start_char: u32, end_line: u32, end_char: u32) -> Range {
         Range {

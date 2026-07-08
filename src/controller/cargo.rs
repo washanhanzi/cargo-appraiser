@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use cargo::core::Summary;
 use cargo::sources::source::QueryKind;
 use cargo::util::cache_lock::CacheLockMode;
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity};
+use tower_lsp_server::ls_types::{Diagnostic, DiagnosticSeverity};
 use tracing::error;
 
 use crate::entity::{

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use semver::{Op, Version};
 use serde_json::Value;
 use tokio::sync::oneshot;
-use tower_lsp::lsp_types::{
+use tower_lsp_server::ls_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionResponse, Command, Range, TextEdit,
     Uri, WorkspaceEdit,
 };

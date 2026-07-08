@@ -7,9 +7,9 @@ use decoration::{DecorationRenderer, Renderer};
 use entity::{supported_commands, CARGO};
 use serde_json::Value;
 use tokio::sync::{mpsc::Sender, oneshot};
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{LanguageServer, LspService, Server};
+use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::ls_types::*;
+use tower_lsp_server::{LanguageServer, LspService, Server};
 use tracing::{error, info};
 
 mod config;
@@ -45,7 +45,6 @@ struct CargoAppraiser {
     cargo_path: Option<String>,
 }
 
-#[tower_lsp::async_trait]
 impl LanguageServer for CargoAppraiser {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         //init config

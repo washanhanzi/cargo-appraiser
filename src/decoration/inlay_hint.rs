@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::sync::mpsc::{self, Sender};
-use tower_lsp::{
-    lsp_types::{InlayHint, InlayHintLabel, Position, Uri},
+use tower_lsp_server::{
+    ls_types::{InlayHint, InlayHintLabel, Position, Uri},
     Client,
 };
 use tracing::error;

@@ -2,7 +2,7 @@ mod dependency_tree;
 mod node;
 mod symbol_tree;
 
-use tower_lsp::lsp_types::Position;
+use ls_types::Position;
 
 // Re-export public types
 pub use dependency_tree::{

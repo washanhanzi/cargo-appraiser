@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::{Position, Uri};
+use tower_lsp_server::ls_types::{Position, Uri};
 
 use crate::entity::{
     CanonicalUri, ResolvedDependency, TomlDependency, TomlNode, TomlTree, WorkspaceMember,
@@ -138,7 +138,7 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
-    use tower_lsp::lsp_types::Uri;
+    use tower_lsp_server::ls_types::Uri;
 
     use super::Document;
     use toml_parser::{DependencyStyle, DependencyTable};
@@ -152,7 +152,7 @@ mod tests {
         // Create the temp file so canonicalization works
         std::fs::write(&temp_file, "").unwrap();
 
-        let uri = Uri::try_from_path(&temp_file).unwrap();
+        let uri = Uri::from_file_path(&temp_file).unwrap();
         let canonical_uri = uri.clone().try_into().unwrap();
 
         // Clean up the temp file
@@ -182,7 +182,7 @@ mod tests {
         let temp_file = temp_dir.join("test_cargo_appraiser2.toml");
         std::fs::write(&temp_file, "").unwrap();
 
-        let uri = Uri::try_from_path(&temp_file).unwrap();
+        let uri = Uri::from_file_path(&temp_file).unwrap();
         let canonical_uri = uri.clone().try_into().unwrap();
         std::fs::remove_file(&temp_file).unwrap();
 
@@ -208,7 +208,7 @@ mod tests {
         let temp_file = temp_dir.join("test_cargo_appraiser_name_node.toml");
         std::fs::write(&temp_file, "").unwrap();
 
-        let uri = Uri::try_from_path(&temp_file).unwrap();
+        let uri = Uri::from_file_path(&temp_file).unwrap();
         let canonical_uri = uri.clone().try_into().unwrap();
         std::fs::remove_file(&temp_file).unwrap();
 
@@ -245,7 +245,7 @@ mod tests {
         let temp_file = temp_dir.join("test_cargo_appraiser_entry.toml");
         std::fs::write(&temp_file, "").unwrap();
 
-        let uri = Uri::try_from_path(&temp_file).unwrap();
+        let uri = Uri::from_file_path(&temp_file).unwrap();
         let canonical_uri = uri.clone().try_into().unwrap();
         std::fs::remove_file(&temp_file).unwrap();
 

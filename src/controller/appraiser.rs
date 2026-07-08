@@ -8,7 +8,7 @@ use std::env;
 use futures::FutureExt;
 
 use tokio::sync::mpsc::{self, Sender};
-use tower_lsp::Client;
+use tower_lsp_server::Client;
 use tracing::{error, trace, warn};
 
 use crate::{decoration::DecorationEvent, usecase::Workspace};

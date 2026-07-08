@@ -3,9 +3,8 @@ members = ["crates/toml-parser", "crates/cargo-parser"]
 
 [workspace.dependencies]
 taplo = "0.14"
-tower-lsp = { git = "https://github.com/washanhanzi/tower-lsp", branch = "main", features = [
-    "proposed",
-] }
+tower-lsp-server = "0.23"
+ls-types = "0.0.6"
 lsp-async-stub = "0.7"
 cargo = "0.97"
 serde = { version = "1.0", features = ["derive"] }
@@ -44,9 +43,8 @@ tokio = { version = "1.44", features = ["full", "macros", "rt-multi-thread"] }
 tokio-util = { version = "0.7", features = ["time"] }
 unicode-xid = "0.2.6"
 cargo.workspace = true
-tower-lsp = { git = "https://github.com/washanhanzi/tower-lsp", branch = "main", features = [
-    "proposed",
-] }
+tower-lsp-server.workspace = true
+ls-types.workspace = true
 regex = "1.11"
 openssl = { version = '0.10', optional = true }
 percent-encoding = "2.3"

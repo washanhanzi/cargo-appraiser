@@ -1,7 +1,7 @@
 //! Cargo resolve handlers (ReadyToResolve, CargoResolved, CargoLockChanged).
 
 use tokio::sync::mpsc::Sender;
-use tower_lsp::lsp_types::Uri;
+use tower_lsp_server::ls_types::Uri;
 use tracing::{debug, error, trace};
 
 use crate::{

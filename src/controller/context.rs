@@ -4,8 +4,8 @@ use tokio::sync::{
     mpsc::{Sender, UnboundedSender},
     oneshot,
 };
-use tower_lsp::{
-    lsp_types::{
+use tower_lsp_server::{
+    ls_types::{
         CodeActionResponse, CompletionResponse, GotoDefinitionResponse, Hover, Position, Range, Uri,
     },
     Client,
@@ -58,7 +58,7 @@ pub enum CargoDocumentEvent {
     /// Cargo diagnostic error
     CargoDiagnostic(CanonicalUri, CargoError),
     /// Diagnostics computed off the event loop, ready to publish
-    CargoDiagnosticsComputed(Uri, Vec<(String, tower_lsp::lsp_types::Diagnostic)>),
+    CargoDiagnosticsComputed(Uri, Vec<(String, tower_lsp_server::ls_types::Diagnostic)>),
     /// Audit results
     Audited(super::audit::AuditReports),
 }

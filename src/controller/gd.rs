@@ -1,5 +1,5 @@
 use tokio::sync::oneshot;
-use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position, Range, Uri};
+use tower_lsp_server::ls_types::{GotoDefinitionResponse, Location, Position, Range, Uri};
 use tracing::error;
 
 use crate::{
@@ -100,7 +100,7 @@ async fn goto_workspace_member(doc: &Document, node: &TomlNode) -> Option<GotoDe
         return None;
     }
 
-    let uri = Uri::try_from_path(&cargo_toml).ok()?;
+    let uri = Uri::from_file_path(&cargo_toml)?;
 
     Some(GotoDefinitionResponse::Scalar(Location {
         uri,

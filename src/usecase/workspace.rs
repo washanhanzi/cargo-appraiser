@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::Uri;
+use tower_lsp_server::ls_types::Uri;
 
 use crate::entity::CanonicalUri;
 

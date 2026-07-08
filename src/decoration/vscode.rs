@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{self, Sender};
-use tower_lsp::{
-    lsp_types::{self, Range, Uri},
+use tower_lsp_server::{
+    ls_types::{self, Range, Uri},
     Client,
 };
 use tracing::error;
@@ -27,7 +27,7 @@ struct UpdateDecorationsRequest {
     pub decorations: Vec<DecorationData>,
 }
 
-impl lsp_types::request::Request for UpdateDecorationsRequest {
+impl ls_types::request::Request for UpdateDecorationsRequest {
     type Params = UpdateDecorationsRequest;
     type Result = ();
     const METHOD: &'static str = "textDocument/decoration/replaceAll";
@@ -38,7 +38,7 @@ struct ResetDecorationRequest {
     pub uri: Uri,
 }
 
-impl lsp_types::request::Request for ResetDecorationRequest {
+impl ls_types::request::Request for ResetDecorationRequest {
     type Params = ResetDecorationRequest;
     type Result = ();
     const METHOD: &'static str = "textDocument/decoration/reset";

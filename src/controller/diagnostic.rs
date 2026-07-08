@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use tower_lsp::{
-    lsp_types::{Diagnostic, Uri},
+use tower_lsp_server::{
+    ls_types::{Diagnostic, Uri},
     Client,
 };
 use tracing::debug;
@@ -34,8 +34,8 @@ pub async fn handle_cargo_diagnostic(
     // them as a document-level diagnostic instead of dropping them silently.
     let Some(crate_name) = err.crate_name() else {
         let diag = Diagnostic {
-            range: tower_lsp::lsp_types::Range::default(),
-            severity: Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR),
+            range: tower_lsp_server::ls_types::Range::default(),
+            severity: Some(tower_lsp_server::ls_types::DiagnosticSeverity::ERROR),
             source: Some("cargo".to_string()),
             message: err.to_string(),
             ..Default::default()

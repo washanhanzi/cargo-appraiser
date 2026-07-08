@@ -1,9 +1,9 @@
+use ls_types::{Position, Range};
 use lsp_async_stub::util::Mapper;
 use taplo::{
     dom::{node::Key, Node},
     util::join_ranges,
 };
-use tower_lsp::lsp_types::{Position, Range};
 
 use crate::toml11_inline_table::normalize_multiline_inline_tables;
 use crate::toml_tree::{

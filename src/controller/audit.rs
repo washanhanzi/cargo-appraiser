@@ -10,7 +10,7 @@ use tokio::{
     sync::mpsc::{self, error::SendError, Sender, UnboundedSender},
     time::Sleep,
 };
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Uri};
+use tower_lsp_server::ls_types::{Diagnostic, DiagnosticSeverity, Uri};
 use tracing::{error, trace};
 
 use crate::{config::GLOBAL_CONFIG, entity::CanonicalUri, usecase::Document};
@@ -504,7 +504,7 @@ fn collect_audit_diagnostics(
 mod tests {
     use std::collections::HashMap;
 
-    use tower_lsp::lsp_types::Uri;
+    use tower_lsp_server::ls_types::Uri;
 
     use crate::entity::CanonicalUri;
 
@@ -559,7 +559,7 @@ users = "0.11.0"
         );
 
         // Now test the audit functionality - audit_workspace expects a Cargo.lock URI
-        let uri = Uri::try_from_path(&cargo_lock_path).unwrap();
+        let uri = Uri::from_file_path(&cargo_lock_path).unwrap();
         let canonical_uri = CanonicalUri::try_from(uri).unwrap();
 
         let res = audit_workspace(&canonical_uri, &["test-package".to_string()], "cargo").await;

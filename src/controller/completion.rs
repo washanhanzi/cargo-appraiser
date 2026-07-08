@@ -1,5 +1,5 @@
 use tokio::sync::oneshot;
-use tower_lsp::lsp_types::{
+use tower_lsp_server::ls_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionResponse, CompletionTextEdit,
     Position, Range, TextEdit, Uri,
 };
@@ -160,7 +160,7 @@ async fn crate_name_completion(
             detail: Some(format!("v{}", crate_info.max_version)),
             documentation: crate_info
                 .description
-                .map(tower_lsp::lsp_types::Documentation::String),
+                .map(tower_lsp_server::ls_types::Documentation::String),
             text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 range: replace_range,
                 new_text: crate_info.name,

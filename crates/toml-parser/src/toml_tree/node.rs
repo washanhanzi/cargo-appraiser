@@ -1,4 +1,4 @@
-use tower_lsp::lsp_types::Range;
+use ls_types::Range;
 
 /// A node in the TOML tree with its position
 #[derive(Debug, Clone)]

@@ -1,8 +1,8 @@
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
-use tower_lsp::{
-    lsp_types::{InlayHint, Range, Uri},
+use tower_lsp_server::{
+    ls_types::{InlayHint, Range, Uri},
     Client,
 };
 mod vscode;

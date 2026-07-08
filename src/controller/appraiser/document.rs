@@ -1,6 +1,6 @@
 //! Document lifecycle handlers (opened, saved, changed, closed, parse).
 
-use tower_lsp::lsp_types::{Diagnostic, Uri};
+use tower_lsp_server::ls_types::{Diagnostic, Uri};
 use tracing::{debug, error};
 
 use crate::{decoration::DecorationEvent, entity::CanonicalUri};
@@ -168,7 +168,7 @@ pub async fn handle_parse(ctx: &mut AppraiserContext<'_>, uri: Uri) {
 fn parse_error_to_diagnostic(e: &toml_parser::ParseError) -> Diagnostic {
     Diagnostic {
         range: e.range,
-        severity: Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR),
+        severity: Some(tower_lsp_server::ls_types::DiagnosticSeverity::ERROR),
         code: None,
         code_description: None,
         source: Some("cargo-appraiser".to_string()),
